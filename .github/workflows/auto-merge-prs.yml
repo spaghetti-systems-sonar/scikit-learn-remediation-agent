@@ -1,0 +1,41 @@
+name: Auto-merge open PRs
+
+on:
+  schedule:
+    # Run at 50 minutes past every hour (UTC)
+    - cron: "50 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  merge-open-prs:
+    name: Merge open pull requests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge all open PRs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # Fetch open, non-draft PR numbers
+          prs=$(gh pr list --state open --json number,isDraft \
+            --jq '.[] | select(.isDraft == false) | .number')
+
+          if [ -z "$prs" ]; then
+            echo "No open pull requests to merge."
+            exit 0
+          fi
+
+          for pr in $prs; do
+            echo "Enabling auto-merge for PR #$pr (merges once checks pass)"
+            if gh pr merge "$pr" --merge --auto --delete-branch; then
+              echo "Auto-merge enabled for PR #$pr"
+            else
+              echo "::warning::Could not enable auto-merge for PR #$pr (may have conflicts, or auto-merge is disabled for the repo)"
+            fi
+          done
