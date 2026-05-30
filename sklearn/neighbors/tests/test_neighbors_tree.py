@@ -149,14 +149,14 @@ def test_neighbor_tree_query_radius_distance(Cls, n_samples=100, n_features=10):
         assert_array_almost_equal(d, dist)
 
 
-@pytest.mark.parametrize("Cls", [KDTree, BallTree])
+@pytest.mark.parametrize("cls", [KDTree, BallTree])
 @pytest.mark.parametrize("dualtree", (True, False))
-def test_neighbor_tree_two_point(Cls, dualtree, n_samples=100, n_features=3):
+def test_neighbor_tree_two_point(cls, dualtree, n_samples=100, n_features=3):
     rng = check_random_state(0)
     X = rng.random_sample((n_samples, n_features))
     Y = rng.random_sample((n_samples, n_features))
     r = np.linspace(0, 1, 10)
-    tree = Cls(X, leaf_size=10)
+    tree = cls(X, leaf_size=10)
 
     D = DistanceMetric.get_metric("euclidean").pairwise(Y, X)
     counts_true = [(D <= ri).sum() for ri in r]
@@ -165,9 +165,9 @@ def test_neighbor_tree_two_point(Cls, dualtree, n_samples=100, n_features=3):
     assert_array_almost_equal(counts, counts_true)
 
 
-@pytest.mark.parametrize("NeighborsHeap", [NeighborsHeapBT, NeighborsHeapKDT])
-def test_neighbors_heap(NeighborsHeap, n_pts=5, n_nbrs=10):
-    heap = NeighborsHeap(n_pts, n_nbrs)
+@pytest.mark.parametrize("neighbors_heap", [NeighborsHeapBT, NeighborsHeapKDT])
+def test_neighbors_heap(neighbors_heap, n_pts=5, n_nbrs=10):
+    heap = neighbors_heap(n_pts, n_nbrs)
     rng = check_random_state(0)
 
     for row in range(n_pts):
@@ -222,8 +222,8 @@ def test_simultaneous_sort(simultaneous_sort, n_rows=10, n_pts=201):
     assert_array_almost_equal(ind, ind2)
 
 
-@pytest.mark.parametrize("Cls", [KDTree, BallTree])
-def test_gaussian_kde(Cls, n_samples=1000):
+@pytest.mark.parametrize("tree_cls", [KDTree, BallTree])
+def test_gaussian_kde(tree_cls, n_samples=1000):
     # Compare gaussian KDE results to scipy.stats.gaussian_kde
     from scipy.stats import gaussian_kde
 
@@ -232,7 +232,7 @@ def test_gaussian_kde(Cls, n_samples=1000):
     x_out = np.linspace(-5, 5, 30)
 
     for h in [0.01, 0.1, 1]:
-        tree = Cls(x_in[:, None])
+        tree = tree_cls(x_in[:, None])
         gkde = gaussian_kde(x_in, bw_method=h / np.std(x_in))
 
         dens_tree = tree.kernel_density(x_out[:, None], h) / n_samples
