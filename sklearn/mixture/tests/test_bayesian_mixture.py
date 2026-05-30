@@ -419,9 +419,9 @@ def test_bayesian_mixture_fit_predict(seed, max_iter, tol):
         bgmm2 = copy.deepcopy(bgmm1)
         X = rand_data.X[covar_type]
 
-        Y_pred1 = bgmm1.fit(X).predict(X)
-        Y_pred2 = bgmm2.fit_predict(X)
-        assert_array_equal(Y_pred1, Y_pred2)
+        y_pred1 = bgmm1.fit(X).predict(X)
+        y_pred2 = bgmm2.fit_predict(X)
+        assert_array_equal(y_pred1, y_pred2)
 
 
 def test_bayesian_mixture_fit_predict_n_init():
