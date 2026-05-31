@@ -44,7 +44,7 @@ DIMENSION = 3
 METRICS = {
     "euclidean": {},
     "manhattan": {},
-    "minkowski": dict(p=3),
+    "minkowski": {"p": 3},
     "chebyshev": {},
     "seuclidean": dict(V=rng.random_sample(DIMENSION)),
     "mahalanobis": dict(V=V_mahalanobis),
@@ -242,7 +242,7 @@ def test_gaussian_kde(tree_cls, n_samples=1000):
 
 
 @pytest.mark.parametrize(
-    "Cls, metric",
+    "tree_cls, metric",
     itertools.chain(
         [(KDTree, metric) for metric in KD_TREE_METRICS],
         [(BallTree, metric) for metric in BALL_TREE_METRICS],
@@ -251,16 +251,16 @@ def test_gaussian_kde(tree_cls, n_samples=1000):
 @pytest.mark.parametrize("k", (1, 3, 5))
 @pytest.mark.parametrize("dualtree", (True, False))
 @pytest.mark.parametrize("breadth_first", (True, False))
-def test_nn_tree_query(Cls, metric, k, dualtree, breadth_first):
+def test_nn_tree_query(tree_cls, metric, k, dualtree, breadth_first):
     rng = check_random_state(0)
     X = rng.random_sample((40, DIMENSION))
     Y = rng.random_sample((10, DIMENSION))
 
     kwargs = METRICS[metric]
 
-    kdt = Cls(X, leaf_size=1, metric=metric, **kwargs)
-    dist1, ind1 = kdt.query(Y, k, dualtree=dualtree, breadth_first=breadth_first)
-    dist2, ind2 = brute_force_neighbors(X, Y, k, metric, **kwargs)
+    kdt = tree_cls(X, leaf_size=1, metric=metric, **kwargs)
+    dist1, _ = kdt.query(Y, k, dualtree=dualtree, breadth_first=breadth_first)
+    dist2, _ = brute_force_neighbors(X, Y, k, metric, **kwargs)
 
     # don't check indices here: if there are any duplicate distances,
     # the indices may not match.  Distances should not have this problem.
@@ -268,11 +268,11 @@ def test_nn_tree_query(Cls, metric, k, dualtree, breadth_first):
 
 
 @pytest.mark.parametrize(
-    "Cls, metric",
+    "cls, metric",
     [(KDTree, "euclidean"), (BallTree, "euclidean"), (BallTree, dist_func)],
 )
 @pytest.mark.parametrize("protocol", (0, 1, 2))
-def test_pickle(Cls, metric, protocol):
+def test_pickle(cls, metric, protocol):
     rng = check_random_state(0)
     X = rng.random_sample((10, 3))
 
@@ -281,7 +281,7 @@ def test_pickle(Cls, metric, protocol):
     else:
         kwargs = {}
 
-    tree1 = Cls(X, leaf_size=1, metric=metric, **kwargs)
+    tree1 = cls(X, leaf_size=1, metric=metric, **kwargs)
 
     ind1, dist1 = tree1.query(X)
 
@@ -293,4 +293,4 @@ def test_pickle(Cls, metric, protocol):
     assert_array_almost_equal(ind1, ind2)
     assert_array_almost_equal(dist1, dist2)
 
-    assert isinstance(tree2, Cls)
+    assert isinstance(tree2, cls)
