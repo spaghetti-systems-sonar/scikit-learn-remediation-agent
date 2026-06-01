@@ -46,8 +46,8 @@ METRICS = {
     "manhattan": {},
     "minkowski": {"p": 3},
     "chebyshev": {},
-    "seuclidean": dict(V=rng.random_sample(DIMENSION)),
-    "mahalanobis": dict(V=V_mahalanobis),
+    "seuclidean": {"V": rng.random_sample(DIMENSION)},
+    "mahalanobis": {"V": V_mahalanobis},
 }
 
 KD_TREE_METRICS = ["euclidean", "manhattan", "chebyshev", "minkowski"]
@@ -85,7 +85,7 @@ def brute_force_neighbors(X, Y, k, metric, **kwargs):
     return dist, ind
 
 
-@pytest.mark.parametrize("Cls", [KDTree, BallTree])
+@pytest.mark.parametrize("cls", [KDTree, BallTree])
 @pytest.mark.parametrize(
     "kernel", ["gaussian", "tophat", "epanechnikov", "exponential", "linear", "cosine"]
 )
@@ -94,28 +94,28 @@ def brute_force_neighbors(X, Y, k, metric, **kwargs):
 @pytest.mark.parametrize("atol", [1e-6, 1e-2])
 @pytest.mark.parametrize("breadth_first", [True, False])
 def test_kernel_density(
-    Cls, kernel, h, rtol, atol, breadth_first, n_samples=100, n_features=3
+    cls, kernel, h, rtol, atol, breadth_first, n_samples=100, n_features=3
 ):
     rng = check_random_state(1)
     X = rng.random_sample((n_samples, n_features))
     Y = rng.random_sample((n_samples, n_features))
     dens_true = compute_kernel_slow(Y, X, kernel, h)
 
-    tree = Cls(X, leaf_size=10)
+    tree = cls(X, leaf_size=10)
     dens = tree.kernel_density(
         Y, h, atol=atol, rtol=rtol, kernel=kernel, breadth_first=breadth_first
     )
     assert_allclose(dens, dens_true, atol=atol, rtol=max(rtol, 1e-7))
 
 
-@pytest.mark.parametrize("Cls", [KDTree, BallTree])
-def test_neighbor_tree_query_radius(Cls, n_samples=100, n_features=10):
+@pytest.mark.parametrize("cls", [KDTree, BallTree])
+def test_neighbor_tree_query_radius(cls, n_samples=100, n_features=10):
     rng = check_random_state(0)
     X = 2 * rng.random_sample(size=(n_samples, n_features)) - 1
     query_pt = np.zeros(n_features, dtype=float)
 
     eps = 1e-15  # roundoff error can cause test to fail
-    tree = Cls(X, leaf_size=5)
+    tree = cls(X, leaf_size=5)
     rad = np.sqrt(((X - query_pt) ** 2).sum(1))
 
     for r in np.linspace(rad[0], rad[-1], 100):
@@ -128,14 +128,14 @@ def test_neighbor_tree_query_radius(Cls, n_samples=100, n_features=10):
         assert_array_almost_equal(i, ind)
 
 
-@pytest.mark.parametrize("Cls", [KDTree, BallTree])
-def test_neighbor_tree_query_radius_distance(Cls, n_samples=100, n_features=10):
+@pytest.mark.parametrize("cls", [KDTree, BallTree])
+def test_neighbor_tree_query_radius_distance(cls, n_samples=100, n_features=10):
     rng = check_random_state(0)
     X = 2 * rng.random_sample(size=(n_samples, n_features)) - 1
     query_pt = np.zeros(n_features, dtype=float)
 
     eps = 1e-15  # roundoff error can cause test to fail
-    tree = Cls(X, leaf_size=5)
+    tree = cls(X, leaf_size=5)
     rad = np.sqrt(((X - query_pt) ** 2).sum(1))
 
     for r in np.linspace(rad[0], rad[-1], 100):
