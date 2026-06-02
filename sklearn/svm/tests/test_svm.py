@@ -336,7 +336,7 @@ def test_oneclass_decision_function():
     X = 0.3 * rnd.randn(20, 2)
     X_test = np.r_[X + 2, X - 2]
     # Generate some abnormal novel observations
-    X_outliers = rnd.uniform(low=-4, high=4, size=(20, 2))
+    x_outliers = rnd.uniform(low=-4, high=4, size=(20, 2))
 
     # fit the model
     clf = svm.OneClassSVM(nu=0.1, kernel="rbf", gamma=0.1)
@@ -345,11 +345,11 @@ def test_oneclass_decision_function():
     # predict things
     y_pred_test = clf.predict(X_test)
     assert np.mean(y_pred_test == 1) > 0.9
-    y_pred_outliers = clf.predict(X_outliers)
+    y_pred_outliers = clf.predict(x_outliers)
     assert np.mean(y_pred_outliers == -1) > 0.9
     dec_func_test = clf.decision_function(X_test)
     assert_array_equal((dec_func_test > 0).ravel(), y_pred_test == 1)
-    dec_func_outliers = clf.decision_function(X_outliers)
+    dec_func_outliers = clf.decision_function(x_outliers)
     assert_array_equal((dec_func_outliers > 0).ravel(), y_pred_outliers == 1)
 
 
@@ -1316,7 +1316,7 @@ def test_gamma_scale():
 # XXX: https://github.com/scikit-learn/scikit-learn/issues/31883
 @pytest.mark.thread_unsafe
 @pytest.mark.parametrize(
-    "SVM, params",
+    "svm_class, params",
     [
         (LinearSVC, {"penalty": "l1", "loss": "squared_hinge", "dual": False}),
         (LinearSVC, {"penalty": "l2", "loss": "squared_hinge", "dual": True}),
@@ -1327,7 +1327,7 @@ def test_gamma_scale():
         (LinearSVR, {"loss": "squared_epsilon_insensitive", "dual": True}),
     ],
 )
-def test_linearsvm_liblinear_sample_weight(SVM, params, global_random_seed):
+def test_linearsvm_liblinear_sample_weight(svm_class, params, global_random_seed):
     X = np.array(
         [
             [1, 3],
@@ -1361,7 +1361,7 @@ def test_linearsvm_liblinear_sample_weight(SVM, params, global_random_seed):
         X2, y2, sample_weight, random_state=global_random_seed
     )
 
-    base_estimator = SVM(random_state=global_random_seed)
+    base_estimator = svm_class(random_state=global_random_seed)
     base_estimator.set_params(**params)
     base_estimator.set_params(tol=1e-12, max_iter=1000)
     est_no_weight = base.clone(base_estimator).fit(X, y)
@@ -1376,45 +1376,45 @@ def test_linearsvm_liblinear_sample_weight(SVM, params, global_random_seed):
             assert_allclose(result_without_weight, result_with_weight, rtol=1e-6)
 
 
-@pytest.mark.parametrize("Klass", (OneClassSVM, SVR, NuSVR))
-def test_n_support(Klass):
+@pytest.mark.parametrize("klass", (OneClassSVM, SVR, NuSVR))
+def test_n_support(klass):
     # Make n_support is correct for oneclass and SVR (used to be
     # non-initialized)
     # this is a non regression test for issue #14774
     X = np.array([[0], [0.44], [0.45], [0.46], [1]])
     y = np.arange(X.shape[0])
-    est = Klass()
+    est = klass()
     assert not hasattr(est, "n_support_")
     est.fit(X, y)
     assert est.n_support_[0] == est.support_vectors_.shape[0]
     assert est.n_support_.size == 1
 
 
-@pytest.mark.parametrize("Estimator", [svm.SVC, svm.SVR])
-def test_custom_kernel_not_array_input(Estimator):
+@pytest.mark.parametrize("estimator", [svm.SVC, svm.SVR])
+def test_custom_kernel_not_array_input(estimator):
     """Test using a custom kernel that is not fed with array-like for floats"""
     data = ["A A", "A", "B", "B B", "A B"]
     X = np.array([[2, 0], [1, 0], [0, 1], [0, 2], [1, 1]])  # count encoding
     y = np.array([1, 1, 2, 2, 1])
 
-    def string_kernel(X1, X2):
-        assert isinstance(X1[0], str)
-        n_samples1 = _num_samples(X1)
-        n_samples2 = _num_samples(X2)
+    def string_kernel(x1, x2):
+        assert isinstance(x1[0], str)
+        n_samples1 = _num_samples(x1)
+        n_samples2 = _num_samples(x2)
         K = np.zeros((n_samples1, n_samples2))
         for ii in range(n_samples1):
             for jj in range(ii, n_samples2):
-                K[ii, jj] = X1[ii].count("A") * X2[jj].count("A")
-                K[ii, jj] += X1[ii].count("B") * X2[jj].count("B")
+                K[ii, jj] = x1[ii].count("A") * x2[jj].count("A")
+                K[ii, jj] += x1[ii].count("B") * x2[jj].count("B")
                 K[jj, ii] = K[ii, jj]
         return K
 
     K = string_kernel(data, data)
     assert_array_equal(np.dot(X, X.T), K)
 
-    svc1 = Estimator(kernel=string_kernel).fit(data, y)
-    svc2 = Estimator(kernel="linear").fit(X, y)
-    svc3 = Estimator(kernel="precomputed").fit(K, y)
+    svc1 = estimator(kernel=string_kernel).fit(data, y)
+    svc2 = estimator(kernel="linear").fit(X, y)
+    svc3 = estimator(kernel="precomputed").fit(K, y)
 
     assert svc1.score(data, y) == svc3.score(K, y)
     assert svc1.score(data, y) == svc2.score(X, y)
