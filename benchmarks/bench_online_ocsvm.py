@@ -147,7 +147,7 @@ for dat, dataset_name in enumerate(datasets):
 
         print("----------- LibSVM OCSVM ------------")
         ocsvm = OneClassSVM(kernel="rbf", gamma=gamma, nu=nu)
-        pipe_libsvm = make_pipeline(std, ocsvm)
+        pipe_libsvm = make_pipeline(std, ocsvm, memory=None)
 
         tstart = time()
         pipe_libsvm.fit(X_train)
@@ -165,7 +165,7 @@ for dat, dataset_name in enumerate(datasets):
         print("----------- Online OCSVM ------------")
         nystroem = Nystroem(gamma=gamma, random_state=random_state)
         online_ocsvm = SGDOneClassSVM(nu=nu, random_state=random_state)
-        pipe_online = make_pipeline(std, nystroem, online_ocsvm)
+        pipe_online = make_pipeline(std, nystroem, online_ocsvm, memory=None)
 
         tstart = time()
         pipe_online.fit(X_train)
