@@ -93,7 +93,8 @@ preprocessor = ColumnTransformer(
 # Append classifier to preprocessing pipeline.
 # Now we have a full prediction pipeline.
 clf = Pipeline(
-    steps=[("preprocessor", preprocessor), ("classifier", LogisticRegression())]
+    steps=[("preprocessor", preprocessor), ("classifier", LogisticRegression())],
+    memory=None,
 ).set_output(transform="pandas")
 
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=0)
@@ -149,7 +150,8 @@ preprocessor = ColumnTransformer(
     ]
 )
 clf = Pipeline(
-    steps=[("preprocessor", preprocessor), ("classifier", LogisticRegression())]
+    steps=[("preprocessor", preprocessor), ("classifier", LogisticRegression())],
+    memory=None,
 )
 
 
