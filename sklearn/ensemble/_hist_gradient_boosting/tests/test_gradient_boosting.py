@@ -1707,8 +1707,9 @@ def test_different_bitness_pickle():
     def pickle_dump_with_different_bitness():
         f = io.BytesIO()
         p = pickle.Pickler(f)
-        p.dispatch_table = copyreg.dispatch_table.copy()
-        p.dispatch_table[TreePredictor] = reduce_predictor_with_different_bitness
+        dispatch = dict(copyreg.dispatch_table)
+        dispatch[TreePredictor] = reduce_predictor_with_different_bitness
+        p.dispatch_table = dispatch
 
         p.dump(clf)
         f.seek(0)
@@ -1740,8 +1741,9 @@ def test_different_bitness_joblib_pickle():
     def joblib_dump_with_different_bitness():
         f = io.BytesIO()
         p = NumpyPickler(f)
-        p.dispatch_table = copyreg.dispatch_table.copy()
-        p.dispatch_table[TreePredictor] = reduce_predictor_with_different_bitness
+        dispatch = dict(copyreg.dispatch_table)
+        dispatch[TreePredictor] = reduce_predictor_with_different_bitness
+        p.dispatch_table = dispatch
 
         p.dump(clf)
         f.seek(0)

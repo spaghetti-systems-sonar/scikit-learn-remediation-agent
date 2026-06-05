@@ -1480,19 +1480,21 @@ def test_train_test_split_32bit_overflow():
 
 def test_train_test_split_pandas():
     # check train_test_split doesn't destroy pandas dataframe
-    types = [MockDataFrame]
+    # X dataframe
+    X_df = MockDataFrame(X)
+    X_train, X_test = train_test_split(X_df)
+    assert isinstance(X_train, MockDataFrame)
+    assert isinstance(X_test, MockDataFrame)
+
     try:
         from pandas import DataFrame
 
-        types.append(DataFrame)
+        X_df = DataFrame(X)
+        X_train, X_test = train_test_split(X_df)
+        assert isinstance(X_train, DataFrame)
+        assert isinstance(X_test, DataFrame)
     except ImportError:
         pass
-    for InputFeatureType in types:
-        # X dataframe
-        X_df = InputFeatureType(X)
-        X_train, X_test = train_test_split(X_df)
-        assert isinstance(X_train, InputFeatureType)
-        assert isinstance(X_test, InputFeatureType)
 
 
 @pytest.mark.parametrize(
