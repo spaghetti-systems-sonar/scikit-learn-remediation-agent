@@ -2145,8 +2145,9 @@ def test_different_endianness_pickle():
     def get_pickle_non_native_endianness():
         f = io.BytesIO()
         p = pickle.Pickler(f)
-        p.dispatch_table = copyreg.dispatch_table.copy()
-        p.dispatch_table[np.ndarray] = reduce_ndarray
+        dispatch_table = copyreg.dispatch_table.copy()
+        dispatch_table[np.ndarray] = reduce_ndarray
+        p.dispatch_table = dispatch_table
 
         p.dump(clf)
         f.seek(0)
@@ -2239,8 +2240,9 @@ def test_different_bitness_pickle():
     def pickle_dump_with_different_bitness():
         f = io.BytesIO()
         p = pickle.Pickler(f)
-        p.dispatch_table = copyreg.dispatch_table.copy()
-        p.dispatch_table[CythonTree] = reduce_tree_with_different_bitness
+        dispatch_table = dict(copyreg.dispatch_table)
+        dispatch_table[CythonTree] = reduce_tree_with_different_bitness
+        p.dispatch_table = dispatch_table
 
         p.dump(clf)
         f.seek(0)
@@ -2266,8 +2268,9 @@ def test_different_bitness_joblib_pickle():
     def joblib_dump_with_different_bitness():
         f = io.BytesIO()
         p = NumpyPickler(f)
-        p.dispatch_table = copyreg.dispatch_table.copy()
-        p.dispatch_table[CythonTree] = reduce_tree_with_different_bitness
+        dispatch_table = dict(copyreg.dispatch_table)
+        dispatch_table[CythonTree] = reduce_tree_with_different_bitness
+        p.dispatch_table = dispatch_table
 
         p.dump(clf)
         f.seek(0)

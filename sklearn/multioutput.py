@@ -549,10 +549,10 @@ class MultiOutputClassifier(ClassifierMixin, _MultiOutputEstimator):
             # raise an AttributeError if `predict_proba` does not exist for
             # each estimator
             [getattr(est, "predict_proba") for est in self.estimators_]
-            return True
-        # raise an AttributeError if `predict_proba` does not exist for the
-        # unfitted estimator
-        getattr(self.estimator, "predict_proba")
+        else:
+            # raise an AttributeError if `predict_proba` does not exist for the
+            # unfitted estimator
+            getattr(self.estimator, "predict_proba")
         return True
 
     @available_if(_check_predict_proba)
