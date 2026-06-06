@@ -210,11 +210,12 @@ weak_learners_info = pd.DataFrame(
 axs = weak_learners_info.plot(
     subplots=True, layout=(1, 2), figsize=(10, 4), legend=False, color="tab:blue"
 )
-axs[0, 0].set_ylabel("Train error")
-axs[0, 0].set_title("Weak learner's training error")
-axs[0, 1].set_ylabel("Weight")
-axs[0, 1].set_title("Weak learner's weight")
-fig = axs[0, 0].get_figure()
+axs = axs.ravel()
+axs[0].set_ylabel("Train error")
+axs[0].set_title("Weak learner's training error")
+axs[1].set_ylabel("Weight")
+axs[1].set_title("Weak learner's weight")
+fig = axs[0].get_figure()
 fig.suptitle("Weak learner's errors and weights for the AdaBoostClassifier")
 fig.tight_layout()
 
