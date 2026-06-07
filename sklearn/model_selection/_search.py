@@ -381,9 +381,9 @@ def _search_estimator_has(attr):
         if hasattr(self, "best_estimator_"):
             # raise an AttributeError if `attr` does not exist
             getattr(self.best_estimator_, attr)
-            return True
-        # raise an AttributeError if `attr` does not exist
-        getattr(self.estimator, attr)
+        else:
+            # raise an AttributeError if `attr` does not exist
+            getattr(self.estimator, attr)
         return True
 
     return check
