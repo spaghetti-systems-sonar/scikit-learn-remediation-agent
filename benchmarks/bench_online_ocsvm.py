@@ -30,6 +30,9 @@ from sklearn.preprocessing import LabelBinarizer, StandardScaler
 from sklearn.svm import OneClassSVM
 from sklearn.utils import shuffle
 
+NORMAL_LABEL = b"normal."
+ONLINE_SVM_LABEL = "Online SVM"
+
 font = {"weight": "normal", "size": 15}
 
 matplotlib.rc("font", **font)
@@ -92,7 +95,7 @@ for dat, dataset_name in enumerate(datasets):
         lb = LabelBinarizer()
         x1 = lb.fit_transform(X[:, 1].astype(str))
         X = np.c_[X[:, :1], x1, X[:, 2:]]
-        y = (y != b"normal.").astype(int)
+        y = (y != NORMAL_LABEL).astype(int)
 
     if dataset_name == "SA":
         lb = LabelBinarizer()
@@ -102,10 +105,10 @@ for dat, dataset_name in enumerate(datasets):
         x2 = lb.fit_transform(X[:, 2].astype(str))
         x3 = lb.fit_transform(X[:, 3].astype(str))
         X = np.c_[X[:, :1], x1, x2, x3, X[:, 4:]]
-        y = (y != b"normal.").astype(int)
+        y = (y != NORMAL_LABEL).astype(int)
 
     if dataset_name in ["http", "smtp"]:
-        y = (y != b"normal.").astype(int)
+        y = (y != NORMAL_LABEL).astype(int)
 
     print_outlier_ratio(y)
 
@@ -260,7 +263,7 @@ ax.set_ylabel("AUC")
 ax.set_ylim((0, 1.3))
 rect_libsvm = ax.bar(ind, auc_libsvm_all, width=width, color="r")
 rect_online = ax.bar(ind + width, auc_online_all, width=width, color="y")
-ax.legend((rect_libsvm[0], rect_online[0]), ("LibSVM", "Online SVM"))
+ax.legend((rect_libsvm[0], rect_online[0]), ("LibSVM", ONLINE_SVM_LABEL))
 ax.set_xticks(ind + width / 2)
 ax.set_xticklabels(x_tickslabels)
 autolabel_auc(rect_libsvm, ax)
@@ -273,7 +276,7 @@ ax.set_ylabel("Training time (sec) - Log scale")
 ax.set_yscale("log")
 rect_libsvm = ax.bar(ind, fit_time_libsvm_all, color="r", width=width)
 rect_online = ax.bar(ind + width, fit_time_online_all, color="y", width=width)
-ax.legend((rect_libsvm[0], rect_online[0]), ("LibSVM", "Online SVM"))
+ax.legend((rect_libsvm[0], rect_online[0]), ("LibSVM", ONLINE_SVM_LABEL))
 ax.set_xticks(ind + width / 2)
 ax.set_xticklabels(x_tickslabels)
 autolabel_time(rect_libsvm, ax)
@@ -286,7 +289,7 @@ ax.set_ylabel("Testing time (sec) - Log scale")
 ax.set_yscale("log")
 rect_libsvm = ax.bar(ind, predict_time_libsvm_all, color="r", width=width)
 rect_online = ax.bar(ind + width, predict_time_online_all, color="y", width=width)
-ax.legend((rect_libsvm[0], rect_online[0]), ("LibSVM", "Online SVM"))
+ax.legend((rect_libsvm[0], rect_online[0]), ("LibSVM", ONLINE_SVM_LABEL))
 ax.set_xticks(ind + width / 2)
 ax.set_xticklabels(x_tickslabels)
 autolabel_time(rect_libsvm, ax)
