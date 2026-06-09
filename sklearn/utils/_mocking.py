@@ -308,7 +308,7 @@ class CheckingClassifier(ClassifierMixin, BaseEstimator):
         else:
             return rng.randn(_num_samples(X), len(self.classes_))
 
-    def score(self, X=None, Y=None):
+    def score(self, X=None, Y=None, sample_weight=None):
         """Fake score.
 
         Parameters
@@ -402,7 +402,7 @@ class _MockEstimatorOnOffPrediction(BaseEstimator):
     def __init__(self, response_methods=None):
         self.response_methods = response_methods
 
-    def fit(self, X, y):
+    def fit(self, X, y):  # noqa: X is required by the estimator API
         self.classes_ = np.unique(y)
         return self
 
