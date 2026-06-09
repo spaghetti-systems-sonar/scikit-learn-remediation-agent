@@ -58,7 +58,7 @@ class CustomEstimator(BaseEstimator, ClassifierMixin):
         predictions = [self.classes_[0]] * len(X)
         return predictions
 
-    def score(self, X, y):
+    def score(self, X, y, sample_weight=None):
         """
         Calculate Score
 

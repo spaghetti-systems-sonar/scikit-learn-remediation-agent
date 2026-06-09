@@ -58,8 +58,6 @@ x_axis = np.linspace(0, 1, n_axis)
 
 datasets = ["http", "smtp", "SA", "SF", "forestcover"]
 
-novelty_detection = False  # if False, training set polluted by outliers
-
 random_states = [42]
 nu = 0.05
 
@@ -141,10 +139,6 @@ for dat, dataset_name in enumerate(datasets):
         X_test = X[n_samples_train:]
         y_train = y[:n_samples_train]
         y_test = y[n_samples_train:]
-
-        if novelty_detection:
-            X_train = X_train[y_train == 0]
-            y_train = y_train[y_train == 0]
 
         std = StandardScaler()
 

@@ -183,7 +183,7 @@ class IncrementalPCA(_BasePCA):
     (1797, 7)
     """
 
-    __metadata_request__partial_fit = {"check_input": metadata_routing.UNUSED}
+    __metadata_request__partial_fit = {"check_input": metadata_routing.UNUSED}  # NOSONAR
 
     _parameter_constraints: dict = {
         "n_components": [Interval(Integral, 1, None, closed="left"), None],
