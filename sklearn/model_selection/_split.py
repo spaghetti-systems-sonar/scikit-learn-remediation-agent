@@ -2183,7 +2183,7 @@ class GroupShuffleSplit(GroupsConsumerMixin, BaseShuffleSplit):
         )
         self._default_test_size = 0.2
 
-    def _iter_indices(self, X, y, groups):
+    def _iter_indices(self, X, y=None, groups=None):
         if groups is None:
             raise ValueError("The 'groups' parameter should not be None.")
         groups = check_array(groups, input_name="groups", ensure_2d=False, dtype=None)
@@ -2322,7 +2322,7 @@ class StratifiedShuffleSplit(BaseShuffleSplit):
         )
         self._default_test_size = 0.1
 
-    def _iter_indices(self, X, y, groups=None):
+    def _iter_indices(self, X, y=None, groups=None):
         n_samples = _num_samples(X)
         y = check_array(y, input_name="y", ensure_2d=False, dtype=None)
         n_train, n_test = _validate_shuffle_split(
@@ -2399,7 +2399,7 @@ class StratifiedShuffleSplit(BaseShuffleSplit):
 
             yield train, test
 
-    def split(self, X, y, groups=None):
+    def split(self, X, y=None, groups=None):
         """Generate indices to split data into training and test set.
 
         Parameters
@@ -2611,7 +2611,7 @@ class PredefinedSplit(BaseCrossValidator):
             test_index = ind[test_index]
             yield train_index, test_index
 
-    def _iter_test_masks(self):
+    def _iter_test_masks(self, X=None, y=None, groups=None):
         """Generates boolean masks corresponding to test sets."""
         for f in self.unique_folds:
             test_index = np.where(self.test_fold == f)[0]
