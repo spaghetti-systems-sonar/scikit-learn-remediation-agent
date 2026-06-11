@@ -1746,7 +1746,11 @@ class _IdentityClassifier(LinearClassifierMixin, BaseEstimator):
     """
 
     def __init__(self, classes):
-        self.classes_ = classes
+        self.classes = classes
+
+    def fit(self, X=None, y=None):
+        self.classes_ = self.classes
+        return self
 
     def decision_function(self, y_predict):
         return y_predict
@@ -2390,7 +2394,7 @@ class _RidgeGCV(LinearModel):
         if self.is_clf:
             identity_estimator = _IdentityClassifier(
                 classes=xp.arange(n_y, device=device_)
-            )
+            ).fit()
             _score = scorer(
                 identity_estimator,
                 predictions,

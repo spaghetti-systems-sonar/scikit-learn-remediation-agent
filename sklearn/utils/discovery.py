@@ -18,6 +18,8 @@ _MODULE_TO_IGNORE = {
     "estimator_checks",
 }
 
+_SKLEARN_PREFIX = "sklearn."
+
 
 def all_estimators(type_filter=None):
     """Get a list of all estimators from `sklearn`.
@@ -92,7 +94,7 @@ def all_estimators(type_filter=None):
     # Ignore deprecation warnings triggered at import time and from walking
     # packages
     with ignore_warnings(category=FutureWarning):
-        for _, module_name, _ in pkgutil.walk_packages(path=[root], prefix="sklearn."):
+        for _, module_name, _ in pkgutil.walk_packages(path=[root], prefix=_SKLEARN_PREFIX):
             module_parts = module_name.split(".")
             if (
                 any(part in _MODULE_TO_IGNORE for part in module_parts)
@@ -174,7 +176,7 @@ def all_displays():
     # Ignore deprecation warnings triggered at import time and from walking
     # packages
     with ignore_warnings(category=FutureWarning):
-        for _, module_name, _ in pkgutil.walk_packages(path=[root], prefix="sklearn."):
+        for _, module_name, _ in pkgutil.walk_packages(path=[root], prefix=_SKLEARN_PREFIX):
             module_parts = module_name.split(".")
             if (
                 any(part in _MODULE_TO_IGNORE for part in module_parts)
@@ -201,7 +203,7 @@ def _is_checked_function(item):
         return False
 
     mod = item.__module__
-    if not mod.startswith("sklearn.") or mod.endswith("estimator_checks"):
+    if not mod.startswith(_SKLEARN_PREFIX) or mod.endswith("estimator_checks"):
         return False
 
     return True
@@ -232,7 +234,7 @@ def all_functions():
     # Ignore deprecation warnings triggered at import time and from walking
     # packages
     with ignore_warnings(category=FutureWarning):
-        for _, module_name, _ in pkgutil.walk_packages(path=[root], prefix="sklearn."):
+        for _, module_name, _ in pkgutil.walk_packages(path=[root], prefix=_SKLEARN_PREFIX):
             module_parts = module_name.split(".")
             if (
                 any(part in _MODULE_TO_IGNORE for part in module_parts)
