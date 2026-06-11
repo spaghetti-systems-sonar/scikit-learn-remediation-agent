@@ -1468,7 +1468,7 @@ def _approximate_mode(class_counts, n_draws, rng):
         # add according to remainder, but break ties
         # randomly to avoid biases
         for value in values:
-            (inds,) = np.where(remainder == value)
+            (inds,) = np.nonzero(remainder == value)
             # if we need_to_add less than what's in inds
             # we draw randomly from them.
             # if we need to add more, we add them all and
