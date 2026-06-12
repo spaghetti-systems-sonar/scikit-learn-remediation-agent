@@ -115,10 +115,13 @@ class NumpyDocString(Mapping):
 
     """
 
+    _EXTENDED_SUMMARY = "Extended Summary"
+    _SEE_ALSO = "See Also"
+
     sections = {
         "Signature": "",
         "Summary": [""],
-        "Extended Summary": [],
+        _EXTENDED_SUMMARY: [],
         "Parameters": [],
         "Attributes": [],
         "Methods": [],
@@ -129,7 +132,7 @@ class NumpyDocString(Mapping):
         "Raises": [],
         "Warns": [],
         "Warnings": [],
-        "See Also": [],
+        _SEE_ALSO: [],
         "Notes": [],
         "References": "",
         "Examples": "",
@@ -381,7 +384,7 @@ class NumpyDocString(Mapping):
             self["Summary"] = summary
 
         if not self._is_at_section():
-            self["Extended Summary"] = self._read_to_next_section()
+            self[self._EXTENDED_SUMMARY] = self._read_to_next_section()
 
     def _parse(self):
         self._doc.reset()
@@ -414,8 +417,8 @@ class NumpyDocString(Mapping):
                 )
             elif section.startswith(".. index::"):
                 self["index"] = self._parse_index(section, content)
-            elif section == "See Also":
-                self["See Also"] = self._parse_see_also(content)
+            elif section == self._SEE_ALSO:
+                self[self._SEE_ALSO] = self._parse_see_also(content)
             else:
                 self[section] = content
 
@@ -466,8 +469,8 @@ class NumpyDocString(Mapping):
         return []
 
     def _str_extended_summary(self):
-        if self["Extended Summary"]:
-            return self["Extended Summary"] + [""]
+        if self[self._EXTENDED_SUMMARY]:
+            return self[self._EXTENDED_SUMMARY] + [""]
         return []
 
     def _str_param_list(self, name):
@@ -495,13 +498,13 @@ class NumpyDocString(Mapping):
         return out
 
     def _str_see_also(self, func_role):
-        if not self["See Also"]:
+        if not self[self._SEE_ALSO]:
             return []
         out = []
-        out += self._str_header("See Also")
+        out += self._str_header(self._SEE_ALSO)
         out += [""]
         last_had_desc = True
-        for funcs, desc in self["See Also"]:
+        for funcs, desc in self[self._SEE_ALSO]:
             assert isinstance(funcs, list)
             links = []
             for func, role in funcs:
