@@ -20,6 +20,8 @@ from sklearn.utils.validation import assert_all_finite, validate_data
 
 __all__ = ["SpectralBiclustering", "SpectralCoclustering"]
 
+_KMEANS_PLUS_PLUS = "k-means++"
+
 
 def _scale_normalize(X):
     """Normalize ``X`` by scaling rows and columns independently.
@@ -86,7 +88,7 @@ class BaseSpectral(BiclusterMixin, BaseEstimator, metaclass=ABCMeta):
         "svd_method": [StrOptions({"randomized", "arpack"})],
         "n_svd_vecs": [Interval(Integral, 0, None, closed="left"), None],
         "mini_batch": ["boolean"],
-        "init": [StrOptions({"k-means++", "random"}), np.ndarray],
+        "init": [StrOptions({_KMEANS_PLUS_PLUS, "random"}), np.ndarray],
         "n_init": [Interval(Integral, 1, None, closed="left")],
         "random_state": ["random_state"],
     }
@@ -98,7 +100,7 @@ class BaseSpectral(BiclusterMixin, BaseEstimator, metaclass=ABCMeta):
         svd_method="randomized",
         n_svd_vecs=None,
         mini_batch=False,
-        init="k-means++",
+        init=_KMEANS_PLUS_PLUS,
         n_init=10,
         random_state=None,
     ):
@@ -324,7 +326,7 @@ class SpectralCoclustering(BaseSpectral):
         svd_method="randomized",
         n_svd_vecs=None,
         mini_batch=False,
-        init="k-means++",
+        init=_KMEANS_PLUS_PLUS,
         n_init=10,
         random_state=None,
     ):
@@ -504,7 +506,7 @@ class SpectralBiclustering(BaseSpectral):
         svd_method="randomized",
         n_svd_vecs=None,
         mini_batch=False,
-        init="k-means++",
+        init=_KMEANS_PLUS_PLUS,
         n_init=10,
         random_state=None,
     ):

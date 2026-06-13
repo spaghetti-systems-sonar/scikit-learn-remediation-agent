@@ -96,12 +96,14 @@ def remove_from(alist, to_remove):
     return [each for each in alist if each not in to_remove]
 
 
+GITHUB_FOLDER = "build_tools/github"
+
 build_metadata_list = [
     {
         "name": "pylatest_conda_forge_cuda_array-api_linux-64",
         "type": "conda",
         "tag": "cuda",
-        "folder": "build_tools/github",
+        "folder": GITHUB_FOLDER,
         "platform": "linux-64",
         "channels": ["rapidsai", "conda-forge"],
         "conda_dependencies": common_dependencies
@@ -122,7 +124,7 @@ build_metadata_list = [
         "name": "pylatest_conda_forge_mkl_linux-64",
         "type": "conda",
         "tag": "main-ci",
-        "folder": "build_tools/github",
+        "folder": GITHUB_FOLDER,
         "platform": "linux-64",
         "channels": ["conda-forge"],
         "conda_dependencies": common_dependencies
@@ -144,7 +146,7 @@ build_metadata_list = [
         "name": "pylatest_conda_forge_osx-arm64",
         "type": "conda",
         "tag": "main-ci",
-        "folder": "build_tools/github",
+        "folder": GITHUB_FOLDER,
         "platform": "osx-arm64",
         "channels": ["conda-forge"],
         "conda_dependencies": common_dependencies
@@ -161,7 +163,7 @@ build_metadata_list = [
         "name": "pylatest_conda_forge_mkl_no_openmp",
         "type": "conda",
         "tag": "main-ci",
-        "folder": "build_tools/github",
+        "folder": GITHUB_FOLDER,
         "platform": "osx-64",
         "channels": ["conda-forge"],
         "conda_dependencies": common_dependencies + ["ccache"],
@@ -173,7 +175,7 @@ build_metadata_list = [
         "name": "pymin_conda_forge_openblas_min_dependencies",
         "type": "conda",
         "tag": "main-ci",
-        "folder": "build_tools/github",
+        "folder": GITHUB_FOLDER,
         "platform": "linux-64",
         "channels": ["conda-forge"],
         "conda_dependencies": remove_from(common_dependencies, ["pandas"])
@@ -203,7 +205,7 @@ build_metadata_list = [
         "name": "pymin_conda_forge_openblas_ubuntu_2204",
         "type": "conda",
         "tag": "main-ci",
-        "folder": "build_tools/github",
+        "folder": GITHUB_FOLDER,
         "platform": "linux-64",
         "channels": ["conda-forge"],
         "conda_dependencies": (
@@ -220,7 +222,7 @@ build_metadata_list = [
         "name": "pylatest_pip_openblas_pandas",
         "type": "conda",
         "tag": "main-ci",
-        "folder": "build_tools/github",
+        "folder": GITHUB_FOLDER,
         "platform": "linux-64",
         "channels": ["conda-forge"],
         "conda_dependencies": ["python", "ccache"],
@@ -244,7 +246,7 @@ build_metadata_list = [
         "name": "pylatest_pip_scipy_dev",
         "type": "conda",
         "tag": "scipy-dev",
-        "folder": "build_tools/github",
+        "folder": GITHUB_FOLDER,
         "platform": "linux-64",
         "channels": ["conda-forge"],
         "conda_dependencies": ["python", "ccache"],
@@ -280,7 +282,7 @@ build_metadata_list = [
         "name": "pylatest_free_threaded",
         "type": "conda",
         "tag": "free-threaded",
-        "folder": "build_tools/github",
+        "folder": GITHUB_FOLDER,
         "platform": "linux-64",
         "channels": ["conda-forge"],
         "conda_dependencies": [
@@ -302,7 +304,7 @@ build_metadata_list = [
         "name": "pymin_conda_forge_openblas",
         "type": "conda",
         "tag": "main-ci",
-        "folder": "build_tools/github",
+        "folder": GITHUB_FOLDER,
         "platform": "win-64",
         "channels": ["conda-forge"],
         "conda_dependencies": remove_from(
@@ -418,7 +420,7 @@ build_metadata_list = [
         "name": "pymin_conda_forge_arm",
         "type": "conda",
         "tag": "main-ci",
-        "folder": "build_tools/github",
+        "folder": GITHUB_FOLDER,
         "platform": "linux-aarch64",
         "channels": ["conda-forge"],
         "conda_dependencies": remove_from(
@@ -436,7 +438,7 @@ build_metadata_list = [
         "name": "debian_32bit",
         "type": "pip",
         "tag": "main-ci",
-        "folder": "build_tools/github",
+        "folder": GITHUB_FOLDER,
         "pip_dependencies": [
             "cython",
             "joblib",
@@ -456,7 +458,7 @@ build_metadata_list = [
         "name": "ubuntu_atlas",
         "type": "pip",
         "tag": "main-ci",
-        "folder": "build_tools/github",
+        "folder": GITHUB_FOLDER,
         "pip_dependencies": [
             "cython",
             "joblib",

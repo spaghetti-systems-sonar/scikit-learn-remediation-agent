@@ -59,6 +59,12 @@ LEARNING_RATE_TYPES = {
 
 PENALTY_TYPES = {"none": 0, "l2": 2, "l1": 1, "elasticnet": 3}
 
+_MAX_ITER_CONVERGENCE_MSG = (
+    "Maximum number of iteration reached before "
+    "convergence. Consider increasing max_iter to "
+    "improve the fit."
+)
+
 DEFAULT_EPSILON = 0.1
 # Default value of ``epsilon`` parameter.
 
@@ -739,11 +745,7 @@ class BaseSGDClassifier(LinearClassifierMixin, BaseSGD, metaclass=ABCMeta):
             and self.n_iter_ == self.max_iter
         ):
             warnings.warn(
-                (
-                    "Maximum number of iteration reached before "
-                    "convergence. Consider increasing max_iter to "
-                    "improve the fit."
-                ),
+                _MAX_ITER_CONVERGENCE_MSG,
                 ConvergenceWarning,
             )
 
@@ -1618,11 +1620,7 @@ class BaseSGDRegressor(RegressorMixin, BaseSGD):
             and self.n_iter_ == self.max_iter
         ):
             warnings.warn(
-                (
-                    "Maximum number of iteration reached before "
-                    "convergence. Consider increasing max_iter to "
-                    "improve the fit."
-                ),
+                _MAX_ITER_CONVERGENCE_MSG,
                 ConvergenceWarning,
             )
 
@@ -2551,11 +2549,7 @@ class SGDOneClassSVM(OutlierMixin, BaseSGD):
             and self.n_iter_ == self.max_iter
         ):
             warnings.warn(
-                (
-                    "Maximum number of iteration reached before "
-                    "convergence. Consider increasing max_iter to "
-                    "improve the fit."
-                ),
+                _MAX_ITER_CONVERGENCE_MSG,
                 ConvergenceWarning,
             )
 

@@ -42,6 +42,8 @@ from sklearn.utils.validation import _num_samples
 # model on small to medium data.
 signature = lru_cache(maxsize=32)(inspect.signature)
 
+_GRADIENT_EVAL_ERROR_MSG = "Gradient can only be evaluated when Y is None."
+
 
 def _check_length_scale(X, length_scale):
     length_scale = np.squeeze(length_scale).astype(float)
@@ -1273,7 +1275,7 @@ class ConstantKernel(StationaryKernelMixin, GenericKernelMixin, Kernel):
         if Y is None:
             Y = X
         elif eval_gradient:
-            raise ValueError("Gradient can only be evaluated when Y is None.")
+            raise ValueError(_GRADIENT_EVAL_ERROR_MSG)
 
         K = np.full(
             (_num_samples(X), _num_samples(Y)),
@@ -1401,7 +1403,7 @@ class WhiteKernel(StationaryKernelMixin, GenericKernelMixin, Kernel):
             is True.
         """
         if Y is not None and eval_gradient:
-            raise ValueError("Gradient can only be evaluated when Y is None.")
+            raise ValueError(_GRADIENT_EVAL_ERROR_MSG)
 
         if Y is None:
             K = self.noise_level * np.eye(_num_samples(X))
@@ -1565,7 +1567,7 @@ class RBF(StationaryKernelMixin, NormalizedKernelMixin, Kernel):
             np.fill_diagonal(K, 1)
         else:
             if eval_gradient:
-                raise ValueError("Gradient can only be evaluated when Y is None.")
+                raise ValueError(_GRADIENT_EVAL_ERROR_MSG)
             dists = cdist(X / length_scale, Y / length_scale, metric="sqeuclidean")
             K = np.exp(-0.5 * dists)
 
@@ -1716,7 +1718,7 @@ class Matern(RBF):
             dists = pdist(X / length_scale, metric="euclidean")
         else:
             if eval_gradient:
-                raise ValueError("Gradient can only be evaluated when Y is None.")
+                raise ValueError(_GRADIENT_EVAL_ERROR_MSG)
             dists = cdist(X / length_scale, Y / length_scale, metric="euclidean")
 
         if self.nu == 0.5:
@@ -1922,7 +1924,7 @@ class RationalQuadratic(StationaryKernelMixin, NormalizedKernelMixin, Kernel):
             np.fill_diagonal(K, 1)
         else:
             if eval_gradient:
-                raise ValueError("Gradient can only be evaluated when Y is None.")
+                raise ValueError(_GRADIENT_EVAL_ERROR_MSG)
             dists = cdist(X, Y, metric="sqeuclidean")
             K = (1 + dists / (2 * self.alpha * self.length_scale**2)) ** -self.alpha
 
@@ -2066,7 +2068,7 @@ class ExpSineSquared(StationaryKernelMixin, NormalizedKernelMixin, Kernel):
             K = np.exp(-2 * (sin_of_arg / self.length_scale) ** 2)
         else:
             if eval_gradient:
-                raise ValueError("Gradient can only be evaluated when Y is None.")
+                raise ValueError(_GRADIENT_EVAL_ERROR_MSG)
             dists = cdist(X, Y, metric="euclidean")
             K = np.exp(
                 -2 * (np.sin(np.pi / self.periodicity * dists) / self.length_scale) ** 2
@@ -2197,7 +2199,7 @@ class DotProduct(Kernel):
             K = np.inner(X, X) + self.sigma_0**2
         else:
             if eval_gradient:
-                raise ValueError("Gradient can only be evaluated when Y is None.")
+                raise ValueError(_GRADIENT_EVAL_ERROR_MSG)
             K = np.inner(X, Y) + self.sigma_0**2
 
         if eval_gradient:
