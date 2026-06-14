@@ -55,6 +55,8 @@ __all__ = [
     "train_test_split",
 ]
 
+_GROUPS_NOT_NONE_MSG = "The 'groups' parameter should not be None."
+
 
 class _UnsupportedGroupCVMixin:
     """Mixin for splitters that do not support Groups."""
@@ -610,7 +612,7 @@ class GroupKFold(GroupsConsumerMixin, _BaseKFold):
 
     def _iter_test_indices(self, X, y, groups):
         if groups is None:
-            raise ValueError("The 'groups' parameter should not be None.")
+            raise ValueError(_GROUPS_NOT_NONE_MSG)
         groups = check_array(groups, input_name="groups", ensure_2d=False, dtype=None)
 
         unique_groups, group_idx = np.unique(groups, return_inverse=True)
@@ -1376,7 +1378,7 @@ class LeaveOneGroupOut(GroupsConsumerMixin, BaseCrossValidator):
 
     def _iter_test_masks(self, X, y, groups):
         if groups is None:
-            raise ValueError("The 'groups' parameter should not be None.")
+            raise ValueError(_GROUPS_NOT_NONE_MSG)
         # We make a copy of groups to avoid side-effects during iteration
         groups = check_array(
             groups, input_name="groups", copy=True, ensure_2d=False, dtype=None
@@ -1413,7 +1415,7 @@ class LeaveOneGroupOut(GroupsConsumerMixin, BaseCrossValidator):
             Returns the number of splitting iterations in the cross-validator.
         """
         if groups is None:
-            raise ValueError("The 'groups' parameter should not be None.")
+            raise ValueError(_GROUPS_NOT_NONE_MSG)
         groups = check_array(groups, input_name="groups", ensure_2d=False, dtype=None)
         return len(np.unique(groups))
 
@@ -1502,7 +1504,7 @@ class LeavePGroupsOut(GroupsConsumerMixin, BaseCrossValidator):
 
     def _iter_test_masks(self, X, y, groups):
         if groups is None:
-            raise ValueError("The 'groups' parameter should not be None.")
+            raise ValueError(_GROUPS_NOT_NONE_MSG)
         groups = check_array(
             groups, input_name="groups", copy=True, ensure_2d=False, dtype=None
         )
@@ -1544,7 +1546,7 @@ class LeavePGroupsOut(GroupsConsumerMixin, BaseCrossValidator):
             Returns the number of splitting iterations in the cross-validator.
         """
         if groups is None:
-            raise ValueError("The 'groups' parameter should not be None.")
+            raise ValueError(_GROUPS_NOT_NONE_MSG)
         groups = check_array(groups, input_name="groups", ensure_2d=False, dtype=None)
         return int(comb(len(np.unique(groups)), self.n_groups, exact=True))
 
@@ -2185,7 +2187,7 @@ class GroupShuffleSplit(GroupsConsumerMixin, BaseShuffleSplit):
 
     def _iter_indices(self, X, y=None, groups=None):
         if groups is None:
-            raise ValueError("The 'groups' parameter should not be None.")
+            raise ValueError(_GROUPS_NOT_NONE_MSG)
         groups = check_array(groups, input_name="groups", ensure_2d=False, dtype=None)
         classes, group_indices = np.unique(groups, return_inverse=True)
         for group_train, group_test in super()._iter_indices(X=classes):

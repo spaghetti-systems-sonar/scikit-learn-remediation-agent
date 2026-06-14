@@ -960,7 +960,7 @@ class BaseGradientBoosting(BaseEnsemble, metaclass=ABCMeta):
 
         return i + 1
 
-    def _make_estimator(self, append=True):
+    def _make_estimator(self, append=True, random_state=None):
         # we don't need _make_estimator
         raise NotImplementedError()
 
@@ -1528,7 +1528,7 @@ class GradientBoostingClassifier(ClassifierMixin, BaseGradientBoosting):
             ccp_alpha=ccp_alpha,
         )
 
-    def _encode_y(self, y, sample_weight):
+    def _encode_y(self, y=None, sample_weight=None):
         # encode classes into 0 ... n_classes - 1 and sets attributes classes_
         # and n_trees_per_iteration_
         check_classification_targets(y)
