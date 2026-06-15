@@ -388,7 +388,7 @@ class DummyClassifier(MultiOutputMixin, ClassifierMixin, BaseEstimator):
                 out /= n_classes_[k]
 
             elif self._strategy == "constant":
-                ind = np.where(classes_[k] == constant[k])
+                ind = np.nonzero(classes_[k] == constant[k])
                 out = np.zeros((n_samples, n_classes_[k]), dtype=np.float64)
                 out[:, ind] = 1.0
 

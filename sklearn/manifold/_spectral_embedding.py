@@ -56,7 +56,7 @@ def _graph_connected_component(graph, node_id):
         np.logical_or(connected_nodes, nodes_to_explore, out=connected_nodes)
         if last_num_component >= connected_nodes.sum():
             break
-        indices = np.where(nodes_to_explore)[0]
+        indices = np.nonzero(nodes_to_explore)[0]
         nodes_to_explore.fill(False)
         for i in indices:
             if sparse.issparse(graph):

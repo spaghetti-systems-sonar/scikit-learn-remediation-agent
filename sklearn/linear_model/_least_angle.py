@@ -820,7 +820,7 @@ def _lars_path_solver(
         z_pos = arrayfuncs.min_pos(z)
         if z_pos < gamma_:
             # some coefficients have changed sign
-            idx = np.where(z == z_pos)[0][::-1]
+            idx = np.nonzero(z == z_pos)[0][::-1]
 
             # update the sign, important for LAR
             sign_active[idx] = -sign_active[idx]

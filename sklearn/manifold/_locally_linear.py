@@ -292,7 +292,7 @@ def _locally_linear_embedding(
             w = Q[:, n_components + 1 :]
             S = w.sum(0)
 
-            S[np.where(abs(S) < hessian_tol)] = 1
+            S[abs(S) < hessian_tol] = 1
             w /= S
 
             nbrs_x, nbrs_y = np.meshgrid(neighbors[i], neighbors[i])
