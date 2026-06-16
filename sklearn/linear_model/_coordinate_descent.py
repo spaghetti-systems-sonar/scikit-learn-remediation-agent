@@ -1046,7 +1046,7 @@ class ElasticNet(RegressorMixin, MultiOutputLinearModel):
 
     # "check_input" is used for optimisation and isn't something to be passed
     # around in a pipeline.
-    __metadata_request__fit = {"check_input": metadata_routing.UNUSED}
+    _metadata_request__fit = {"check_input": metadata_routing.UNUSED}
 
     _parameter_constraints: dict = {
         "alpha": [Interval(Real, 0, None, closed="left")],

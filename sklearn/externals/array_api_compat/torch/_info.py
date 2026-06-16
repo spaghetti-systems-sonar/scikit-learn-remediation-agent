@@ -362,7 +362,7 @@ class __array_namespace_info__:
                     if a.device in devices:
                         break
                     devices.append(a.device)
-                except:
+                except Exception:
                     break
                 i += 1
 

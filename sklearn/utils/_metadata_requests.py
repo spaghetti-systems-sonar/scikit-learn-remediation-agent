@@ -1677,7 +1677,7 @@ class _MetadataRequester:
         # ``vars`` doesn't report the parent class attributes. We go through
         # the reverse of the MRO so that child classes have precedence over
         # their parents.
-        substr = f"__metadata_request__{method_name}"
+        substr = f"_metadata_request__{method_name}"
         for base_class in reversed(inspect.getmro(cls)):
             # Copy is needed with free-threaded context to avoid
             # RuntimeError: dictionary changed size during iteration.
