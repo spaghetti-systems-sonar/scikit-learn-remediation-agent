@@ -273,8 +273,8 @@ class IsotonicRegression(RegressorMixin, TransformerMixin, BaseEstimator):
     """
 
     # T should have been called X
-    __metadata_request__predict = {"T": metadata_routing.UNUSED}
-    __metadata_request__transform = {"T": metadata_routing.UNUSED}
+    _metadata_request__predict = {"T": metadata_routing.UNUSED}
+    _metadata_request__transform = {"T": metadata_routing.UNUSED}
 
     _parameter_constraints: dict = {
         "y_min": [Interval(Real, None, None, closed="both"), None],
