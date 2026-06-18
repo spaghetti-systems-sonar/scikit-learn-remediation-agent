@@ -158,7 +158,7 @@ class BaseCrossValidator(_MetadataRequester, metaclass=ABCMeta):
             test_mask[test_index] = True
             yield test_mask
 
-    def _iter_test_indices(self, X=None, y=None, groups=None):
+    def _iter_test_indices(self, X, y, groups):
         """Generates integer indices corresponding to test sets."""
         raise NotImplementedError
 
@@ -216,7 +216,7 @@ class LeaveOneOut(_UnsupportedGroupCVMixin, BaseCrossValidator):
     GroupKFold : K-fold iterator variant with non-overlapping groups.
     """
 
-    def _iter_test_indices(self, X, y=None, groups=None):
+    def _iter_test_indices(self, X=None, y=None, groups=None):
         n_samples = _num_samples(X)
         if n_samples <= 1:
             raise ValueError(
@@ -224,7 +224,7 @@ class LeaveOneOut(_UnsupportedGroupCVMixin, BaseCrossValidator):
             )
         return range(n_samples)
 
-    def get_n_splits(self, X, y=None, groups=None):
+    def get_n_splits(self, X=None, y=None, groups=None):
         """Returns the number of splitting iterations in the cross-validator.
 
         Parameters
@@ -310,7 +310,7 @@ class LeavePOut(_UnsupportedGroupCVMixin, BaseCrossValidator):
     def __init__(self, p):
         self.p = p
 
-    def _iter_test_indices(self, X, y=None, groups=None):
+    def _iter_test_indices(self, X=None, y=None, groups=None):
         n_samples = _num_samples(X)
         if n_samples <= self.p:
             raise ValueError(
@@ -2616,7 +2616,7 @@ class PredefinedSplit(BaseCrossValidator):
     def _iter_test_masks(self, X=None, y=None, groups=None):
         """Generates boolean masks corresponding to test sets."""
         for f in self.unique_folds:
-            test_index = np.where(self.test_fold == f)[0]
+            test_index = np.nonzero(self.test_fold == f)[0]
             test_mask = np.zeros(len(self.test_fold), dtype=bool)
             test_mask[test_index] = True
             yield test_mask
