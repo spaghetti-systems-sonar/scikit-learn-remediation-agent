@@ -158,7 +158,7 @@ class BaseCrossValidator(_MetadataRequester, metaclass=ABCMeta):
             test_mask[test_index] = True
             yield test_mask
 
-    def _iter_test_indices(self, X, y, groups):
+    def _iter_test_indices(self, X=None, y=None, groups=None):
         """Generates integer indices corresponding to test sets."""
         raise NotImplementedError
 
@@ -516,7 +516,7 @@ class KFold(_UnsupportedGroupCVMixin, _BaseKFold):
     def __init__(self, n_splits=5, *, shuffle=False, random_state=None):
         super().__init__(n_splits=n_splits, shuffle=shuffle, random_state=random_state)
 
-    def _iter_test_indices(self, X, y=None, groups=None):
+    def _iter_test_indices(self, X=None, y=None, groups=None):
         n_samples = _num_samples(X)
         indices = np.arange(n_samples)
         if self.shuffle:
@@ -610,7 +610,7 @@ class GroupKFold(GroupsConsumerMixin, _BaseKFold):
     def __init__(self, n_splits=5, *, shuffle=False, random_state=None):
         super().__init__(n_splits, shuffle=shuffle, random_state=random_state)
 
-    def _iter_test_indices(self, X, y, groups):
+    def _iter_test_indices(self, X=None, y=None, groups=None):
         if groups is None:
             raise ValueError(_GROUPS_NOT_NONE_MSG)
         groups = check_array(groups, input_name="groups", ensure_2d=False, dtype=None)
@@ -632,7 +632,7 @@ class GroupKFold(GroupsConsumerMixin, _BaseKFold):
 
             for test_group_ids in split_groups:
                 test_mask = np.isin(groups, test_group_ids)
-                yield np.where(test_mask)[0]
+                yield np.nonzero(test_mask)[0]
 
         else:
             # Weight groups by their number of occurrences
@@ -657,7 +657,7 @@ class GroupKFold(GroupsConsumerMixin, _BaseKFold):
             indices = group_to_fold[group_idx]
 
             for f in range(self.n_splits):
-                yield np.where(indices == f)[0]
+                yield np.nonzero(indices == f)[0]
 
     def split(self, X, y=None, groups=None):
         """Generate indices to split data into training and test set.
@@ -999,7 +999,7 @@ class StratifiedGroupKFold(GroupsConsumerMixin, _BaseKFold):
     def __init__(self, n_splits=5, shuffle=False, random_state=None):
         super().__init__(n_splits=n_splits, shuffle=shuffle, random_state=random_state)
 
-    def _iter_test_indices(self, X, y, groups):
+    def _iter_test_indices(self, X=None, y=None, groups=None):
         # Implementation is based on this kaggle kernel:
         # https://www.kaggle.com/jakubwasikowski/stratified-group-k-fold-cross-validation
         # and is a subject to Apache 2.0 License. You may obtain a copy of the
