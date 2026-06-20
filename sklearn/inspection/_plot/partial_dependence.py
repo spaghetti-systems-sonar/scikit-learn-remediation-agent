@@ -19,6 +19,216 @@ from sklearn.utils._plotting import _validate_style_kwargs
 from sklearn.utils.parallel import Parallel, delayed
 
 
+def _validate_multiclass_target(estimator, target):
+    """Validate and return target index for multi-class classifiers."""
+    if hasattr(estimator, "classes_") and np.size(estimator.classes_) > 2:
+        if target is None:
+            raise ValueError("target must be specified for multi-class")
+        target_idx = np.searchsorted(estimator.classes_, target)
+        if (
+            not (0 <= target_idx < len(estimator.classes_))
+            or estimator.classes_[target_idx] != target
+        ):
+            raise ValueError("target not in est.classes_, got {}".format(target))
+    else:
+        # regression and binary classification
+        target_idx = 0
+    return target_idx
+
+
+def _validate_feature_indices(kind, features, feature_names):
+    """Validate kind/features and return processed features and kind list."""
+    # expand kind to always be a list of str
+    kind_ = [kind] * len(features) if isinstance(kind, str) else kind
+    if len(kind_) != len(features):
+        raise ValueError(
+            "When `kind` is provided as a list of strings, it should contain "
+            f"as many elements as `features`. `kind` contains {len(kind_)} "
+            f"element(s) and `features` contains {len(features)} element(s)."
+        )
+
+    # convert features into a seq of int tuples
+    tmp_features, ice_for_two_way_pd = [], []
+    for kind_plot, fxs in zip(kind_, features):
+        if isinstance(fxs, (numbers.Integral, str)):
+            fxs = (fxs,)
+        try:
+            fxs = tuple(
+                _get_feature_index(fx, feature_names=feature_names) for fx in fxs
+            )
+        except TypeError as e:
+            raise ValueError(
+                "Each entry in features must be either an int, "
+                "a string, or an iterable of size at most 2."
+            ) from e
+        if not 1 <= np.size(fxs) <= 2:
+            raise ValueError(
+                "Each entry in features must be either an int, "
+                "a string, or an iterable of size at most 2."
+            )
+        # store the information if 2-way PD was requested with ICE to later
+        # raise a ValueError with an exhaustive list of problematic
+        # settings.
+        ice_for_two_way_pd.append(kind_plot != "average" and np.size(fxs) > 1)
+
+        tmp_features.append(fxs)
+
+    if any(ice_for_two_way_pd):
+        # raise an error and be specific regarding the parameter values
+        # when 1- and 2-way PD were requested
+        kind_ = [
+            "average" if forcing_average else kind_plot
+            for forcing_average, kind_plot in zip(ice_for_two_way_pd, kind_)
+        ]
+        raise ValueError(
+            "ICE plot cannot be rendered for 2-way feature interactions. "
+            "2-way feature interactions mandates PD plots using the "
+            "'average' kind: "
+            f"features={features!r} should be configured to use "
+            f"kind={kind_!r} explicitly."
+        )
+    return tmp_features, kind_
+
+
+def _resolve_is_categorical(
+    categorical_features, features, n_features, feature_names
+):
+    """Determine categorical flags for each feature tuple."""
+    if categorical_features is None:
+        return [
+            (False,) if len(fxs) == 1 else (False, False) for fxs in features
+        ]
+
+    # we need to create a boolean indicator of which features are
+    # categorical from the categorical_features list.
+    categorical_features = np.asarray(categorical_features)
+    if categorical_features.dtype.kind == "b":
+        # categorical features provided as a list of boolean
+        if categorical_features.size != n_features:
+            raise ValueError(
+                "When `categorical_features` is a boolean array-like, "
+                "the array should be of shape (n_features,). Got "
+                f"{categorical_features.size} elements while `X` contains "
+                f"{n_features} features."
+            )
+        return [
+            tuple(categorical_features[fx] for fx in fxs) for fxs in features
+        ]
+    elif categorical_features.dtype.kind in ("i", "O", "U"):
+        # categorical features provided as a list of indices or feature names
+        categorical_features_idx = [
+            _get_feature_index(cat, feature_names=feature_names)
+            for cat in categorical_features
+        ]
+        return [
+            tuple([idx in categorical_features_idx for idx in fxs])
+            for fxs in features
+        ]
+    else:
+        raise ValueError(
+            "Expected `categorical_features` to be an array-like of boolean,"
+            f" integer, or string. Got {categorical_features.dtype} instead."
+        )
+
+
+def _validate_categorical_constraints(
+    is_categorical, features, X, grid_resolution, kind_
+):
+    """Validate categorical feature constraints for partial dependence."""
+    for cats in is_categorical:
+        if np.size(cats) == 2 and (cats[0] != cats[1]):
+            raise ValueError(
+                "Two-way partial dependence plots are not supported for pairs"
+                " of continuous and categorical features."
+            )
+
+    # collect the indices of the categorical features targeted by the partial
+    # dependence computation
+    categorical_features_targeted = set(
+        [
+            fx
+            for fxs, cats in zip(features, is_categorical)
+            for fx in fxs
+            if any(cats)
+        ]
+    )
+    if categorical_features_targeted:
+        min_n_cats = min(
+            [
+                len(_unique(_safe_indexing(X, idx, axis=1)))
+                for idx in categorical_features_targeted
+            ]
+        )
+        if grid_resolution < min_n_cats:
+            raise ValueError(
+                "The resolution of the computed grid is less than the "
+                "minimum number of categories in the targeted categorical "
+                "features. Expect the `grid_resolution` to be greater than "
+                f"{min_n_cats}. Got {grid_resolution} instead."
+            )
+
+    for is_cat, kind_plot in zip(is_categorical, kind_):
+        if any(is_cat) and kind_plot != "average":
+            raise ValueError(
+                "It is not possible to display individual effects for"
+                " categorical features."
+            )
+
+
+def _validate_subsample(subsample):
+    """Validate the subsample parameter."""
+    if isinstance(subsample, numbers.Integral):
+        if subsample <= 0:
+            raise ValueError(
+                f"When an integer, subsample={subsample} should be positive."
+            )
+    elif isinstance(subsample, numbers.Real):
+        if subsample <= 0 or subsample >= 1:
+            raise ValueError(
+                f"When a floating-point, subsample={subsample} should be in "
+                "the (0, 1) range."
+            )
+
+
+def _check_multioutput_target(estimator, pd_results, kind_, target, target_idx):
+    """Validate target for multi-output regressors and return target index."""
+    # For multioutput regression, we can only check the validity of target
+    # now that we have the predictions.
+    # Also note: as multiclass-multioutput classifiers are not supported,
+    # multiclass and multioutput scenario are mutually exclusive. So there is
+    # no risk of overwriting target_idx here.
+    pd_result = pd_results[0]  # checking the first result is enough
+    n_tasks = (
+        pd_result.average.shape[0]
+        if kind_[0] == "average"
+        else pd_result.individual.shape[0]
+    )
+    if is_regressor(estimator) and n_tasks > 1:
+        if target is None:
+            raise ValueError(
+                "target must be specified for multi-output regressors"
+            )
+        if not 0 <= target <= n_tasks:
+            raise ValueError(
+                "target must be in [0, n_tasks], got {}.".format(target)
+            )
+        return target
+    return target_idx
+
+
+def _compute_deciles(features, is_categorical, X):
+    """Compute deciles for non-categorical features."""
+    deciles = {}
+    for fxs, cats in zip(features, is_categorical):
+        for fx, cat in zip(fxs, cats):
+            if not cat and fx not in deciles:
+                X_col = _safe_indexing(X, fx, axis=1)
+                deciles[fx] = mquantiles(
+                    X_col, prob=np.arange(0.1, 1.0, 0.1)
+                )
+    return deciles
+
+
 class PartialDependenceDisplay:
     """Partial Dependence Plot (PDP) and Individual Conditional Expectation (ICE).
 
@@ -541,18 +751,7 @@ class PartialDependenceDisplay:
         import matplotlib.pyplot as plt
 
         # set target_idx for multi-class estimators
-        if hasattr(estimator, "classes_") and np.size(estimator.classes_) > 2:
-            if target is None:
-                raise ValueError("target must be specified for multi-class")
-            target_idx = np.searchsorted(estimator.classes_, target)
-            if (
-                not (0 <= target_idx < len(estimator.classes_))
-                or estimator.classes_[target_idx] != target
-            ):
-                raise ValueError("target not in est.classes_, got {}".format(target))
-        else:
-            # regression and binary classification
-            target_idx = 0
+        target_idx = _validate_multiclass_target(estimator, target)
 
         # Use check_array only on lists and other non-array-likes / sparse. Do not
         # convert DataFrame into a NumPy array.
@@ -561,131 +760,15 @@ class PartialDependenceDisplay:
         n_features = X.shape[1]
 
         feature_names = _check_feature_names(X, feature_names)
-        # expand kind to always be a list of str
-        kind_ = [kind] * len(features) if isinstance(kind, str) else kind
-        if len(kind_) != len(features):
-            raise ValueError(
-                "When `kind` is provided as a list of strings, it should contain "
-                f"as many elements as `features`. `kind` contains {len(kind_)} "
-                f"element(s) and `features` contains {len(features)} element(s)."
+        features, kind_ = _validate_feature_indices(kind, features, feature_names)
+
+        is_categorical = _resolve_is_categorical(
+            categorical_features, features, n_features, feature_names
+        )
+        if categorical_features is not None:
+            _validate_categorical_constraints(
+                is_categorical, features, X, grid_resolution, kind_
             )
-
-        # convert features into a seq of int tuples
-        tmp_features, ice_for_two_way_pd = [], []
-        for kind_plot, fxs in zip(kind_, features):
-            if isinstance(fxs, (numbers.Integral, str)):
-                fxs = (fxs,)
-            try:
-                fxs = tuple(
-                    _get_feature_index(fx, feature_names=feature_names) for fx in fxs
-                )
-            except TypeError as e:
-                raise ValueError(
-                    "Each entry in features must be either an int, "
-                    "a string, or an iterable of size at most 2."
-                ) from e
-            if not 1 <= np.size(fxs) <= 2:
-                raise ValueError(
-                    "Each entry in features must be either an int, "
-                    "a string, or an iterable of size at most 2."
-                )
-            # store the information if 2-way PD was requested with ICE to later
-            # raise a ValueError with an exhaustive list of problematic
-            # settings.
-            ice_for_two_way_pd.append(kind_plot != "average" and np.size(fxs) > 1)
-
-            tmp_features.append(fxs)
-
-        if any(ice_for_two_way_pd):
-            # raise an error and be specific regarding the parameter values
-            # when 1- and 2-way PD were requested
-            kind_ = [
-                "average" if forcing_average else kind_plot
-                for forcing_average, kind_plot in zip(ice_for_two_way_pd, kind_)
-            ]
-            raise ValueError(
-                "ICE plot cannot be rendered for 2-way feature interactions. "
-                "2-way feature interactions mandates PD plots using the "
-                "'average' kind: "
-                f"features={features!r} should be configured to use "
-                f"kind={kind_!r} explicitly."
-            )
-        features = tmp_features
-
-        if categorical_features is None:
-            is_categorical = [
-                (False,) if len(fxs) == 1 else (False, False) for fxs in features
-            ]
-        else:
-            # we need to create a boolean indicator of which features are
-            # categorical from the categorical_features list.
-            categorical_features = np.asarray(categorical_features)
-            if categorical_features.dtype.kind == "b":
-                # categorical features provided as a list of boolean
-                if categorical_features.size != n_features:
-                    raise ValueError(
-                        "When `categorical_features` is a boolean array-like, "
-                        "the array should be of shape (n_features,). Got "
-                        f"{categorical_features.size} elements while `X` contains "
-                        f"{n_features} features."
-                    )
-                is_categorical = [
-                    tuple(categorical_features[fx] for fx in fxs) for fxs in features
-                ]
-            elif categorical_features.dtype.kind in ("i", "O", "U"):
-                # categorical features provided as a list of indices or feature names
-                categorical_features_idx = [
-                    _get_feature_index(cat, feature_names=feature_names)
-                    for cat in categorical_features
-                ]
-                is_categorical = [
-                    tuple([idx in categorical_features_idx for idx in fxs])
-                    for fxs in features
-                ]
-            else:
-                raise ValueError(
-                    "Expected `categorical_features` to be an array-like of boolean,"
-                    f" integer, or string. Got {categorical_features.dtype} instead."
-                )
-
-            for cats in is_categorical:
-                if np.size(cats) == 2 and (cats[0] != cats[1]):
-                    raise ValueError(
-                        "Two-way partial dependence plots are not supported for pairs"
-                        " of continuous and categorical features."
-                    )
-
-            # collect the indices of the categorical features targeted by the partial
-            # dependence computation
-            categorical_features_targeted = set(
-                [
-                    fx
-                    for fxs, cats in zip(features, is_categorical)
-                    for fx in fxs
-                    if any(cats)
-                ]
-            )
-            if categorical_features_targeted:
-                min_n_cats = min(
-                    [
-                        len(_unique(_safe_indexing(X, idx, axis=1)))
-                        for idx in categorical_features_targeted
-                    ]
-                )
-                if grid_resolution < min_n_cats:
-                    raise ValueError(
-                        "The resolution of the computed grid is less than the "
-                        "minimum number of categories in the targeted categorical "
-                        "features. Expect the `grid_resolution` to be greater than "
-                        f"{min_n_cats}. Got {grid_resolution} instead."
-                    )
-
-            for is_cat, kind_plot in zip(is_categorical, kind_):
-                if any(is_cat) and kind_plot != "average":
-                    raise ValueError(
-                        "It is not possible to display individual effects for"
-                        " categorical features."
-                    )
 
         # Early exit if the axes does not have the correct number of axes
         if ax is not None and not isinstance(ax, plt.Axes):
@@ -704,17 +787,7 @@ class PartialDependenceDisplay:
                     "len(feature_names) = {0}, got {1}.".format(len(feature_names), i)
                 )
 
-        if isinstance(subsample, numbers.Integral):
-            if subsample <= 0:
-                raise ValueError(
-                    f"When an integer, subsample={subsample} should be positive."
-                )
-        elif isinstance(subsample, numbers.Real):
-            if subsample <= 0 or subsample >= 1:
-                raise ValueError(
-                    f"When a floating-point, subsample={subsample} should be in "
-                    "the (0, 1) range."
-                )
+        _validate_subsample(subsample)
 
         # compute predictions and/or averaged predictions
         pd_results = Parallel(n_jobs=n_jobs, verbose=verbose)(
@@ -735,32 +808,11 @@ class PartialDependenceDisplay:
             for kind_plot, fxs in zip(kind_, features)
         )
 
-        # For multioutput regression, we can only check the validity of target
-        # now that we have the predictions.
-        # Also note: as multiclass-multioutput classifiers are not supported,
-        # multiclass and multioutput scenario are mutually exclusive. So there is
-        # no risk of overwriting target_idx here.
-        pd_result = pd_results[0]  # checking the first result is enough
-        n_tasks = (
-            pd_result.average.shape[0]
-            if kind_[0] == "average"
-            else pd_result.individual.shape[0]
+        target_idx = _check_multioutput_target(
+            estimator, pd_results, kind_, target, target_idx
         )
-        if is_regressor(estimator) and n_tasks > 1:
-            if target is None:
-                raise ValueError("target must be specified for multi-output regressors")
-            if not 0 <= target <= n_tasks:
-                raise ValueError(
-                    "target must be in [0, n_tasks], got {}.".format(target)
-                )
-            target_idx = target
 
-        deciles = {}
-        for fxs, cats in zip(features, is_categorical):
-            for fx, cat in zip(fxs, cats):
-                if not cat and fx not in deciles:
-                    X_col = _safe_indexing(X, fx, axis=1)
-                    deciles[fx] = mquantiles(X_col, prob=np.arange(0.1, 1.0, 0.1))
+        deciles = _compute_deciles(features, is_categorical, X)
 
         display = cls(
             pd_results=pd_results,
@@ -782,6 +834,235 @@ class PartialDependenceDisplay:
             contour_kw=contour_kw,
             centered=centered,
         )
+
+    def _resolve_kind_and_categorical(self):
+        """Resolve and validate `kind` and `is_categorical` parameters."""
+        if isinstance(self.kind, str):
+            kind = [self.kind] * len(self.features)
+        else:
+            kind = self.kind
+
+        if self.is_categorical is None:
+            is_categorical = [
+                (False,) if len(fx) == 1 else (False, False)
+                for fx in self.features
+            ]
+        else:
+            is_categorical = self.is_categorical
+
+        if len(kind) != len(self.features):
+            raise ValueError(
+                "When `kind` is provided as a list of strings, it should "
+                "contain as many elements as `features`. `kind` contains "
+                f"{len(kind)} element(s) and `features` contains "
+                f"{len(self.features)} element(s)."
+            )
+
+        valid_kinds = {"average", "individual", "both"}
+        if any([k not in valid_kinds for k in kind]):
+            raise ValueError(
+                f"Values provided to `kind` must be one of: {valid_kinds!r}"
+                f" or a list of such values. Currently, kind={self.kind!r}"
+            )
+
+        return kind, is_categorical
+
+    def _compute_centered_pd_results(self, kind, centered):
+        """Compute centered partial dependence results if needed."""
+        if not centered:
+            return self.pd_results
+
+        pd_results_ = []
+        for kind_plot, pd_result in zip(kind, self.pd_results):
+            current_results = {"grid_values": pd_result["grid_values"]}
+
+            if kind_plot in ("individual", "both"):
+                preds = pd_result.individual
+                preds = preds - preds[self.target_idx, :, 0, None]
+                current_results["individual"] = preds
+
+            if kind_plot in ("average", "both"):
+                avg_preds = pd_result.average
+                avg_preds = avg_preds - avg_preds[self.target_idx, 0, None]
+                current_results["average"] = avg_preds
+
+            pd_results_.append(Bunch(**current_results))
+        return pd_results_
+
+    def _compute_pdp_lim(self, kind, pd_results_):
+        """Compute the PDP limits for each number of features."""
+        # get global min and max average predictions of PD grouped by plot type
+        pdp_lim = {}
+        for kind_plot, pdp in zip(kind, pd_results_):
+            values = pdp["grid_values"]
+            preds = pdp.average if kind_plot == "average" else pdp.individual
+            min_pd = preds[self.target_idx].min()
+            max_pd = preds[self.target_idx].max()
+
+            # expand the limits to account so that the plotted lines do not touch
+            # the edges of the plot
+            span = max_pd - min_pd
+            min_pd -= 0.05 * span
+            max_pd += 0.05 * span
+
+            n_fx = len(values)
+            old_min_pd, old_max_pd = pdp_lim.get(n_fx, (min_pd, max_pd))
+            min_pd = min(min_pd, old_min_pd)
+            max_pd = max(max_pd, old_max_pd)
+            pdp_lim[n_fx] = (min_pd, max_pd)
+        return pdp_lim
+
+    def _compute_n_lines(self, kind, is_average_plot, pd_results_):
+        """Compute the number of ICE lines and total lines to plot."""
+        if all(is_average_plot):
+            # only average plots are requested
+            return 0, 1
+
+        # we need to determine the number of ICE samples computed
+        ice_plot_idx = is_average_plot.index(False)
+        n_ice_lines = self._get_sample_count(
+            len(pd_results_[ice_plot_idx].individual[0])
+        )
+        if any([kind_plot == "both" for kind_plot in kind]):
+            n_lines = n_ice_lines + 1  # account for the average line
+        else:
+            n_lines = n_ice_lines
+        return n_ice_lines, n_lines
+
+    def _setup_plot_axes(self, ax, n_cols, n_features, is_average_plot, n_lines):
+        """Set up the matplotlib axes for the partial dependence plot."""
+        import matplotlib.pyplot as plt
+        from matplotlib.gridspec import GridSpecFromSubplotSpec
+
+        if isinstance(ax, plt.Axes):
+            # If ax was set off, it has most likely been set to off
+            # by a previous call to plot.
+            if not ax.axison:
+                raise ValueError(
+                    "The ax was already used in another plot "
+                    "function, please set ax=display.axes_ "
+                    "instead"
+                )
+
+            ax.set_axis_off()
+            self.bounding_ax_ = ax
+            self.figure_ = ax.figure
+
+            n_cols = min(n_cols, n_features)
+            n_rows = int(np.ceil(n_features / float(n_cols)))
+
+            self.axes_ = np.empty((n_rows, n_cols), dtype=object)
+            if all(is_average_plot):
+                self.lines_ = np.empty((n_rows, n_cols), dtype=object)
+            else:
+                self.lines_ = np.empty(
+                    (n_rows, n_cols, n_lines), dtype=object
+                )
+            self.contours_ = np.empty((n_rows, n_cols), dtype=object)
+            self.bars_ = np.empty((n_rows, n_cols), dtype=object)
+            self.heatmaps_ = np.empty((n_rows, n_cols), dtype=object)
+
+            axes_ravel = self.axes_.ravel()
+
+            gs = GridSpecFromSubplotSpec(
+                n_rows, n_cols, subplot_spec=ax.get_subplotspec()
+            )
+            for i, spec in zip(range(n_features), gs):
+                axes_ravel[i] = self.figure_.add_subplot(spec)
+
+            return n_cols
+
+        # ACR-d7295010be604e468f99f4a2ff661d3f
+        ax = np.asarray(ax, dtype=object)
+        if ax.size != n_features:
+            raise ValueError(
+                "Expected ax to have {} axes, got {}".format(
+                    n_features, ax.size
+                )
+            )
+
+        if ax.ndim == 2:
+            n_cols = ax.shape[1]
+        else:
+            n_cols = None
+
+        self.bounding_ax_ = None
+        self.figure_ = ax.ravel()[0].figure
+        self.axes_ = ax
+        if all(is_average_plot):
+            self.lines_ = np.empty_like(ax, dtype=object)
+        else:
+            self.lines_ = np.empty(
+                ax.shape + (n_lines,), dtype=object
+            )
+        self.contours_ = np.empty_like(ax, dtype=object)
+        self.bars_ = np.empty_like(ax, dtype=object)
+        self.heatmaps_ = np.empty_like(ax, dtype=object)
+
+        return n_cols
+
+    @staticmethod
+    def _extract_preds(pd_result, kind_plot):
+        """Extract average and individual predictions from a PD result."""
+        avg_preds = None
+        preds = None
+        if kind_plot == "individual":
+            preds = pd_result.individual
+        elif kind_plot == "average":
+            avg_preds = pd_result.average
+        else:  # kind_plot == 'both'
+            avg_preds = pd_result.average
+            preds = pd_result.individual
+        return avg_preds, preds
+
+    def _get_one_way_plot_kwargs(self, kind_plot, line_kw, ice_lines_kw,
+                                 pd_line_kw, bar_kw, heatmap_kw):
+        """Compute the style kwargs for one-way partial dependence plots."""
+        default_line_kws = {
+            "color": "C0",
+            "label": "average" if kind_plot == "both" else None,
+        }
+        if kind_plot == "individual":
+            default_ice_lines_kws = {"alpha": 0.3, "linewidth": 0.5}
+            default_pd_lines_kws = {}
+        elif kind_plot == "both":
+            # by default, we need to distinguish the average line from
+            # the individual lines via color and line style
+            default_ice_lines_kws = {
+                "alpha": 0.3,
+                "linewidth": 0.5,
+                "color": "tab:blue",
+            }
+            default_pd_lines_kws = {
+                "color": "tab:orange",
+                "linestyle": "--",
+            }
+        else:
+            default_ice_lines_kws = {}
+            default_pd_lines_kws = {}
+
+        default_ice_lines_kws = {**default_line_kws, **default_ice_lines_kws}
+        default_pd_lines_kws = {**default_line_kws, **default_pd_lines_kws}
+
+        line_kw = _validate_style_kwargs(default_line_kws, line_kw)
+
+        ice_lines_kw = _validate_style_kwargs(
+            _validate_style_kwargs(default_ice_lines_kws, line_kw),
+            ice_lines_kw,
+        )
+        del ice_lines_kw["label"]
+
+        pd_line_kw = _validate_style_kwargs(
+            _validate_style_kwargs(default_pd_lines_kws, line_kw), pd_line_kw
+        )
+
+        default_bar_kws = {"color": "C0"}
+        bar_kw = _validate_style_kwargs(default_bar_kws, bar_kw)
+
+        default_heatmap_kw = {}
+        heatmap_kw = _validate_style_kwargs(default_heatmap_kw, heatmap_kw)
+
+        return line_kw, ice_lines_kw, pd_line_kw, bar_kw, heatmap_kw
 
     def _get_sample_count(self, n_samples):
         """Compute the number of samples as an integer."""
@@ -1222,75 +1503,14 @@ class PartialDependenceDisplay:
 
         check_matplotlib_support("plot_partial_dependence")
         import matplotlib.pyplot as plt
-        from matplotlib.gridspec import GridSpecFromSubplotSpec
 
-        if isinstance(self.kind, str):
-            kind = [self.kind] * len(self.features)
-        else:
-            kind = self.kind
-
-        if self.is_categorical is None:
-            is_categorical = [
-                (False,) if len(fx) == 1 else (False, False) for fx in self.features
-            ]
-        else:
-            is_categorical = self.is_categorical
-
-        if len(kind) != len(self.features):
-            raise ValueError(
-                "When `kind` is provided as a list of strings, it should "
-                "contain as many elements as `features`. `kind` contains "
-                f"{len(kind)} element(s) and `features` contains "
-                f"{len(self.features)} element(s)."
-            )
-
-        valid_kinds = {"average", "individual", "both"}
-        if any([k not in valid_kinds for k in kind]):
-            raise ValueError(
-                f"Values provided to `kind` must be one of: {valid_kinds!r} or a list"
-                f" of such values. Currently, kind={self.kind!r}"
-            )
+        kind, is_categorical = self._resolve_kind_and_categorical()
 
         # Center results before plotting
-        if not centered:
-            pd_results_ = self.pd_results
-        else:
-            pd_results_ = []
-            for kind_plot, pd_result in zip(kind, self.pd_results):
-                current_results = {"grid_values": pd_result["grid_values"]}
-
-                if kind_plot in ("individual", "both"):
-                    preds = pd_result.individual
-                    preds = preds - preds[self.target_idx, :, 0, None]
-                    current_results["individual"] = preds
-
-                if kind_plot in ("average", "both"):
-                    avg_preds = pd_result.average
-                    avg_preds = avg_preds - avg_preds[self.target_idx, 0, None]
-                    current_results["average"] = avg_preds
-
-                pd_results_.append(Bunch(**current_results))
+        pd_results_ = self._compute_centered_pd_results(kind, centered)
 
         if pdp_lim is None:
-            # get global min and max average predictions of PD grouped by plot type
-            pdp_lim = {}
-            for kind_plot, pdp in zip(kind, pd_results_):
-                values = pdp["grid_values"]
-                preds = pdp.average if kind_plot == "average" else pdp.individual
-                min_pd = preds[self.target_idx].min()
-                max_pd = preds[self.target_idx].max()
-
-                # expand the limits to account so that the plotted lines do not touch
-                # the edges of the plot
-                span = max_pd - min_pd
-                min_pd -= 0.05 * span
-                max_pd += 0.05 * span
-
-                n_fx = len(values)
-                old_min_pd, old_max_pd = pdp_lim.get(n_fx, (min_pd, max_pd))
-                min_pd = min(min_pd, old_min_pd)
-                max_pd = max(max_pd, old_max_pd)
-                pdp_lim[n_fx] = (min_pd, max_pd)
+            pdp_lim = self._compute_pdp_lim(kind, pd_results_)
 
         if line_kw is None:
             line_kw = {}
@@ -1313,77 +1533,13 @@ class PartialDependenceDisplay:
 
         n_features = len(self.features)
         is_average_plot = [kind_plot == "average" for kind_plot in kind]
-        if all(is_average_plot):
-            # only average plots are requested
-            n_ice_lines = 0
-            n_lines = 1
-        else:
-            # we need to determine the number of ICE samples computed
-            ice_plot_idx = is_average_plot.index(False)
-            n_ice_lines = self._get_sample_count(
-                len(pd_results_[ice_plot_idx].individual[0])
-            )
-            if any([kind_plot == "both" for kind_plot in kind]):
-                n_lines = n_ice_lines + 1  # account for the average line
-            else:
-                n_lines = n_ice_lines
+        n_ice_lines, n_lines = self._compute_n_lines(
+            kind, is_average_plot, pd_results_
+        )
 
-        if isinstance(ax, plt.Axes):
-            # If ax was set off, it has most likely been set to off
-            # by a previous call to plot.
-            if not ax.axison:
-                raise ValueError(
-                    "The ax was already used in another plot "
-                    "function, please set ax=display.axes_ "
-                    "instead"
-                )
-
-            ax.set_axis_off()
-            self.bounding_ax_ = ax
-            self.figure_ = ax.figure
-
-            n_cols = min(n_cols, n_features)
-            n_rows = int(np.ceil(n_features / float(n_cols)))
-
-            self.axes_ = np.empty((n_rows, n_cols), dtype=object)
-            if all(is_average_plot):
-                self.lines_ = np.empty((n_rows, n_cols), dtype=object)
-            else:
-                self.lines_ = np.empty((n_rows, n_cols, n_lines), dtype=object)
-            self.contours_ = np.empty((n_rows, n_cols), dtype=object)
-            self.bars_ = np.empty((n_rows, n_cols), dtype=object)
-            self.heatmaps_ = np.empty((n_rows, n_cols), dtype=object)
-
-            axes_ravel = self.axes_.ravel()
-
-            gs = GridSpecFromSubplotSpec(
-                n_rows, n_cols, subplot_spec=ax.get_subplotspec()
-            )
-            for i, spec in zip(range(n_features), gs):
-                axes_ravel[i] = self.figure_.add_subplot(spec)
-
-        else:  # array-like
-            ax = np.asarray(ax, dtype=object)
-            if ax.size != n_features:
-                raise ValueError(
-                    "Expected ax to have {} axes, got {}".format(n_features, ax.size)
-                )
-
-            if ax.ndim == 2:
-                n_cols = ax.shape[1]
-            else:
-                n_cols = None
-
-            self.bounding_ax_ = None
-            self.figure_ = ax.ravel()[0].figure
-            self.axes_ = ax
-            if all(is_average_plot):
-                self.lines_ = np.empty_like(ax, dtype=object)
-            else:
-                self.lines_ = np.empty(ax.shape + (n_lines,), dtype=object)
-            self.contours_ = np.empty_like(ax, dtype=object)
-            self.bars_ = np.empty_like(ax, dtype=object)
-            self.heatmaps_ = np.empty_like(ax, dtype=object)
+        n_cols = self._setup_plot_axes(
+            ax, n_cols, n_features, is_average_plot, n_lines
+        )
 
         # create contour levels for two-way plots
         if 2 in pdp_lim:
@@ -1401,61 +1557,21 @@ class PartialDependenceDisplay:
                 kind,
             )
         ):
-            avg_preds = None
-            preds = None
+            avg_preds, preds = self._extract_preds(pd_result, kind_plot)
             feature_values = pd_result["grid_values"]
-            if kind_plot == "individual":
-                preds = pd_result.individual
-            elif kind_plot == "average":
-                avg_preds = pd_result.average
-            else:  # kind_plot == 'both'
-                avg_preds = pd_result.average
-                preds = pd_result.individual
 
             if len(feature_values) == 1:
                 # define the line-style for the current plot
-                default_line_kws = {
-                    "color": "C0",
-                    "label": "average" if kind_plot == "both" else None,
-                }
-                if kind_plot == "individual":
-                    default_ice_lines_kws = {"alpha": 0.3, "linewidth": 0.5}
-                    default_pd_lines_kws = {}
-                elif kind_plot == "both":
-                    # by default, we need to distinguish the average line from
-                    # the individual lines via color and line style
-                    default_ice_lines_kws = {
-                        "alpha": 0.3,
-                        "linewidth": 0.5,
-                        "color": "tab:blue",
-                    }
-                    default_pd_lines_kws = {
-                        "color": "tab:orange",
-                        "linestyle": "--",
-                    }
-                else:
-                    default_ice_lines_kws = {}
-                    default_pd_lines_kws = {}
-
-                default_ice_lines_kws = {**default_line_kws, **default_ice_lines_kws}
-                default_pd_lines_kws = {**default_line_kws, **default_pd_lines_kws}
-
-                line_kw = _validate_style_kwargs(default_line_kws, line_kw)
-
-                ice_lines_kw = _validate_style_kwargs(
-                    _validate_style_kwargs(default_ice_lines_kws, line_kw), ice_lines_kw
+                line_kw, ice_lines_kw, pd_line_kw, bar_kw, heatmap_kw = (
+                    self._get_one_way_plot_kwargs(
+                        kind_plot,
+                        line_kw,
+                        ice_lines_kw,
+                        pd_line_kw,
+                        bar_kw,
+                        heatmap_kw,
+                    )
                 )
-                del ice_lines_kw["label"]
-
-                pd_line_kw = _validate_style_kwargs(
-                    _validate_style_kwargs(default_pd_lines_kws, line_kw), pd_line_kw
-                )
-
-                default_bar_kws = {"color": "C0"}
-                bar_kw = _validate_style_kwargs(default_bar_kws, bar_kw)
-
-                default_heatmap_kw = {}
-                heatmap_kw = _validate_style_kwargs(default_heatmap_kw, heatmap_kw)
 
                 self._plot_one_way_partial_dependence(
                     kind_plot,
