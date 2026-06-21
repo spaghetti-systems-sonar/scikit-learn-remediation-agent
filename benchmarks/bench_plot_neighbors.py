@@ -149,15 +149,11 @@ def barplot_neighbors(
 
         title_string = "Varying %s" % quantity
 
-        descr_string = ""
-
-        for s in "NDk":
-            if s == quantity:
-                pass
-            else:
-                descr_string += "%s = %i, " % (s, fiducial_values[s])
-
-        descr_string = descr_string[:-2]
+        descr_string = ", ".join(
+            "%s = %i" % (s, fiducial_values[s])
+            for s in "NDk"
+            if s != quantity
+        )
 
         plt.text(
             1.01,

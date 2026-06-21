@@ -9,6 +9,7 @@ users of the compat library.
 from __future__ import annotations
 
 import enum
+import importlib
 import inspect
 import math
 import sys
@@ -501,6 +502,34 @@ class _ClsToXPInfo(enum.Enum):
     MAYBE_JAX_ZERO_GRADIENT = 1
 
 
+def _get_compat_namespace(
+    compat_module: str,
+    raw_module: str,
+    use_compat: bool,
+    api_version: str | None,
+) -> Namespace:
+    if use_compat:
+        _check_api_version(api_version)
+        return importlib.import_module(compat_module, package=__package__)
+    return importlib.import_module(raw_module)
+
+
+def _numpy_compat_namespace(
+    use_compat: bool | None,
+    api_version: str | None,
+) -> Namespace:
+    if use_compat is True:
+        _check_api_version(api_version)
+        from .. import numpy as xp
+    elif use_compat is False:
+        import numpy as xp  # type: ignore[no-redef]
+    else:
+        # NumPy 2.0+ have __array_namespace__; however they are not
+        # yet fully array API compatible.
+        from .. import numpy as xp  # type: ignore[no-redef]
+    return xp
+
+
 @lru_cache(100)
 def _cls_to_namespace(
     cls: type,
@@ -516,15 +545,7 @@ def _cls_to_namespace(
         _issubclass_fast(cls_, "numpy", "ndarray") 
         or _issubclass_fast(cls_, "numpy", "generic")
     ):
-        if use_compat is True:
-            _check_api_version(api_version)
-            from .. import numpy as xp
-        elif use_compat is False:
-            import numpy as xp  # type: ignore[no-redef]
-        else:
-            # NumPy 2.0+ have __array_namespace__; however they are not
-            # yet fully array API compatible.
-            from .. import numpy as xp  # type: ignore[no-redef]
+        xp = _numpy_compat_namespace(use_compat, api_version)
         return xp, _ClsToXPInfo.MAYBE_JAX_ZERO_GRADIENT
 
     # Note: this must happen _after_ the test for np.generic,
@@ -533,27 +554,15 @@ def _cls_to_namespace(
         return None, _ClsToXPInfo.SCALAR
 
     if _issubclass_fast(cls_, "cupy", "ndarray"):
-        if _use_compat:
-            _check_api_version(api_version)
-            from .. import cupy as xp  # type: ignore[no-redef]
-        else:
-            import cupy as xp  # type: ignore[no-redef]
+        xp = _get_compat_namespace("..cupy", "cupy", _use_compat, api_version)
         return xp, None
 
     if _issubclass_fast(cls_, "torch", "Tensor"):
-        if _use_compat:
-            _check_api_version(api_version)
-            from .. import torch as xp  # type: ignore[no-redef]
-        else:
-            import torch as xp  # type: ignore[no-redef]
+        xp = _get_compat_namespace("..torch", "torch", _use_compat, api_version)
         return xp, None
 
     if _issubclass_fast(cls_, _DASK_ARRAY_MODULE, "Array"):
-        if _use_compat:
-            _check_api_version(api_version)
-            from ..dask import array as xp  # type: ignore[no-redef]
-        else:
-            import dask.array as xp  # type: ignore[no-redef]
+        xp = _get_compat_namespace("..dask.array", "dask.array", _use_compat, api_version)
         return xp, None
 
     # Backwards compatibility for jax<0.4.32
@@ -574,6 +583,22 @@ def _jax_namespace(api_version: str | None, use_compat: bool | None) -> Namespac
         import jax.experimental.array_api  # noqa: F401
     # Test api_version
     return jnp.empty(0).__array_namespace__(api_version=api_version)
+
+
+def _resolve_namespace(
+    x: Array,
+    api_version: str | None,
+    use_compat: bool | None,
+) -> Namespace:
+    """Resolve the namespace for an array with no known array-api-compat wrapper."""
+    get_ns = getattr(x, "__array_namespace__", None)
+    if get_ns is None:
+        raise TypeError(f"{type(x).__name__} is not a supported array type")
+    if use_compat:
+        raise ValueError(
+            "The given array does not have an array-api-compat wrapper"
+        )
+    return get_ns(api_version=api_version)
 
 
 def array_namespace(
@@ -657,14 +682,7 @@ def array_namespace(
             xp = _jax_namespace(api_version, use_compat)
 
         if xp is None:
-            get_ns = getattr(x, "__array_namespace__", None)
-            if get_ns is None:
-                raise TypeError(f"{type(x).__name__} is not a supported array type")
-            if use_compat:
-                raise ValueError(
-                    "The given array does not have an array-api-compat wrapper"
-                )
-            xp = get_ns(api_version=api_version)
+            xp = _resolve_namespace(x, api_version, use_compat)
 
         namespaces.add(xp)
 
@@ -714,6 +732,21 @@ class _dask_device:
 
 
 _DASK_DEVICE = _dask_device()
+
+
+def _pydata_sparse_device(x):
+    """Get the device of a pydata/sparse array."""
+    # `sparse` will gain `.device`, so check for this first.
+    x_device = getattr(x, "device", None)
+    if x_device is not None:
+        return x_device
+    # Everything but DOK has this attr.
+    try:
+        inner = x.data  # pyright: ignore
+    except AttributeError:
+        return "cpu"
+    # Return the device of the constituent array
+    return device(inner)  # pyright: ignore
 
 
 # device() is not on numpy.ndarray or dask.array and to_device() is not on numpy.ndarray
@@ -776,17 +809,7 @@ def device(x: _ArrayApiObj, /) -> Device:
         else:
             return x_device
     elif is_pydata_sparse_array(x):
-        # `sparse` will gain `.device`, so check for this first.
-        x_device = getattr(x, "device", None)
-        if x_device is not None:
-            return x_device
-        # Everything but DOK has this attr.
-        try:
-            inner = x.data  # pyright: ignore
-        except AttributeError:
-            return "cpu"
-        # Return the device of the constituent array
-        return device(inner)  # pyright: ignore
+        return _pydata_sparse_device(x)
     return x.device  # type: ignore  # pyright: ignore
 
 
@@ -795,6 +818,15 @@ _device = device
 
 
 # Based on cupy.array_api.Array.to_device
+def _resolve_cupy_stream(stream, cp):
+    """Resolve a stream argument to a CuPy stream object."""
+    if isinstance(stream, int):
+        return cp.cuda.ExternalStream(stream)
+    if not isinstance(stream, cp.cuda.Stream):
+        raise TypeError(f"Unsupported stream type {stream!r}")
+    return stream
+
+
 def _cupy_to_device(
     x: cp.ndarray,
     device: Device,
@@ -816,10 +848,7 @@ def _cupy_to_device(
             return cp.asarray(x)
 
     # stream can be an int as specified in __dlpack__, or a CuPy stream
-    if isinstance(stream, int):
-        stream = cp.cuda.ExternalStream(stream)
-    elif not isinstance(stream, cp.cuda.Stream):
-        raise TypeError(f"Unsupported stream type {stream!r}")
+    stream = _resolve_cupy_stream(stream, cp)
 
     with device, stream:
         return cp.asarray(x)
@@ -834,6 +863,41 @@ def _torch_to_device(
     if stream is not None:
         raise NotImplementedError
     return x.to(device)
+
+
+def _numpy_to_device(x, device, stream=None):
+    if stream is not None:
+        raise ValueError("The stream argument to to_device() is not supported")
+    if device == "cpu":
+        return x
+    raise ValueError(f"Unsupported device {device!r}")
+
+
+def _dask_to_device(x, device, stream=None):
+    if stream is not None:
+        raise ValueError("The stream argument to to_device() is not supported")
+    # TODO: What if our array is on the GPU already?
+    if device == "cpu":
+        return x
+    raise ValueError(f"Unsupported device {device!r}")
+
+
+def _ensure_jax_array_api(x):
+    """Ensure jax array_api is imported if needed, return True if x lacks to_device."""
+    if not hasattr(x, "__array_namespace__"):
+        # In JAX v0.4.31 and older, this import adds to_device method to x...
+        import jax.experimental.array_api  # noqa: F401  # pyright: ignore
+
+        # ... but only on eager JAX. It won't work inside jax.jit.
+        if not hasattr(x, "to_device"):
+            return True
+    return False
+
+
+def _jax_to_device(x, device, stream=None):
+    if _ensure_jax_array_api(x):
+        return x
+    return x.to_device(device, stream=stream)
 
 
 def to_device(x: Array, device: Device, /, *, stream: int | Any | None = None) -> Array:
@@ -886,33 +950,17 @@ def to_device(x: Array, device: Device, /, *, stream: int | Any | None = None) -
 
     """
     if is_numpy_array(x):
-        if stream is not None:
-            raise ValueError("The stream argument to to_device() is not supported")
-        if device == "cpu":
-            return x
-        raise ValueError(f"Unsupported device {device!r}")
-    elif is_cupy_array(x):
+        return _numpy_to_device(x, device, stream=stream)
+    if is_cupy_array(x):
         # cupy does not yet have to_device
         return _cupy_to_device(x, device, stream=stream)
-    elif is_torch_array(x):
+    if is_torch_array(x):
         return _torch_to_device(x, device, stream=stream)
-    elif is_dask_array(x):
-        if stream is not None:
-            raise ValueError("The stream argument to to_device() is not supported")
-        # TODO: What if our array is on the GPU already?
-        if device == "cpu":
-            return x
-        raise ValueError(f"Unsupported device {device!r}")
-    elif is_jax_array(x):
-        if not hasattr(x, "__array_namespace__"):
-            # In JAX v0.4.31 and older, this import adds to_device method to x...
-            import jax.experimental.array_api  # noqa: F401  # pyright: ignore
-
-            # ... but only on eager JAX. It won't work inside jax.jit.
-            if not hasattr(x, "to_device"):
-                return x
-        return x.to_device(device, stream=stream)
-    elif is_pydata_sparse_array(x) and device == _device(x):
+    if is_dask_array(x):
+        return _dask_to_device(x, device, stream=stream)
+    if is_jax_array(x):
+        return _jax_to_device(x, device, stream=stream)
+    if is_pydata_sparse_array(x) and device == _device(x):
         # Perform trivial check to return the same array if
         # device is same instead of err-ing.
         return x

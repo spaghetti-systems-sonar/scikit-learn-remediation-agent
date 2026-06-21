@@ -221,6 +221,53 @@ class at:  # pylint: disable=invalid-name  # numpydoc ignore=PR02
             raise ValueError(msg)
         return type(self)(self._x, idx)
 
+    def _op_bool_mask(
+        self,
+        x: Array,
+        idx: SetIndex,
+        out_of_place_op: Callable[[Array, Array], Array] | None,
+        y: Array | complex,
+        copy: bool | None,
+        xp: ModuleType,
+    ) -> Array | None:
+        """Handle the special case of boolean mask indexing for dask/jax arrays.
+
+        Returns the result array if the boolean mask path was taken,
+        or None if the caller should fall through to the general path.
+        """
+        from ._funcs import apply_where  # pylint: disable=cyclic-import
+
+        # JAX inside jax.jit doesn't support in-place updates with boolean
+        # masks; Dask exclusively supports __setitem__ but not iops.
+        # We can handle the common special case of 0-dimensional y
+        # with where(idx, y, x) instead.
+        if not (
+            (is_dask_array(idx) or is_jax_array(idx))
+            and idx.dtype == xp.bool
+            and idx.shape == x.shape
+        ):
+            return None
+
+        y_xp = xp.asarray(y, dtype=x.dtype, device=_compat.device(x))
+        if y_xp.ndim != 0:
+            # else: this will work on eager JAX and crash on jax.jit and Dask
+            return None
+
+        if out_of_place_op:  # add(), subtract(), ...
+            # suppress inf warnings on Dask
+            out = apply_where(
+                idx, (x, y_xp), out_of_place_op, fill_value=x, xp=xp
+            )
+            # Undo int->float promotion on JAX after _AtOp.DIVIDE
+            out = xp.astype(out, x.dtype, copy=False)
+        else:  # set()
+            out = xp.where(idx, y_xp, x)
+
+        if copy is False:
+            x[()] = out
+            return x
+        return out
+
     def _op(
         self,
         at_op: _AtOp,
@@ -269,8 +316,6 @@ class at:  # pylint: disable=invalid-name  # numpydoc ignore=PR02
         Array
             Updated `x`.
         """
-        from ._funcs import apply_where  # pylint: disable=cyclic-import
-
         x, idx = self._x, self._idx
         xp = array_namespace(x, y) if xp is None else xp
 
@@ -291,33 +336,9 @@ class at:  # pylint: disable=invalid-name  # numpydoc ignore=PR02
 
         writeable = None if copy else is_writeable_array(x)
 
-        # JAX inside jax.jit doesn't support in-place updates with boolean
-        # masks; Dask exclusively supports __setitem__ but not iops.
-        # We can handle the common special case of 0-dimensional y
-        # with where(idx, y, x) instead.
-        if (
-            (is_dask_array(idx) or is_jax_array(idx))
-            and idx.dtype == xp.bool
-            and idx.shape == x.shape
-        ):
-            y_xp = xp.asarray(y, dtype=x.dtype, device=_compat.device(x))
-            if y_xp.ndim == 0:
-                if out_of_place_op:  # add(), subtract(), ...
-                    # suppress inf warnings on Dask
-                    out = apply_where(
-                        idx, (x, y_xp), out_of_place_op, fill_value=x, xp=xp
-                    )
-                    # Undo int->float promotion on JAX after _AtOp.DIVIDE
-                    out = xp.astype(out, x.dtype, copy=False)
-                else:  # set()
-                    out = xp.where(idx, y_xp, x)
-
-                if copy is False:
-                    x[()] = out
-                    return x
-                return out
-
-            # else: this will work on eager JAX and crash on jax.jit and Dask
+        result = self._op_bool_mask(x, idx, out_of_place_op, y, copy, xp)
+        if result is not None:
+            return result
 
         if copy or (copy is None and not writeable):
             if is_jax_array(x):
