@@ -2185,6 +2185,136 @@ class _RidgeGCV(LinearModel):
                 alpha, y, sqrt_sw, singvals, U, V, UT_y, UT_sqrt_sw
             )
 
+    def _compute_score_no_scorer(self, looe, i):
+        """Compute alpha score when no custom scorer is used."""
+        squared_errors = looe**2
+        alpha_score = self._score_without_scorer(squared_errors=squared_errors)
+        if self.store_cv_results:
+            self.cv_results_[:, i] = _ravel(squared_errors)
+        return alpha_score
+
+    def _compute_score_with_scorer(
+        self,
+        looe,
+        y,
+        sqrt_sw,
+        y_offset,
+        sample_weight,
+        unscaled_y,
+        n_y,
+        score_params,
+        i,
+    ):
+        """Compute alpha score when a custom scorer is used."""
+        predictions = y - looe
+        # Rescale predictions back to original scale
+        if sample_weight is not None:  # avoid the unnecessary division by ones
+            if predictions.ndim > 1:
+                predictions /= sqrt_sw[:, None]
+            else:
+                predictions /= sqrt_sw
+        predictions += y_offset
+
+        if self.store_cv_results:
+            self.cv_results_[:, i] = _ravel(predictions)
+
+        score_params = score_params or {}
+        alpha_score = self._score(
+            predictions=predictions,
+            y=unscaled_y,
+            n_y=n_y,
+            scorer=self.scoring,
+            score_params=score_params,
+        )
+        return alpha_score
+
+    def _update_best(
+        self,
+        best_coef,
+        best_score,
+        best_alpha,
+        coef,
+        alpha_score,
+        alpha,
+        n_y,
+        xp,
+        device_,
+    ):
+        """Update best coefficient, score, and alpha for the current iteration."""
+        # Keep track of the best model
+        if best_score is None:
+            # initialize
+            if self.alpha_per_target and n_y > 1:
+                best_coef = coef
+                best_score = xp.reshape(alpha_score, shape=(-1,))
+                best_alpha = xp.full(n_y, alpha, device=device_)
+            else:
+                best_coef = coef
+                best_score = alpha_score
+                best_alpha = alpha
+        else:
+            # update
+            if self.alpha_per_target and n_y > 1:
+                to_update = alpha_score > best_score
+                best_coef[:, to_update] = coef[:, to_update]
+                best_score[to_update] = alpha_score[to_update]
+                best_alpha[to_update] = alpha
+            elif alpha_score > best_score:
+                best_coef, best_score, best_alpha = coef, alpha_score, alpha
+        return best_coef, best_score, best_alpha
+
+    def _cast_to_original_dtype(self, dtype, xp):
+        """Cast fitted attributes back to the original floating dtype."""
+        if type(self.intercept_) is not float:
+            self.intercept_ = xp.astype(
+                self.intercept_, dtype, copy=False
+            )
+        self.coef_ = xp.astype(self.coef_, dtype, copy=False)
+        if self.store_cv_results:
+            self.cv_results_ = xp.astype(
+                self.cv_results_, dtype, copy=False
+            )
+
+    @staticmethod
+    def _detect_original_float_dtype(xp, is_array_api, x):
+        """Detect the original floating dtype of the input data."""
+        if (is_array_api and xp.isdtype(x.dtype, "real floating")) or getattr(
+            getattr(x, "dtype", None), "kind", None
+        ) == "f":
+            return x.dtype
+        # for X that does not have a simple dtype (e.g. pandas dataframe)
+        # the attributes will be stored in the dtype chosen by
+        # `validate_data``, i.e. np.float64
+        return None
+
+    def _get_gcv_decompose_solve(self, gcv_mode):
+        """Return the decompose and solve functions for the given GCV mode."""
+        if gcv_mode == "gram":
+            return self._eigen_decompose_gram, self._solve_eigen_gram
+        if gcv_mode == "cov":
+            return self._eigen_decompose_covariance, self._solve_eigen_covariance
+        if gcv_mode == "svd":
+            return self._svd_decompose_design_matrix, self._solve_svd_design_matrix
+        raise ValueError(f"Unknown {gcv_mode=}")
+
+    @staticmethod
+    def _prepare_alphas(alphas):
+        """Convert alphas to a list of floats."""
+        if (
+            isinstance(alphas, numbers.Number)
+            or getattr(alphas, "ndim", None) == 0
+        ):
+            return [float(alphas)]
+        return list(map(float, alphas))
+
+    def _reshape_cv_results(self, y, n_samples, n_y, n_alphas, xp):
+        """Reshape cv_results_ to the appropriate shape."""
+        if y.ndim == 1:
+            cv_results_shape = n_samples, n_alphas
+        else:
+            cv_results_shape = n_samples, n_y, n_alphas
+        self.cv_results_ = xp.reshape(self.cv_results_, shape=cv_results_shape)
+
     def fit(self, X, y, sample_weight=None, score_params=None):
         """Fit Ridge regression model with gcv.
 
@@ -2215,15 +2345,9 @@ class _RidgeGCV(LinearModel):
         """
         xp, is_array_api, device_ = get_namespace_and_device(X)
         y, sample_weight = move_to(y, sample_weight, xp=xp, device=device_)
-        if (is_array_api and xp.isdtype(X.dtype, "real floating")) or getattr(
-            getattr(X, "dtype", None), "kind", None
-        ) == "f":
-            original_floating_dtype = X.dtype
-        else:
-            # for X that does not have a simple dtype (e.g. pandas dataframe)
-            # the attributes will be stored in the dtype chosen by
-            # `validate_data``, i.e. np.float64
-            original_floating_dtype = None
+        original_floating_dtype = self._detect_original_float_dtype(
+            xp, is_array_api, X
+        )
         # Using float32 can be numerically unstable for this estimator. So if
         # the array API namespace and device allow, convert the input values
         # to float64 whenever possible before converting the results back to
@@ -2260,19 +2384,8 @@ class _RidgeGCV(LinearModel):
         )
 
         gcv_mode = _check_gcv_mode(X, self.gcv_mode)
-
         n_samples, n_features = X.shape
-        if gcv_mode == "gram":
-            decompose = self._eigen_decompose_gram
-            solve = self._solve_eigen_gram
-        elif gcv_mode == "cov":
-            decompose = self._eigen_decompose_covariance
-            solve = self._solve_eigen_covariance
-        elif gcv_mode == "svd":
-            decompose = self._svd_decompose_design_matrix
-            solve = self._solve_svd_design_matrix
-        else:
-            raise ValueError(f"Unknown {gcv_mode=}")
+        decompose, solve = self._get_gcv_decompose_solve(gcv_mode)
 
         if sqrt_sw is None:
             sqrt_sw = xp.ones(n_samples, dtype=X.dtype, device=device_)
@@ -2280,13 +2393,7 @@ class _RidgeGCV(LinearModel):
         decomposition = decompose(X, X_offset, y, sqrt_sw)
 
         n_y = 1 if y.ndim == 1 else y.shape[1]
-        if (
-            isinstance(self.alphas, numbers.Number)
-            or getattr(self.alphas, "ndim", None) == 0
-        ):
-            alphas = [float(self.alphas)]
-        else:
-            alphas = list(map(float, self.alphas))
+        alphas = self._prepare_alphas(self.alphas)
         n_alphas = len(alphas)
 
         if self.store_cv_results:
@@ -2299,52 +2406,24 @@ class _RidgeGCV(LinearModel):
         for i, alpha in enumerate(alphas):
             looe, coef = solve(float(alpha), y, sqrt_sw, *decomposition)
             if self.scoring is None:
-                squared_errors = looe**2
-                alpha_score = self._score_without_scorer(squared_errors=squared_errors)
-                if self.store_cv_results:
-                    self.cv_results_[:, i] = _ravel(squared_errors)
+                alpha_score = self._compute_score_no_scorer(looe, i)
             else:
-                predictions = y - looe
-                # Rescale predictions back to original scale
-                if sample_weight is not None:  # avoid the unnecessary division by ones
-                    if predictions.ndim > 1:
-                        predictions /= sqrt_sw[:, None]
-                    else:
-                        predictions /= sqrt_sw
-                predictions += y_offset
-
-                if self.store_cv_results:
-                    self.cv_results_[:, i] = _ravel(predictions)
-
-                score_params = score_params or {}
-                alpha_score = self._score(
-                    predictions=predictions,
-                    y=unscaled_y,
-                    n_y=n_y,
-                    scorer=self.scoring,
-                    score_params=score_params,
+                alpha_score = self._compute_score_with_scorer(
+                    looe,
+                    y,
+                    sqrt_sw,
+                    y_offset,
+                    sample_weight,
+                    unscaled_y,
+                    n_y,
+                    score_params,
+                    i,
                 )
 
-            # Keep track of the best model
-            if best_score is None:
-                # initialize
-                if self.alpha_per_target and n_y > 1:
-                    best_coef = coef
-                    best_score = xp.reshape(alpha_score, shape=(-1,))
-                    best_alpha = xp.full(n_y, alpha, device=device_)
-                else:
-                    best_coef = coef
-                    best_score = alpha_score
-                    best_alpha = alpha
-            else:
-                # update
-                if self.alpha_per_target and n_y > 1:
-                    to_update = alpha_score > best_score
-                    best_coef[:, to_update] = coef[:, to_update]
-                    best_score[to_update] = alpha_score[to_update]
-                    best_alpha[to_update] = alpha
-                elif alpha_score > best_score:
-                    best_coef, best_score, best_alpha = coef, alpha_score, alpha
+            best_coef, best_score, best_alpha = self._update_best(
+                best_coef, best_score, best_alpha, coef, alpha_score, alpha,
+                n_y, xp, device_,
+            )
 
         self.alpha_ = best_alpha
         self.best_score_ = best_score
@@ -2357,22 +2436,10 @@ class _RidgeGCV(LinearModel):
         self._set_intercept(X_offset, y_offset, X_scale)
 
         if self.store_cv_results:
-            if y.ndim == 1:
-                cv_results_shape = n_samples, n_alphas
-            else:
-                cv_results_shape = n_samples, n_y, n_alphas
-            self.cv_results_ = xp.reshape(self.cv_results_, shape=cv_results_shape)
+            self._reshape_cv_results(y, n_samples, n_y, n_alphas, xp)
 
         if original_floating_dtype:
-            if type(self.intercept_) is not float:
-                self.intercept_ = xp.astype(
-                    self.intercept_, original_floating_dtype, copy=False
-                )
-            self.coef_ = xp.astype(self.coef_, original_floating_dtype, copy=False)
-            if self.store_cv_results:
-                self.cv_results_ = xp.astype(
-                    self.cv_results_, original_floating_dtype, copy=False
-                )
+            self._cast_to_original_dtype(original_floating_dtype, xp)
 
         return self
 
