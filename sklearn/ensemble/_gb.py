@@ -619,6 +619,82 @@ class BaseGradientBoosting(BaseEnsemble, metaclass=ABCMeta):
         """Check that the estimator is initialized, raising an error if not."""
         check_is_fitted(self)
 
+    def _split_data_for_early_stopping(self, x, y, sample_weight):
+        """Split data into training and validation sets for early stopping."""
+        if self.n_iter_no_change is not None:
+            stratify = y if is_classifier(self) else None
+            (
+                x_train,
+                x_val,
+                y_train,
+                y_val,
+                sample_weight_train,
+                sample_weight_val,
+            ) = train_test_split(
+                x,
+                y,
+                sample_weight,
+                random_state=self.random_state,
+                test_size=self.validation_fraction,
+                stratify=stratify,
+            )
+            if is_classifier(self):
+                if self.n_classes_ != np.unique(y_train).shape[0]:
+                    # We choose to error here. The problem is that the init
+                    # estimator would be trained on y, which has some missing
+                    # classes now, so its predictions would not have the
+                    # correct shape.
+                    raise ValueError(
+                        "The training data after the early stopping split "
+                        "is missing some classes. Try using another random "
+                        "seed."
+                    )
+        else:
+            x_train, y_train, sample_weight_train = x, y, sample_weight
+            x_val = y_val = sample_weight_val = None
+        return x_train, x_val, y_train, y_val, sample_weight_train, sample_weight_val
+
+    def _fit_init_estimator(
+        self, x, y, sample_weight, sample_weight_is_none
+    ):
+        """Fit the initial estimator, handling sample weight compatibility."""
+        if sample_weight_is_none:
+            self.init_.fit(x, y)
+            return
+
+        msg = (
+            "The initial estimator {} does not support sample "
+            "weights.".format(self.init_.__class__.__name__)
+        )
+        try:
+            self.init_.fit(x, y, sample_weight=sample_weight)
+        except TypeError as e:
+            if "unexpected keyword argument 'sample_weight'" in str(e):
+                # regular estimator without SW support
+                raise ValueError(msg) from e
+            else:  # regular estimator whose input checking failed
+                raise
+        except ValueError as e:
+            if (
+                "pass parameters to specific steps of "
+                "your pipeline using the "
+                "stepname__parameter" in str(e)
+            ):  # pipeline
+                raise ValueError(msg) from e
+            else:  # regular estimator whose input checking failed
+                raise
+
+    def _truncate_to_n_stages(self, n_stages):
+        """Truncate estimators and scores to the actual number of stages."""
+        if n_stages != self.estimators_.shape[0]:
+            self.estimators_ = self.estimators_[:n_stages]
+            self.train_score_ = self.train_score_[:n_stages]
+            if hasattr(self, "oob_improvement_"):
+                # OOB scores were computed
+                self.oob_improvement_ = self.oob_improvement_[:n_stages]
+                self.oob_scores_ = self.oob_scores_[:n_stages]
+                self.oob_score_ = self.oob_scores_[-1]
+
     @_fit_context(
         # GradientBoosting*.init is not validated yet
         prefer_skip_nested_validation=False
@@ -695,37 +771,14 @@ class BaseGradientBoosting(BaseEnsemble, metaclass=ABCMeta):
         # self.loss is guaranteed to be a string
         self._loss = self._get_loss(sample_weight=sample_weight)
 
-        if self.n_iter_no_change is not None:
-            stratify = y if is_classifier(self) else None
-            (
-                X_train,
-                X_val,
-                y_train,
-                y_val,
-                sample_weight_train,
-                sample_weight_val,
-            ) = train_test_split(
-                X,
-                y,
-                sample_weight,
-                random_state=self.random_state,
-                test_size=self.validation_fraction,
-                stratify=stratify,
-            )
-            if is_classifier(self):
-                if self.n_classes_ != np.unique(y_train).shape[0]:
-                    # We choose to error here. The problem is that the init
-                    # estimator would be trained on y, which has some missing
-                    # classes now, so its predictions would not have the
-                    # correct shape.
-                    raise ValueError(
-                        "The training data after the early stopping split "
-                        "is missing some classes. Try using another random "
-                        "seed."
-                    )
-        else:
-            X_train, y_train, sample_weight_train = X, y, sample_weight
-            X_val = y_val = sample_weight_val = None
+        (
+            X_train,
+            X_val,
+            y_train,
+            y_val,
+            sample_weight_train,
+            sample_weight_val,
+        ) = self._split_data_for_early_stopping(X, y, sample_weight)
 
         n_samples = X_train.shape[0]
 
@@ -742,32 +795,9 @@ class BaseGradientBoosting(BaseEnsemble, metaclass=ABCMeta):
                 )
             else:
                 # XXX clean this once we have a support_sample_weight tag
-                if sample_weight_is_none:
-                    self.init_.fit(X_train, y_train)
-                else:
-                    msg = (
-                        "The initial estimator {} does not support sample "
-                        "weights.".format(self.init_.__class__.__name__)
-                    )
-                    try:
-                        self.init_.fit(
-                            X_train, y_train, sample_weight=sample_weight_train
-                        )
-                    except TypeError as e:
-                        if "unexpected keyword argument 'sample_weight'" in str(e):
-                            # regular estimator without SW support
-                            raise ValueError(msg) from e
-                        else:  # regular estimator whose input checking failed
-                            raise
-                    except ValueError as e:
-                        if (
-                            "pass parameters to specific steps of "
-                            "your pipeline using the "
-                            "stepname__parameter" in str(e)
-                        ):  # pipeline
-                            raise ValueError(msg) from e
-                        else:  # regular estimator whose input checking failed
-                            raise
+                self._fit_init_estimator(
+                    X_train, y_train, sample_weight_train, sample_weight_is_none
+                )
 
                 raw_predictions = _init_raw_predictions(
                     X_train, self.init_, self._loss, is_classifier(self)
@@ -817,14 +847,7 @@ class BaseGradientBoosting(BaseEnsemble, metaclass=ABCMeta):
         )
 
         # change shape of arrays after fit (early-stopping or additional ests)
-        if n_stages != self.estimators_.shape[0]:
-            self.estimators_ = self.estimators_[:n_stages]
-            self.train_score_ = self.train_score_[:n_stages]
-            if hasattr(self, "oob_improvement_"):
-                # OOB scores were computed
-                self.oob_improvement_ = self.oob_improvement_[:n_stages]
-                self.oob_scores_ = self.oob_scores_[:n_stages]
-                self.oob_score_ = self.oob_scores_[-1]
+        self._truncate_to_n_stages(n_stages)
         self.n_estimators_ = n_stages
         return self
 

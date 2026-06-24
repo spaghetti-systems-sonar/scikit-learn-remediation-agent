@@ -444,6 +444,193 @@ def lasso_path(
     )
 
 
+def _resolve_alphas_param(n_alphas, alphas):
+    """Resolve the deprecated n_alphas/alphas parameters into _alphas."""
+    if n_alphas == "deprecated":
+        _alphas = 100  # the old, current, and future default;-)
+    else:
+        warnings.warn(
+            "'n_alphas' was deprecated in 1.9 and will be removed in 1.11. "
+            "'alphas' now accepts an integer value which removes the need to pass "
+            "'n_alphas'. The default value of 'alphas' will change from None to "
+            "100 in 1.11. Pass an explicit value to 'alphas' and leave 'n_alphas' "
+            "to its default value to silence this warning.",
+            FutureWarning,
+        )
+        _alphas = n_alphas
+
+    if isinstance(alphas, str) and alphas == "warn":
+        # - If n_alphas == "deprecated", both are left to their default values so we
+        #   don't warn since the future default behavior will be the same as the
+        #   current default behavior.
+        # - self.n_alphas != "deprecated", then we already warned about it and the
+        #   warning message mentions the future alphas default, so no need to warn a
+        #   second time.
+        pass
+    elif alphas is None:
+        warnings.warn(
+            "'alphas=None' is deprecated and will be removed in 1.11, at which "
+            "point the default value will be set to 100. Set 'alphas=100' "
+            "to silence this warning.",
+            FutureWarning,
+        )
+    else:
+        _alphas = alphas
+
+    return _alphas
+
+
+def _validate_enet_inputs(features, targets, feature_target_dot, copy_features):
+    """Validate and convert X, y, Xy arrays for enet_path."""
+    features = check_array(
+        features,
+        accept_sparse="csc",
+        dtype=[np.float64, np.float32],
+        order="F",
+        copy=copy_features,
+    )
+    targets = check_array(
+        targets,
+        accept_sparse="csc",
+        dtype=features.dtype.type,
+        order="F",
+        copy=False,
+        ensure_2d=False,
+    )
+    if feature_target_dot is not None:
+        # Xy should be a 1d contiguous array or a 2D C ordered array
+        feature_target_dot = check_array(
+            feature_target_dot,
+            dtype=features.dtype.type,
+            order="C",
+            copy=False,
+            ensure_2d=False,
+        )
+    return features, targets, feature_target_dot
+
+
+def _get_sparse_scaling(offset_param, scale_param, n_features, dtype, is_sparse):
+    """Compute sparse scaling vector for sparse X matrices."""
+    if not is_sparse:
+        return None
+    if offset_param is not None:
+        # As sparse matrices are not actually centered we need this to be passed to
+        # the CD solver.
+        scaling = offset_param / scale_param
+        return np.asarray(scaling, dtype=dtype)
+    return np.zeros(n_features, dtype=dtype)
+
+
+def _run_enet_solver(
+    coef,
+    l1_reg,
+    l2_reg,
+    features,
+    targets,
+    multi_output,
+    sparse_scaling,
+    sample_weight,
+    precompute,
+    feature_target_dot,
+    check_input,
+    solver_opts,
+):
+    """Select and run the appropriate coordinate descent solver."""
+    is_sparse = sparse.issparse(features)
+    feat_data = features.data if is_sparse else None
+    feat_indices = features.indices if is_sparse else None
+    feat_indptr = features.indptr if is_sparse else None
+
+    if not multi_output and is_sparse:
+        return cd_fast.sparse_enet_coordinate_descent(
+            w=coef,
+            alpha=l1_reg,
+            beta=l2_reg,
+            X_data=feat_data,
+            X_indices=feat_indices,
+            X_indptr=feat_indptr,
+            y=targets,
+            sample_weight=sample_weight,
+            X_mean=sparse_scaling,
+            max_iter=solver_opts["max_iter"],
+            tol=solver_opts["tol"],
+            rng=solver_opts["rng"],
+            random=solver_opts["random"],
+            positive=solver_opts["positive"],
+            do_screening=solver_opts["do_screening"],
+        )
+    if multi_output:
+        return cd_fast.enet_coordinate_descent_multi_task(
+            W=coef,
+            alpha=l1_reg,
+            beta=l2_reg,
+            X=None if is_sparse else features,
+            X_is_sparse=is_sparse,
+            X_data=feat_data,
+            X_indices=feat_indices,
+            X_indptr=feat_indptr,
+            Y=targets,
+            sample_weight=sample_weight,
+            X_mean=sparse_scaling,
+            max_iter=solver_opts["max_iter"],
+            tol=solver_opts["tol"],
+            rng=solver_opts["rng"],
+            random=solver_opts["random"],
+            do_screening=solver_opts["do_screening"],
+        )
+    if isinstance(precompute, np.ndarray):
+        # We expect precompute to be already Fortran ordered when bypassing
+        # checks
+        if check_input:
+            precompute = check_array(
+                precompute, dtype=features.dtype.type, order="C"
+            )
+        return cd_fast.enet_coordinate_descent_gram(
+            coef,
+            l1_reg,
+            l2_reg,
+            precompute,
+            feature_target_dot,
+            targets,
+            solver_opts["max_iter"],
+            solver_opts["tol"],
+            solver_opts["rng"],
+            solver_opts["random"],
+            solver_opts["positive"],
+            solver_opts["do_screening"],
+        )
+    if precompute is False:
+        return cd_fast.enet_coordinate_descent(
+            coef,
+            l1_reg,
+            l2_reg,
+            features,
+            targets,
+            solver_opts["max_iter"],
+            solver_opts["tol"],
+            solver_opts["rng"],
+            solver_opts["random"],
+            solver_opts["positive"],
+            solver_opts["do_screening"],
+        )
+    raise ValueError(
+        "Precompute should be one of True, False, 'auto' or array-like. Got %r"
+        % precompute
+    )
+
+
+def _log_path_progress(verbose, model, idx, n_alphas):
+    """Log progress during enet_path iteration."""
+    if not verbose:
+        return
+    if verbose > 2:
+        print(model)
+    elif verbose > 1:
+        print("Path: %03i out of %03i" % (idx, n_alphas))
+    else:
+        sys.stderr.write(".")
+
+
 @validate_params(
     {
         "X": ["array-like", "sparse matrix"],
@@ -631,36 +818,7 @@ def enet_path(
     # TODO(1.11): remove n_alphas and alphas={"warn", None}; set alphas=100 by default.
     # Remove these deprecations messages and use alphas directly instead of instead of
     # _alphas.
-    if n_alphas == "deprecated":
-        _alphas = 100  # the old, current, and future default;-)
-    else:
-        warnings.warn(
-            "'n_alphas' was deprecated in 1.9 and will be removed in 1.11. "
-            "'alphas' now accepts an integer value which removes the need to pass "
-            "'n_alphas'. The default value of 'alphas' will change from None to "
-            "100 in 1.11. Pass an explicit value to 'alphas' and leave 'n_alphas' "
-            "to its default value to silence this warning.",
-            FutureWarning,
-        )
-        _alphas = n_alphas
-
-    if isinstance(alphas, str) and alphas == "warn":
-        # - If n_alphas == "deprecated", both are left to their default values so we
-        #   don't warn since the future default behavior will be the same as the
-        #   current default behavior.
-        # - self.n_alphas != "deprecated", then we already warned about it and the
-        #   warning message mentions the future alphas default, so no need to warn a
-        #   second time.
-        pass
-    elif alphas is None:
-        warnings.warn(
-            "'alphas=None' is deprecated and will be removed in 1.11, at which "
-            "point the default value will be set to 100. Set 'alphas=100' "
-            "to silence this warning.",
-            FutureWarning,
-        )
-    else:
-        _alphas = alphas
+    _alphas = _resolve_alphas_param(n_alphas, alphas)
 
     X_offset_param = params.pop("X_offset", None)
     X_scale_param = params.pop("X_scale", None)
@@ -677,48 +835,18 @@ def enet_path(
     # We expect X and y to be already Fortran ordered when bypassing
     # checks
     if check_input:
-        X = check_array(
-            X,
-            accept_sparse="csc",
-            dtype=[np.float64, np.float32],
-            order="F",
-            copy=copy_X,
-        )
-        y = check_array(
-            y,
-            accept_sparse="csc",
-            dtype=X.dtype.type,
-            order="F",
-            copy=False,
-            ensure_2d=False,
-        )
-        if Xy is not None:
-            # Xy should be a 1d contiguous array or a 2D C ordered array
-            Xy = check_array(
-                Xy, dtype=X.dtype.type, order="C", copy=False, ensure_2d=False
-            )
+        X, y, Xy = _validate_enet_inputs(X, y, Xy, copy_X)
 
     n_samples, n_features = X.shape
 
-    multi_output = False
-    if y.ndim != 1:
-        multi_output = True
-        n_targets = y.shape[1]
-
+    multi_output = y.ndim != 1
     if multi_output and positive:
         raise ValueError("positive=True is not allowed for multi-output (y.ndim != 1)")
 
     X_is_sparse = sparse.issparse(X)
-    if X_is_sparse:
-        if X_offset_param is not None:
-            # As sparse matrices are not actually centered we need this to be passed to
-            # the CD solver.
-            X_sparse_scaling = X_offset_param / X_scale_param
-            X_sparse_scaling = np.asarray(X_sparse_scaling, dtype=X.dtype)
-        else:
-            X_sparse_scaling = np.zeros(n_features, dtype=X.dtype)
-    else:
-        X_sparse_scaling = None
+    X_sparse_scaling = _get_sparse_scaling(
+        X_offset_param, X_scale_param, n_features, X.dtype, X_is_sparse
+    )
 
     # X should have been passed through _pre_fit already if function is called
     # from ElasticNet.fit
@@ -745,7 +873,7 @@ def enet_path(
             eps=eps,
             n_alphas=_alphas,
         )
-    elif len(_alphas) > 1:
+    else:
         alphas = np.sort(_alphas)[::-1]  # make sure alphas are properly ordered
 
     n_alphas = len(alphas)
@@ -757,104 +885,45 @@ def enet_path(
         raise ValueError("selection should be either random or cyclic.")
     random = selection == "random"
 
-    if not multi_output:
-        coefs = np.empty((n_features, n_alphas), dtype=X.dtype)
-    else:
-        coefs = np.empty((n_targets, n_features, n_alphas), dtype=X.dtype)
+    coefs = (
+        np.empty((n_features, n_alphas), dtype=X.dtype)
+        if not multi_output
+        else np.empty((y.shape[1], n_features, n_alphas), dtype=X.dtype)
+    )
 
-    if coef_init is None:
-        coef_ = np.zeros(coefs.shape[:-1], dtype=X.dtype, order="F")
-    else:
-        coef_ = np.asfortranarray(coef_init, dtype=X.dtype)
+    coef_ = (
+        np.zeros(coefs.shape[:-1], dtype=X.dtype, order="F")
+        if coef_init is None
+        else np.asfortranarray(coef_init, dtype=X.dtype)
+    )
 
-    if X_is_sparse:
-        X_data = X.data
-        X_indices = X.indices
-        X_indptr = X.indptr
-    else:
-        X_data = None
-        X_indices = None
-        X_indptr = None
+    solver_opts = {
+        "max_iter": max_iter,
+        "tol": tol,
+        "rng": rng,
+        "random": random,
+        "positive": positive,
+        "do_screening": do_screening,
+    }
 
     for i, alpha in enumerate(alphas):
         # account for n_samples scaling in objectives between here and cd_fast
         l1_reg = alpha * l1_ratio * n_samples
         l2_reg = alpha * (1.0 - l1_ratio) * n_samples
-        if not multi_output and X_is_sparse:
-            model = cd_fast.sparse_enet_coordinate_descent(
-                w=coef_,
-                alpha=l1_reg,
-                beta=l2_reg,
-                X_data=X_data,
-                X_indices=X_indices,
-                X_indptr=X_indptr,
-                y=y,
-                sample_weight=sample_weight,
-                X_mean=X_sparse_scaling,
-                max_iter=max_iter,
-                tol=tol,
-                rng=rng,
-                random=random,
-                positive=positive,
-                do_screening=do_screening,
-            )
-        elif multi_output:
-            model = cd_fast.enet_coordinate_descent_multi_task(
-                W=coef_,
-                alpha=l1_reg,
-                beta=l2_reg,
-                X=None if X_is_sparse else X,
-                X_is_sparse=X_is_sparse,
-                X_data=X_data,
-                X_indices=X_indices,
-                X_indptr=X_indptr,
-                Y=y,
-                sample_weight=sample_weight,
-                X_mean=X_sparse_scaling,
-                max_iter=max_iter,
-                tol=tol,
-                rng=rng,
-                random=random,
-                do_screening=do_screening,
-            )
-        elif isinstance(precompute, np.ndarray):
-            # We expect precompute to be already Fortran ordered when bypassing
-            # checks
-            if check_input:
-                precompute = check_array(precompute, dtype=X.dtype.type, order="C")
-            model = cd_fast.enet_coordinate_descent_gram(
-                coef_,
-                l1_reg,
-                l2_reg,
-                precompute,
-                Xy,
-                y,
-                max_iter,
-                tol,
-                rng,
-                random,
-                positive,
-                do_screening,
-            )
-        elif precompute is False:
-            model = cd_fast.enet_coordinate_descent(
-                coef_,
-                l1_reg,
-                l2_reg,
-                X,
-                y,
-                max_iter,
-                tol,
-                rng,
-                random,
-                positive,
-                do_screening,
-            )
-        else:
-            raise ValueError(
-                "Precompute should be one of True, False, 'auto' or array-like. Got %r"
-                % precompute
-            )
+        model = _run_enet_solver(
+            coef_,
+            l1_reg,
+            l2_reg,
+            X,
+            y,
+            multi_output,
+            X_sparse_scaling,
+            sample_weight,
+            precompute,
+            Xy,
+            check_input,
+            solver_opts,
+        )
         coef_, dual_gap_, eps_, n_iter_ = model
         coefs[..., i] = coef_
         # we correct the scale of the returned dual gap, as the objective
@@ -862,13 +931,7 @@ def enet_path(
         dual_gaps[i] = dual_gap_ / n_samples
         n_iters.append(n_iter_)
 
-        if verbose:
-            if verbose > 2:
-                print(model)
-            elif verbose > 1:
-                print("Path: %03i out of %03i" % (i, n_alphas))
-            else:
-                sys.stderr.write(".")
+        _log_path_progress(verbose, model, i, n_alphas)
 
     if return_n_iter:
         return alphas, coefs, dual_gaps, n_iters

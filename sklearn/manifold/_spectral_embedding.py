@@ -292,6 +292,158 @@ def spectral_embedding(
     )
 
 
+def _solve_arpack(laplacian, n_components, random_state, eigen_tol, norm_laplacian, dd):
+    """Solve the eigenvalue problem using ARPACK.
+
+    Returns ``(embedding_or_none, laplacian, solver)`` where *solver* is
+    ``"arpack"`` on success or ``"lobpcg"`` when ARPACK fails at runtime.
+    """
+    laplacian = _set_diag(laplacian, 1, norm_laplacian)
+
+    # Here we'll use shift-invert mode for fast eigenvalues
+    # (see https://docs.scipy.org/doc/scipy/tutorial/arpack.html
+    # for a short explanation of what this means)
+    # Laplacian (normalized or not) has non-negative eigenvalues
+    # and we need to find the smallest ones, i.e. closest to 0.
+    # The efficient way to do it, according to the scipy docs,
+    # is to use which="LM" and sigma=0.
+    # Andrew Kniazev recommends to set small negative sigma
+    # (see https://github.com/scikit-learn/scikit-learn/
+    # pull/14647#issuecomment-521304431) because a Laplacian
+    # has exact at least one exact zero eigenvalue, so sigma=0
+    # can lead to problems.
+    try:
+        tol = 0 if eigen_tol == "auto" else eigen_tol
+
+        v0 = _init_arpack_v0(laplacian.shape[0], random_state)
+        laplacian = check_array(
+            laplacian, accept_sparse="csr", accept_large_sparse=False
+        )
+        _, diffusion_map = eigsh(
+            laplacian, k=n_components, sigma=-1e-5, which="LM", tol=tol, v0=v0
+        )
+        embedding = diffusion_map.T[:n_components]
+        if norm_laplacian:
+            # recover u = D^-1/2 x from the eigenvector output x
+            embedding = embedding / dd
+        return embedding, laplacian, "arpack"
+    except RuntimeError:  # pragma: no cover
+        # When submatrices are exactly singular, the LU decomposition
+        # in ARPACK can fail. In this case, we fallback to LOBPCG.
+        # Note: this should actually never happen with sigma < 0,
+        # so the entire `try ... except` structure could be removed.
+        # There is no unit test for this (hence `pragma: no cover`)
+        # because it is unclear how to trigger this RuntimeError.
+        # (https://github.com/scikit-learn/scikit-learn/pull/33262)
+        warnings.warn("ARPACK has failed, falling back to LOBPCG.", RuntimeWarning)
+        return None, laplacian, "lobpcg"
+
+
+def _solve_amg(
+    laplacian,
+    n_components,
+    random_state,
+    eigen_tol,
+    norm_laplacian,
+    dd,
+    pyamg_supports_sparray,
+    smoothed_aggregation_solver,
+):
+    """Solve the eigenvalue problem using AMG preconditioning with LOBPCG."""
+    # Use AMG to get a preconditioner and speed up the eigenvalue
+    # problem.
+    laplacian = check_array(
+        laplacian, dtype=[np.float64, np.float32], accept_sparse=True
+    )
+    laplacian = _set_diag(laplacian, 1, norm_laplacian)
+
+    # The Laplacian matrix is always singular, having at least one zero
+    # eigenvalue, corresponding to the trivial eigenvector, which is a
+    # constant. Using a singular matrix for preconditioning may result in
+    # random failures in LOBPCG and is not supported by the existing
+    # theory:
+    #     see https://doi.org/10.1007/s10208-015-9297-1
+    # Shift the Laplacian so its diagononal is not all ones. The shift
+    # does change the eigenpairs however, so we'll feed the shifted
+    # matrix to the solver and afterward set it back to the original.
+    diag_shift = 1e-5 * _sparse_eye_array(laplacian.shape[0])
+    laplacian += diag_shift
+    if hasattr(sparse, "csr_array") and isinstance(laplacian, sparse.csr_array):
+        # old version `pyamg` may not work with `csr_array` and new version
+        # may not work with `csr_matrix`. But we need to convert to CSR.
+        if pyamg_supports_sparray:
+            laplacian = sparse.csr_array(laplacian)
+        else:
+            laplacian = sparse.csr_matrix(laplacian)
+
+    ml = smoothed_aggregation_solver(check_array(laplacian, accept_sparse="csr"))
+    laplacian -= diag_shift
+
+    M = ml.aspreconditioner()
+    # Create initial approximation X to eigenvectors
+    X = random_state.standard_normal(size=(laplacian.shape[0], n_components + 1))
+    X[:, 0] = dd.ravel()
+    X = X.astype(laplacian.dtype)
+
+    tol = None if eigen_tol == "auto" else eigen_tol
+    _, diffusion_map = lobpcg(laplacian, X, M=M, tol=tol, largest=False)
+    embedding = diffusion_map.T
+    if norm_laplacian:
+        # recover u = D^-1/2 x from the eigenvector output x
+        embedding = embedding / dd
+    if embedding.shape[0] == 1:
+        raise ValueError
+
+    return embedding
+
+
+def _solve_lobpcg(
+    laplacian,
+    n_nodes,
+    n_components,
+    random_state,
+    eigen_tol,
+    norm_laplacian,
+    dd,
+):
+    """Solve the eigenvalue problem using LOBPCG."""
+    laplacian = check_array(
+        laplacian, dtype=[np.float64, np.float32], accept_sparse=True
+    )
+    if n_nodes < 5 * n_components + 1:
+        # See note above why lobpcg has problems with small number of nodes.
+        # lobpcg will fallback to eigh, so we short-circuit it
+        if sparse.issparse(laplacian):
+            laplacian = laplacian.toarray()
+        _, diffusion_map = eigh(laplacian, check_finite=False)
+        embedding = diffusion_map.T[:n_components]
+        if norm_laplacian:
+            # recover u = D^-1/2 x from the eigenvector output x
+            embedding = embedding / dd
+    else:
+        laplacian = _set_diag(laplacian, 1, norm_laplacian)
+        # We increase the number of eigenvectors requested, as lobpcg
+        # doesn't behave well in low dimension and create initial
+        # approximation X to eigenvectors
+        X = random_state.standard_normal(
+            size=(laplacian.shape[0], n_components + 1)
+        )
+        X[:, 0] = dd.ravel()
+        X = X.astype(laplacian.dtype)
+        tol = None if eigen_tol == "auto" else eigen_tol
+        _, diffusion_map = lobpcg(
+            laplacian, X, tol=tol, largest=False, maxiter=2000
+        )
+        embedding = diffusion_map.T[:n_components]
+        if norm_laplacian:
+            # recover u = D^-1/2 x from the eigenvector output x
+            embedding = embedding / dd
+        if embedding.shape[0] == 1:
+            raise ValueError
+
+    return embedding
+
+
 def _spectral_embedding(
     adjacency,
     *,
@@ -351,124 +503,25 @@ def _spectral_embedding(
         eigen_solver = "arpack"
 
     if eigen_solver == "arpack":
-        laplacian = _set_diag(laplacian, 1, norm_laplacian)
-
-        # Here we'll use shift-invert mode for fast eigenvalues
-        # (see https://docs.scipy.org/doc/scipy/tutorial/arpack.html
-        # for a short explanation of what this means)
-        # Laplacian (normalized or not) has non-negative eigenvalues
-        # and we need to find the smallest ones, i.e. closest to 0.
-        # The efficient way to do it, according to the scipy docs,
-        # is to use which="LM" and sigma=0.
-        # Andrew Kniazev recommends to set small negative sigma
-        # (see https://github.com/scikit-learn/scikit-learn/
-        # pull/14647#issuecomment-521304431) because a Laplacian
-        # has exact at least one exact zero eigenvalue, so sigma=0
-        # can lead to problems.
-        try:
-            tol = 0 if eigen_tol == "auto" else eigen_tol
-
-            v0 = _init_arpack_v0(laplacian.shape[0], random_state)
-            laplacian = check_array(
-                laplacian, accept_sparse="csr", accept_large_sparse=False
-            )
-            _, diffusion_map = eigsh(
-                laplacian, k=n_components, sigma=-1e-5, which="LM", tol=tol, v0=v0
-            )
-            embedding = diffusion_map.T[:n_components]
-            if norm_laplacian:
-                # recover u = D^-1/2 x from the eigenvector output x
-                embedding = embedding / dd
-        except RuntimeError:  # pragma: no cover
-            # When submatrices are exactly singular, the LU decomposition
-            # in ARPACK can fail. In this case, we fallback to LOBPCG.
-            # Note: this should actually never happen with sigma < 0,
-            # so the entire `try ... except` structure could be removed.
-            # There is no unit test for this (hence `pragma: no cover`)
-            # because it is unclear how to trigger this RuntimeError.
-            # (https://github.com/scikit-learn/scikit-learn/pull/33262)
-            warnings.warn("ARPACK has failed, falling back to LOBPCG.", RuntimeWarning)
-            eigen_solver = "lobpcg"
-
-    elif eigen_solver == "amg":
-        # Use AMG to get a preconditioner and speed up the eigenvalue
-        # problem.
-        laplacian = check_array(
-            laplacian, dtype=[np.float64, np.float32], accept_sparse=True
+        embedding, laplacian, eigen_solver = _solve_arpack(
+            laplacian, n_components, random_state, eigen_tol, norm_laplacian, dd
         )
-        laplacian = _set_diag(laplacian, 1, norm_laplacian)
-
-        # The Laplacian matrix is always singular, having at least one zero
-        # eigenvalue, corresponding to the trivial eigenvector, which is a
-        # constant. Using a singular matrix for preconditioning may result in
-        # random failures in LOBPCG and is not supported by the existing
-        # theory:
-        #     see https://doi.org/10.1007/s10208-015-9297-1
-        # Shift the Laplacian so its diagononal is not all ones. The shift
-        # does change the eigenpairs however, so we'll feed the shifted
-        # matrix to the solver and afterward set it back to the original.
-        diag_shift = 1e-5 * _sparse_eye_array(laplacian.shape[0])
-        laplacian += diag_shift
-        if hasattr(sparse, "csr_array") and isinstance(laplacian, sparse.csr_array):
-            # old version `pyamg` may not work with `csr_array` and new version
-            # may not work with `csr_matrix`. But we need to convert to CSR.
-            if pyamg_supports_sparray:
-                laplacian = sparse.csr_array(laplacian)
-            else:
-                laplacian = sparse.csr_matrix(laplacian)
-
-        ml = smoothed_aggregation_solver(check_array(laplacian, accept_sparse="csr"))
-        laplacian -= diag_shift
-
-        M = ml.aspreconditioner()
-        # Create initial approximation X to eigenvectors
-        X = random_state.standard_normal(size=(laplacian.shape[0], n_components + 1))
-        X[:, 0] = dd.ravel()
-        X = X.astype(laplacian.dtype)
-
-        tol = None if eigen_tol == "auto" else eigen_tol
-        _, diffusion_map = lobpcg(laplacian, X, M=M, tol=tol, largest=False)
-        embedding = diffusion_map.T
-        if norm_laplacian:
-            # recover u = D^-1/2 x from the eigenvector output x
-            embedding = embedding / dd
-        if embedding.shape[0] == 1:
-            raise ValueError
+    elif eigen_solver == "amg":
+        embedding = _solve_amg(
+            laplacian,
+            n_components,
+            random_state,
+            eigen_tol,
+            norm_laplacian,
+            dd,
+            pyamg_supports_sparray,
+            smoothed_aggregation_solver,
+        )
 
     if eigen_solver == "lobpcg":
-        laplacian = check_array(
-            laplacian, dtype=[np.float64, np.float32], accept_sparse=True
+        embedding = _solve_lobpcg(
+            laplacian, n_nodes, n_components, random_state, eigen_tol, norm_laplacian, dd
         )
-        if n_nodes < 5 * n_components + 1:
-            # See note above why lobpcg has problems with small number of nodes.
-            # lobpcg will fallback to eigh, so we short-circuit it
-            if sparse.issparse(laplacian):
-                laplacian = laplacian.toarray()
-            _, diffusion_map = eigh(laplacian, check_finite=False)
-            embedding = diffusion_map.T[:n_components]
-            if norm_laplacian:
-                # recover u = D^-1/2 x from the eigenvector output x
-                embedding = embedding / dd
-        else:
-            laplacian = _set_diag(laplacian, 1, norm_laplacian)
-            # We increase the number of eigenvectors requested, as lobpcg
-            # doesn't behave well in low dimension and create initial
-            # approximation X to eigenvectors
-            X = random_state.standard_normal(
-                size=(laplacian.shape[0], n_components + 1)
-            )
-            X[:, 0] = dd.ravel()
-            X = X.astype(laplacian.dtype)
-            tol = None if eigen_tol == "auto" else eigen_tol
-            _, diffusion_map = lobpcg(
-                laplacian, X, tol=tol, largest=False, maxiter=2000
-            )
-            embedding = diffusion_map.T[:n_components]
-            if norm_laplacian:
-                # recover u = D^-1/2 x from the eigenvector output x
-                embedding = embedding / dd
-            if embedding.shape[0] == 1:
-                raise ValueError
 
     embedding = _deterministic_vector_sign_flip(embedding)
     if drop_first:
