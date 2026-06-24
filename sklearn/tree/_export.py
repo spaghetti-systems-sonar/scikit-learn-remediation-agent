@@ -299,73 +299,82 @@ class _BaseTreeExporter:
             node_val = -tree.impurity[node_id]
         return self.get_color(node_val)
 
-    def node_to_str(self, tree, node_id, criterion):
-        # Generate the node content string
-        if tree.n_outputs == 1:
-            value = tree.value[node_id][0, :]
-        else:
-            value = tree.value[node_id]
-
-        # Should labels be shown?
-        labels = (self.label == "root" and node_id == 0) or self.label == "all"
-
-        characters = self.characters
-        node_string = characters[-1]
-
+    def _format_node_id_str(self, node_id, labels, characters):
+        """Format the node ID portion of the node string."""
         # Write node ID
-        if self.node_ids:
-            if labels:
-                node_string += "node "
-            node_string += characters[0] + str(node_id) + characters[4]
-
-        # Write decision criteria
-        if tree.children_left[node_id] != _tree.TREE_LEAF:
-            # Always write node decision criteria, except for leaves
-            if self.feature_names is not None:
-                feature = self.feature_names[tree.feature[node_id]]
-                feature = self.str_escape(feature)
-            else:
-                feature = "x%s%s%s" % (
-                    characters[1],
-                    tree.feature[node_id],
-                    characters[2],
-                )
-            node_string += "%s %s %s%s" % (
-                feature,
-                characters[3],
-                round(tree.threshold[node_id], self.precision),
-                characters[4],
-            )
-
-        # Write impurity
-        if self.impurity:
-            if isinstance(criterion, _criterion.MSE) or criterion == "squared_error":
-                criterion = "squared_error"
-            elif not isinstance(criterion, str):
-                criterion = "impurity"
-            if labels:
-                node_string += "%s = " % criterion
-            node_string += (
-                str(round(tree.impurity[node_id], self.precision)) + characters[4]
-            )
-
-        # Write node sample count
+        if not self.node_ids:
+            return ""
+        result = ""
         if labels:
-            node_string += "samples = "
+            result += "node "
+        result += characters[0] + str(node_id) + characters[4]
+        return result
+
+    def _format_split_str(self, tree, node_id, characters):
+        """Format the feature split condition for a non-leaf node."""
+        # Write decision criteria
+        if tree.children_left[node_id] == _tree.TREE_LEAF:
+            return ""
+        # Always write node decision criteria, except for leaves
+        if self.feature_names is not None:
+            feature = self.feature_names[tree.feature[node_id]]
+            feature = self.str_escape(feature)
+        else:
+            feature = "x%s%s%s" % (
+                characters[1],
+                tree.feature[node_id],
+                characters[2],
+            )
+        return "%s %s %s%s" % (
+            feature,
+            characters[3],
+            round(tree.threshold[node_id], self.precision),
+            characters[4],
+        )
+
+    def _format_impurity_str(self, tree, node_id, criterion, labels, characters):
+        """Format the impurity information for a node."""
+        # Write impurity
+        if not self.impurity:
+            return ""
+        if isinstance(criterion, _criterion.MSE) or criterion == "squared_error":
+            criterion = "squared_error"
+        elif not isinstance(criterion, str):
+            criterion = "impurity"
+        result = ""
+        if labels:
+            result += "%s = " % criterion
+        result += (
+            str(round(tree.impurity[node_id], self.precision)) + characters[4]
+        )
+        return result
+
+    def _format_samples_str(self, tree, node_id, labels, characters):
+        """Format the samples information for a node."""
+        # Write node sample count
+        result = ""
+        if labels:
+            result += "samples = "
         if self.proportion:
             percent = (
-                100.0 * tree.n_node_samples[node_id] / float(tree.n_node_samples[0])
+                100.0
+                * tree.n_node_samples[node_id]
+                / float(tree.n_node_samples[0])
             )
-            node_string += str(round(percent, 1)) + "%" + characters[4]
+            result += str(round(percent, 1)) + "%" + characters[4]
         else:
-            node_string += str(tree.n_node_samples[node_id]) + characters[4]
+            result += str(tree.n_node_samples[node_id]) + characters[4]
+        return result
 
+    def _format_value_str(self, tree, node_id, value, labels, characters):
+        """Format the value text for a node, returning (value, text)."""
         # Write node class distribution / regression value
         if not self.proportion and tree.n_classes[0] != 1:
             # For classification this will show the proportion of samples
             value = value * tree.weighted_n_node_samples[node_id]
+        result = ""
         if labels:
-            node_string += "value = "
+            result += "value = "
         if tree.n_classes[0] == 1:
             # Regression
             value_text = np.around(value, self.precision)
@@ -384,27 +393,62 @@ class _BaseTreeExporter:
         if tree.n_classes[0] == 1 and tree.n_outputs == 1:
             value_text = value_text.replace("[", "").replace("]", "")
         value_text = value_text.replace("\n ", characters[4])
-        node_string += value_text + characters[4]
+        result += value_text + characters[4]
+        return value, result
 
+    def _format_class_str(self, tree, value, labels, characters):
+        """Format the class name for a classification node."""
         # Write node majority class
         if (
-            self.class_names is not None
-            and tree.n_classes[0] != 1
-            and tree.n_outputs == 1
+            self.class_names is None
+            or tree.n_classes[0] == 1
+            or tree.n_outputs != 1
         ):
-            # Only done for single-output classification trees
-            if labels:
-                node_string += "class = "
-            if self.class_names is not True:
-                class_name = self.class_names[np.argmax(value)]
-                class_name = self.str_escape(class_name)
-            else:
-                class_name = "y%s%s%s" % (
-                    characters[1],
-                    np.argmax(value),
-                    characters[2],
-                )
-            node_string += class_name
+            return ""
+        # Only done for single-output classification trees
+        result = ""
+        if labels:
+            result += "class = "
+        if self.class_names is not True:
+            class_name = self.class_names[np.argmax(value)]
+            class_name = self.str_escape(class_name)
+        else:
+            class_name = "y%s%s%s" % (
+                characters[1],
+                np.argmax(value),
+                characters[2],
+            )
+        result += class_name
+        return result
+
+    def node_to_str(self, tree, node_id, criterion):
+        # Generate the node content string
+        if tree.n_outputs == 1:
+            value = tree.value[node_id][0, :]
+        else:
+            value = tree.value[node_id]
+
+        # Should labels be shown?
+        labels = (self.label == "root" and node_id == 0) or self.label == "all"
+
+        characters = self.characters
+        node_string = characters[-1]
+
+        node_string += self._format_node_id_str(node_id, labels, characters)
+        node_string += self._format_split_str(tree, node_id, characters)
+        node_string += self._format_impurity_str(
+            tree, node_id, criterion, labels, characters
+        )
+        node_string += self._format_samples_str(
+            tree, node_id, labels, characters
+        )
+        value, value_str = self._format_value_str(
+            tree, node_id, value, labels, characters
+        )
+        node_string += value_str
+        node_string += self._format_class_str(
+            tree, value, labels, characters
+        )
 
         # Clean up any trailing newlines
         if node_string.endswith(characters[4]):
