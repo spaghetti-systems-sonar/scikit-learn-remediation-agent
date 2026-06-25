@@ -200,6 +200,35 @@ def lazy_apply(  # type: ignore[valid-type]  # numpydoc ignore=GL07,SA04
     if xp is None:
         xp = array_namespace(*args)
 
+    shapes, dtypes, multi_output = _normalize_shape_dtype(
+        shape, dtype, array_args, args_not_none, xp
+    )
+
+    # Backend-specific branches
+    if is_dask_namespace(xp):
+        out = _lazy_apply_dask(
+            func, args, kwargs, shapes, dtypes, array_args, as_numpy, multi_output, xp
+        )
+    elif is_jax_namespace(xp) and _is_jax_jit_enabled(xp):
+        out = _lazy_apply_jax(
+            func, args, kwargs, shapes, dtypes, as_numpy, multi_output, xp
+        )
+    else:
+        # Eager backends, including non-jitted JAX
+        wrapped = _lazy_apply_wrapper(func, as_numpy, multi_output, xp)
+        out = wrapped(*args, **kwargs)
+
+    return out if multi_output else out[0]
+
+
+def _normalize_shape_dtype(
+    shape: tuple[int | None, ...] | Sequence[tuple[int | None, ...]] | None,
+    dtype: DType | Sequence[DType] | None,
+    array_args: list[Array],
+    args_not_none: list[Array | complex],
+    xp: ModuleType,
+) -> tuple[list[tuple[int | None, ...]], list[DType], bool]:
+    """Normalize shape and dtype parameters into lists and determine multi_output."""
     # Normalize and validate shape and dtype
     shapes: list[tuple[int | None, ...]]
     dtypes: list[DType]
@@ -232,74 +261,89 @@ def lazy_apply(  # type: ignore[valid-type]  # numpydoc ignore=GL07,SA04
     if len(shapes) != len(dtypes):
         msg = f"Got {len(shapes)} shapes and {len(dtypes)} dtypes"
         raise ValueError(msg)
-    del shape
-    del dtype
     # End of shape and dtype parsing
 
-    # Backend-specific branches
-    if is_dask_namespace(xp):
-        import dask
+    return shapes, dtypes, multi_output
 
-        metas: list[Array] = [arg._meta for arg in array_args]  # pylint: disable=protected-access    # pyright: ignore[reportAttributeAccessIssue]
-        meta_xp = array_namespace(*metas)
 
-        wrapped = dask.delayed(  # type: ignore[attr-defined]  # pyright: ignore[reportPrivateImportUsage]
-            _lazy_apply_wrapper(func, as_numpy, multi_output, meta_xp),
-            pure=True,
+def _lazy_apply_dask(
+    func: Callable[..., Array | ArrayLike | Sequence[Array | ArrayLike]],
+    args: tuple[Array | complex | None, ...],
+    kwargs: dict[str, Any],
+    shapes: list[tuple[int | None, ...]],
+    dtypes: list[DType],
+    array_args: list[Array],
+    as_numpy: bool,
+    multi_output: bool,
+    xp: ModuleType,
+) -> tuple[Array, ...]:
+    """Handle lazy_apply for the Dask backend."""
+    import dask
+
+    metas: list[Array] = [arg._meta for arg in array_args]  # pylint: disable=protected-access    # pyright: ignore[reportAttributeAccessIssue]
+    meta_xp = array_namespace(*metas)
+
+    wrapped = dask.delayed(  # type: ignore[attr-defined]  # pyright: ignore[reportPrivateImportUsage]
+        _lazy_apply_wrapper(func, as_numpy, multi_output, meta_xp),
+        pure=True,
+    )
+    # This finalizes each arg, which is the same as arg.rechunk(-1).
+    # Please read docstring above for why we're not using
+    # dask.array.map_blocks or dask.array.blockwise!
+    delayed_out = wrapped(*args, **kwargs)
+
+    return tuple(
+        xp.from_delayed(
+            delayed_out[i],  # pyright: ignore[reportIndexIssue]
+            # Dask's unknown shapes diverge from the Array API specification
+            shape=tuple(math.nan if s is None else s for s in shp),
+            dtype=dt,
+            meta=metas[0],
         )
-        # This finalizes each arg, which is the same as arg.rechunk(-1).
-        # Please read docstring above for why we're not using
-        # dask.array.map_blocks or dask.array.blockwise!
-        delayed_out = wrapped(*args, **kwargs)
+        for i, (shp, dt) in enumerate(zip(shapes, dtypes, strict=True))
+    )
 
-        out = tuple(
-            xp.from_delayed(
-                delayed_out[i],  # pyright: ignore[reportIndexIssue]
-                # Dask's unknown shapes diverge from the Array API specification
-                shape=tuple(math.nan if s is None else s for s in shape),
-                dtype=dtype,
-                meta=metas[0],
-            )
-            for i, (shape, dtype) in enumerate(zip(shapes, dtypes, strict=True))
-        )
 
-    elif is_jax_namespace(xp) and _is_jax_jit_enabled(xp):
-        # Delay calling func with jax.pure_callback, which will forward to func eager
-        # JAX arrays. Do not use jax.pure_callback when running outside of the JIT,
-        # as it does not support raising exceptions:
-        # https://github.com/jax-ml/jax/issues/26102
-        import jax
+def _lazy_apply_jax(
+    func: Callable[..., Array | ArrayLike | Sequence[Array | ArrayLike]],
+    args: tuple[Array | complex | None, ...],
+    kwargs: dict[str, Any],
+    shapes: list[tuple[int | None, ...]],
+    dtypes: list[DType],
+    as_numpy: bool,
+    multi_output: bool,
+    xp: ModuleType,
+) -> tuple[Array, ...]:
+    """Handle lazy_apply for the JAX backend inside jax.jit."""
+    # Delay calling func with jax.pure_callback, which will forward to func eager
+    # JAX arrays. Do not use jax.pure_callback when running outside of the JIT,
+    # as it does not support raising exceptions:
+    # https://github.com/jax-ml/jax/issues/26102
+    import jax
 
-        if any(None in shape for shape in shapes):
-            msg = "Output shape must be fully known when running inside jax.jit"
-            raise ValueError(msg)
+    if any(None in shp for shp in shapes):
+        msg = "Output shape must be fully known when running inside jax.jit"
+        raise ValueError(msg)
 
-        # Shield kwargs from being coerced into JAX arrays.
-        # jax.pure_callback calls jax.jit under the hood, but without the chance of
-        # passing static_argnames / static_argnums.
-        wrapped = _lazy_apply_wrapper(
-            partial(func, **kwargs), as_numpy, multi_output, xp
-        )
+    # Shield kwargs from being coerced into JAX arrays.
+    # jax.pure_callback calls jax.jit under the hood, but without the chance of
+    # passing static_argnames / static_argnums.
+    wrapped = _lazy_apply_wrapper(
+        partial(func, **kwargs), as_numpy, multi_output, xp
+    )
 
-        # suppress unused-ignore to run mypy in -e lint as well as -e dev
-        out = cast(  # type: ignore[bad-cast,unused-ignore]
-            tuple[Array, ...],
-            jax.pure_callback(
-                wrapped,
-                tuple(
-                    jax.ShapeDtypeStruct(shape, dtype)  # pyright: ignore[reportUnknownArgumentType]
-                    for shape, dtype in zip(shapes, dtypes, strict=True)
-                ),
-                *args,
+    # suppress unused-ignore to run mypy in -e lint as well as -e dev
+    return cast(  # type: ignore[bad-cast,unused-ignore]
+        tuple[Array, ...],
+        jax.pure_callback(
+            wrapped,
+            tuple(
+                jax.ShapeDtypeStruct(shp, dt)  # pyright: ignore[reportUnknownArgumentType]
+                for shp, dt in zip(shapes, dtypes, strict=True)
             ),
-        )
-
-    else:
-        # Eager backends, including non-jitted JAX
-        wrapped = _lazy_apply_wrapper(func, as_numpy, multi_output, xp)
-        out = wrapped(*args, **kwargs)
-
-    return out if multi_output else out[0]
+            *args,
+        ),
+    )
 
 
 def _is_jax_jit_enabled(xp: ModuleType) -> bool:  # numpydoc ignore=PR01,RT01
@@ -311,6 +355,26 @@ def _is_jax_jit_enabled(xp: ModuleType) -> bool:  # numpydoc ignore=PR01,RT01
         return bool(x)
     except jax.errors.TracerBoolConversionError:
         return True
+
+
+def _process_lazy_apply_args(
+    args: tuple[Array | complex | None, ...],
+    as_numpy: bool,
+) -> tuple[list[Array | complex | None], object]:
+    """Process arguments for _lazy_apply_wrapper, returning args list and device."""
+    args_list: list[Array | complex | None] = []
+    device = None
+    for arg in args:
+        if arg is not None and not is_python_scalar(arg):
+            if device is None:
+                device = _compat.device(arg)
+            if as_numpy:
+                import numpy as np
+
+                arg = cast(Array, np.asarray(arg))  # pyright: ignore[reportInvalidCast] # noqa: PLW2901
+        args_list.append(arg)
+    assert device is not None
+    return args_list, device
 
 
 def _lazy_apply_wrapper(  # numpydoc ignore=PR01,RT01
@@ -334,18 +398,7 @@ def _lazy_apply_wrapper(  # numpydoc ignore=PR01,RT01
     def wrapper(
         *args: Array | complex | None, **kwargs: Any
     ) -> tuple[Array, ...]:  # numpydoc ignore=GL08
-        args_list = []
-        device = None
-        for arg in args:
-            if arg is not None and not is_python_scalar(arg):
-                if device is None:
-                    device = _compat.device(arg)
-                if as_numpy:
-                    import numpy as np
-
-                    arg = cast(Array, np.asarray(arg))  # pyright: ignore[reportInvalidCast] # noqa: PLW2901
-            args_list.append(arg)
-        assert device is not None
+        args_list, device = _process_lazy_apply_args(args, as_numpy)
 
         out = func(*args_list, **kwargs)
 

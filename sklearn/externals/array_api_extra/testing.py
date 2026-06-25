@@ -215,6 +215,55 @@ def lazy_xp_function(
         _ufuncs_tags[func] = tags
 
 
+def _iter_tagged(
+    mods: list[ModuleType],
+) -> Iterator[tuple[ModuleType, str, Callable[..., Any], dict[str, Any]]]:
+    """Iterate over all functions in ``mods`` that have been tagged by
+    `lazy_xp_function` or registered in ``_ufuncs_tags``.
+    """
+    for mod in mods:
+        for name, func in mod.__dict__.items():
+            tags: dict[str, Any] | None = None
+            with contextlib.suppress(AttributeError):
+                tags = func._lazy_xp_function  # pylint: disable=protected-access
+            if tags is None:
+                with contextlib.suppress(KeyError, TypeError):
+                    tags = _ufuncs_tags[func]
+            if tags is not None:
+                yield mod, name, func, tags
+
+
+def _dask_compute_limit(n: bool | int) -> int:
+    """Normalise the ``allow_dask_compute`` tag to an integer limit."""
+    if n is True:
+        return 1_000_000
+    if n is False:
+        return 0
+    return n
+
+
+def _apply_dask_patches(
+    tagged: Iterator[tuple[ModuleType, str, Callable[..., Any], dict[str, Any]]],
+    setattr_fn: Callable[..., None],
+) -> None:
+    """Wrap every tagged function for Dask compute-count checking."""
+    for mod, name, func, tags in tagged:
+        n = _dask_compute_limit(tags["allow_dask_compute"])
+        wrapped = _dask_wrap(func, n)
+        setattr_fn(mod, name, wrapped)
+
+
+def _apply_jax_patches(
+    tagged: Iterator[tuple[ModuleType, str, Callable[..., Any], dict[str, Any]]],
+    setattr_fn: Callable[..., None],
+) -> None:
+    """Wrap every tagged function for JAX JIT compilation."""
+    for mod, name, func, tags in tagged:
+        if tags["jax_jit"]:
+            wrapped = jax_autojit(func)
+            setattr_fn(mod, name, wrapped)
+
+
 def patch_lazy_xp_functions(
     request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch | None = None,
@@ -297,35 +346,10 @@ def patch_lazy_xp_functions(
         # Enable using patch_lazy_xp_function not as a context manager
         temp_setattr = monkeypatch.setattr  # type: ignore[assignment]  # pyright: ignore[reportAssignmentType]
 
-    def iter_tagged() -> Iterator[
-        tuple[ModuleType, str, Callable[..., Any], dict[str, Any]]
-    ]:
-        for mod in mods:
-            for name, func in mod.__dict__.items():
-                tags: dict[str, Any] | None = None
-                with contextlib.suppress(AttributeError):
-                    tags = func._lazy_xp_function  # pylint: disable=protected-access
-                if tags is None:
-                    with contextlib.suppress(KeyError, TypeError):
-                        tags = _ufuncs_tags[func]
-                if tags is not None:
-                    yield mod, name, func, tags
-
     if is_dask_namespace(xp):
-        for mod, name, func, tags in iter_tagged():
-            n = tags["allow_dask_compute"]
-            if n is True:
-                n = 1_000_000
-            elif n is False:
-                n = 0
-            wrapped = _dask_wrap(func, n)
-            temp_setattr(mod, name, wrapped)
-
+        _apply_dask_patches(_iter_tagged(mods), temp_setattr)
     elif is_jax_namespace(xp):
-        for mod, name, func, tags in iter_tagged():
-            if tags["jax_jit"]:
-                wrapped = jax_autojit(func)
-                temp_setattr(mod, name, wrapped)
+        _apply_jax_patches(_iter_tagged(mods), temp_setattr)
 
     # We can't just decorate patch_lazy_xp_functions with
     # @contextlib.contextmanager because it would not work with the
@@ -335,8 +359,8 @@ def patch_lazy_xp_functions(
         try:
             yield
         finally:
-            for mod, name, orig_func in to_revert:
-                setattr(mod, name, orig_func)
+            for revert_mod, revert_name, orig_func in to_revert:
+                setattr(revert_mod, revert_name, orig_func)
 
     return revert_on_exit()
 
