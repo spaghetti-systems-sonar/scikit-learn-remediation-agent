@@ -288,6 +288,35 @@ class NumpyDocString(Mapping):
     # Empty <DESC> elements are replaced with '..'
     empty_description = ".."
 
+    def _parse_see_also_item_name(self, text, line):
+        """Parse a single function name from See Also text."""
+        m = self._func_rgx.match(text)
+        if not m:
+            self._error_location(f"Error parsing See Also entry {line!r}")
+        role = m.group("role")
+        name = m.group("name") if role else m.group("name2")
+        return name, role, m.end()
+
+    def _parse_see_also_funcs(self, text, line):
+        """Extract all function references from a See Also line."""
+        funcs = []
+        while text.strip():
+            name, role, match_end = self._parse_see_also_item_name(text, line)
+            funcs.append((name, role))
+            text = text[match_end:].strip()
+            if text and text[0] == ",":
+                text = text[1:].strip()
+        return funcs
+
+    def _check_see_also_trailing(self, line_match, line):
+        """Warn if there is an unexpected trailing comma or period."""
+        if line_match.group("trailing") and line_match.group("desc"):
+            self._error_location(
+                "Unexpected comma or period after function list at index %d of "
+                'line "%s"' % (line_match.end("trailing"), line),
+                error=False,
+            )
+
     def _parse_see_also(self, content):
         """
         func_name : Descriptive text
@@ -300,16 +329,6 @@ class NumpyDocString(Mapping):
         content = dedent_lines(content)
 
         items = []
-
-        def parse_item_name(text):
-            """Match ':role:`name`' or 'name'."""
-            m = self._func_rgx.match(text)
-            if not m:
-                self._error_location(f"Error parsing See Also entry {line!r}")
-            role = m.group("role")
-            name = m.group("name") if role else m.group("name2")
-            return name, role, m.end()
-
         rest = []
         for line in content:
             if not line.strip():
@@ -319,25 +338,13 @@ class NumpyDocString(Mapping):
             description = None
             if line_match:
                 description = line_match.group("desc")
-                if line_match.group("trailing") and description:
-                    self._error_location(
-                        "Unexpected comma or period after function list at index %d of "
-                        'line "%s"' % (line_match.end("trailing"), line),
-                        error=False,
-                    )
+                self._check_see_also_trailing(line_match, line)
             if not description and line.startswith(" "):
                 rest.append(line.strip())
             elif line_match:
-                funcs = []
-                text = line_match.group("allfuncs")
-                while True:
-                    if not text.strip():
-                        break
-                    name, role, match_end = parse_item_name(text)
-                    funcs.append((name, role))
-                    text = text[match_end:].strip()
-                    if text and text[0] == ",":
-                        text = text[1:].strip()
+                funcs = self._parse_see_also_funcs(
+                    line_match.group("allfuncs"), line
+                )
                 rest = list(filter(None, [description]))
                 items.append((funcs, rest))
             else:
@@ -613,6 +620,61 @@ class FunctionDoc(NumpyDocString):
         return out
 
 
+def _get_all_sentinel():
+    """Return the sphinx ALL sentinel, or a unique placeholder object."""
+    if "sphinx" in sys.modules:
+        from sphinx.ext.autodoc import ALL
+
+        return ALL
+    return object()
+
+
+def _resolve_class_doc(cls, doc):
+    """Resolve the documentation string for a class."""
+    if doc is not None:
+        return doc
+    if cls is None:
+        raise ValueError("No class or documentation string given")
+    return pydoc.getdoc(cls)
+
+
+def _normalize_modulename(modulename):
+    """Ensure modulename ends with a dot if non-empty."""
+    if modulename and not modulename.endswith("."):
+        return modulename + "."
+    return modulename
+
+
+def _splitlines_x(s):
+    """Split string into lines, returning empty list for falsy input."""
+    if not s:
+        return []
+    return s.splitlines()
+
+
+def _build_doc_list(cls, items, _exclude, _members):
+    """Build a list of Parameter entries from class members."""
+    doc_list = []
+    for name in sorted(items):
+        if name in _exclude or (_members and name not in _members):
+            continue
+        try:
+            doc_item = pydoc.getdoc(getattr(cls, name))
+            doc_list.append(Parameter(name, "", _splitlines_x(doc_item)))
+        except AttributeError:
+            pass  # method doesn't exist
+    return doc_list
+
+
+def _resolve_members(config, all_sentinel):
+    """Resolve member and exclusion lists from config."""
+    _members = config.get("members", [])
+    if _members is all_sentinel:
+        _members = None
+    _exclude = config.get("exclude-members", [])
+    return _members, _exclude
+
+
 class ObjDoc(NumpyDocString):
     def __init__(self, obj, doc=None, config=None):
         self._f = obj
@@ -629,54 +691,32 @@ class ClassDoc(NumpyDocString):
             raise ValueError(f"Expected a class or None, but got {cls!r}")
         self._cls = cls
 
-        if "sphinx" in sys.modules:
-            from sphinx.ext.autodoc import ALL
-        else:
-            ALL = object()
+        all_sentinel = _get_all_sentinel()
 
         if config is None:
             config = {}
         self.show_inherited_members = config.get("show_inherited_class_members", True)
 
-        if modulename and not modulename.endswith("."):
-            modulename += "."
-        self._mod = modulename
+        self._mod = _normalize_modulename(modulename)
 
-        if doc is None:
-            if cls is None:
-                raise ValueError("No class or documentation string given")
-            doc = pydoc.getdoc(cls)
+        doc = _resolve_class_doc(cls, doc)
 
         NumpyDocString.__init__(self, doc)
 
-        _members = config.get("members", [])
-        if _members is ALL:
-            _members = None
-        _exclude = config.get("exclude-members", [])
+        _members, _exclude = _resolve_members(config, all_sentinel)
 
-        if config.get("show_class_members", True) and _exclude is not ALL:
+        if config.get("show_class_members", True) and _exclude is not all_sentinel:
+            self._populate_fields(_members, _exclude)
 
-            def splitlines_x(s):
-                if not s:
-                    return []
-                else:
-                    return s.splitlines()
-
-            for field, items in [
-                ("Methods", self.methods),
-                ("Attributes", self.properties),
-            ]:
-                if not self[field]:
-                    doc_list = []
-                    for name in sorted(items):
-                        if name in _exclude or (_members and name not in _members):
-                            continue
-                        try:
-                            doc_item = pydoc.getdoc(getattr(self._cls, name))
-                            doc_list.append(Parameter(name, "", splitlines_x(doc_item)))
-                        except AttributeError:
-                            pass  # method doesn't exist
-                    self[field] = doc_list
+    def _populate_fields(self, _members, _exclude):
+        for field, items in [
+            ("Methods", self.methods),
+            ("Attributes", self.properties),
+        ]:
+            if not self[field]:
+                self[field] = _build_doc_list(
+                    self._cls, items, _exclude, _members
+                )
 
     @property
     def methods(self):
