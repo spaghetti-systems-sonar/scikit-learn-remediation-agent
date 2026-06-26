@@ -75,6 +75,22 @@ def _check_init(A, shape, whom):
         raise ValueError(f"Array passed to {whom} is full of zeros.")
 
 
+def _beta_divergence_frobenius(x, w, h, square_root):
+    """Compute the beta-divergence for the Frobenius norm (beta == 2)."""
+    # Avoid the creation of the dense np.dot(W, H) if X is sparse.
+    if sp.issparse(x):
+        norm_x = np.dot(x.data, x.data)
+        norm_wh = trace_dot(np.linalg.multi_dot([w.T, w, h]), h)
+        cross_prod = trace_dot((x @ h.T), w)
+        res = (norm_x + norm_wh - 2.0 * cross_prod) / 2.0
+    else:
+        res = squared_norm(x - np.dot(w, h)) / 2.0
+
+    if square_root:
+        return np.sqrt(res * 2)
+    return res
+
+
 def _beta_divergence(X, W, H, beta, square_root=False):
     """Compute the beta-divergence of X and dot(W, H).
 
@@ -112,19 +128,7 @@ def _beta_divergence(X, W, H, beta, square_root=False):
 
     # Frobenius norm
     if beta == 2:
-        # Avoid the creation of the dense np.dot(W, H) if X is sparse.
-        if sp.issparse(X):
-            norm_X = np.dot(X.data, X.data)
-            norm_WH = trace_dot(np.linalg.multi_dot([W.T, W, H]), H)
-            cross_prod = trace_dot((X @ H.T), W)
-            res = (norm_X + norm_WH - 2.0 * cross_prod) / 2.0
-        else:
-            res = squared_norm(X - np.dot(W, H)) / 2.0
-
-        if square_root:
-            return np.sqrt(res * 2)
-        else:
-            return res
+        return _beta_divergence_frobenius(X, W, H, square_root)
 
     if sp.issparse(X):
         # compute np.dot(W, H) only where X is nonzero
@@ -178,8 +182,7 @@ def _beta_divergence(X, W, H, beta, square_root=False):
     if square_root:
         res = max(res, 0)  # avoid negative number due to rounding errors
         return np.sqrt(2 * res)
-    else:
-        return res
+    return res
 
 
 def _special_sparse_dot(W, H, X):
@@ -518,6 +521,91 @@ def _fit_coordinate_descent(
     return W, Ht.T, n_iter
 
 
+def _mu_update_w_frobenius_numer_denom(x, w, h, x_h_t, hh_t, should_copy):
+    """Compute numerator and denominator for W update with Frobenius norm."""
+    # Numerator
+    if x_h_t is None:
+        x_h_t = safe_sparse_dot(x, h.T)
+    if not should_copy:
+        # avoid a copy of XHt, which will be re-computed (update_H=True)
+        numerator = x_h_t
+    else:
+        # preserve the XHt, which is not re-computed (update_H=False)
+        numerator = x_h_t.copy()
+
+    # Denominator
+    if hh_t is None:
+        hh_t = np.dot(h, h.T)
+    denominator = np.dot(w, hh_t)
+
+    return numerator, denominator, hh_t, x_h_t
+
+
+def _mu_update_w_beta_numer(x, w, h, beta_loss):
+    """Compute numerator for W update with general beta divergence."""
+    # Numerator
+    # if X is sparse, compute WH only where X is non zero
+    wh_safe_x = _special_sparse_dot(w, h, x)
+    wh = None
+    if sp.issparse(x):
+        wh_safe_x_data = wh_safe_x.data
+        x_data = x.data
+    else:
+        wh_safe_x_data = wh_safe_x
+        x_data = x
+        # copy used in the Denominator
+        wh = wh_safe_x.copy()
+        if beta_loss - 1.0 < 0:
+            wh[wh < EPSILON] = EPSILON
+
+    # to avoid taking a negative power of zero
+    if beta_loss - 2.0 < 0:
+        wh_safe_x_data[wh_safe_x_data < EPSILON] = EPSILON
+
+    if beta_loss == 1:
+        np.divide(x_data, wh_safe_x_data, out=wh_safe_x_data)
+    elif beta_loss == 0:
+        # speeds up computation time
+        # refer to /numpy/numpy/issues/9363
+        wh_safe_x_data **= -1
+        wh_safe_x_data **= 2
+        # element-wise multiplication
+        wh_safe_x_data *= x_data
+    else:
+        wh_safe_x_data **= beta_loss - 2
+        # element-wise multiplication
+        wh_safe_x_data *= x_data
+
+    # here numerator = dot(X * (dot(W, H) ** (beta_loss - 2)), H.T)
+    numerator = safe_sparse_dot(wh_safe_x, h.T)
+    return numerator, wh
+
+
+def _mu_update_w_beta_denom(x, w, h, beta_loss, h_sum, wh):
+    """Compute denominator for W update with general beta divergence."""
+    # Denominator
+    if beta_loss == 1:
+        if h_sum is None:
+            h_sum = np.sum(h, axis=1)  # shape(n_components, )
+        denominator = h_sum[np.newaxis, :]
+    elif sp.issparse(x):
+        # computation of WHHt = dot(dot(W, H) ** beta_loss - 1, H.T)
+        # memory efficient computation
+        # (compute row by row, avoiding the dense matrix WH)
+        denominator = np.empty(w.shape)
+        for i in range(x.shape[0]):
+            whi = np.dot(w[i, :], h)
+            if beta_loss - 1 < 0:
+                whi[whi < EPSILON] = EPSILON
+            whi **= beta_loss - 1
+            denominator[i, :] = np.dot(whi, h.T)
+    else:
+        wh **= beta_loss - 1
+        denominator = np.dot(wh, h.T)
+
+    return denominator, h_sum
+
+
 def _multiplicative_update_w(
     X,
     W,
@@ -533,79 +621,14 @@ def _multiplicative_update_w(
 ):
     """Update W in Multiplicative Update NMF."""
     if beta_loss == 2:
-        # Numerator
-        if XHt is None:
-            XHt = safe_sparse_dot(X, H.T)
-        if update_H:
-            # avoid a copy of XHt, which will be re-computed (update_H=True)
-            numerator = XHt
-        else:
-            # preserve the XHt, which is not re-computed (update_H=False)
-            numerator = XHt.copy()
-
-        # Denominator
-        if HHt is None:
-            HHt = np.dot(H, H.T)
-        denominator = np.dot(W, HHt)
-
+        numerator, denominator, HHt, XHt = _mu_update_w_frobenius_numer_denom(
+            X, W, H, XHt, HHt, not update_H
+        )
     else:
-        # Numerator
-        # if X is sparse, compute WH only where X is non zero
-        WH_safe_X = _special_sparse_dot(W, H, X)
-        if sp.issparse(X):
-            WH_safe_X_data = WH_safe_X.data
-            X_data = X.data
-        else:
-            WH_safe_X_data = WH_safe_X
-            X_data = X
-            # copy used in the Denominator
-            WH = WH_safe_X.copy()
-            if beta_loss - 1.0 < 0:
-                WH[WH < EPSILON] = EPSILON
-
-        # to avoid taking a negative power of zero
-        if beta_loss - 2.0 < 0:
-            WH_safe_X_data[WH_safe_X_data < EPSILON] = EPSILON
-
-        if beta_loss == 1:
-            np.divide(X_data, WH_safe_X_data, out=WH_safe_X_data)
-        elif beta_loss == 0:
-            # speeds up computation time
-            # refer to /numpy/numpy/issues/9363
-            WH_safe_X_data **= -1
-            WH_safe_X_data **= 2
-            # element-wise multiplication
-            WH_safe_X_data *= X_data
-        else:
-            WH_safe_X_data **= beta_loss - 2
-            # element-wise multiplication
-            WH_safe_X_data *= X_data
-
-        # here numerator = dot(X * (dot(W, H) ** (beta_loss - 2)), H.T)
-        numerator = safe_sparse_dot(WH_safe_X, H.T)
-
-        # Denominator
-        if beta_loss == 1:
-            if H_sum is None:
-                H_sum = np.sum(H, axis=1)  # shape(n_components, )
-            denominator = H_sum[np.newaxis, :]
-
-        else:
-            # computation of WHHt = dot(dot(W, H) ** beta_loss - 1, H.T)
-            if sp.issparse(X):
-                # memory efficient computation
-                # (compute row by row, avoiding the dense matrix WH)
-                WHHt = np.empty(W.shape)
-                for i in range(X.shape[0]):
-                    WHi = np.dot(W[i, :], H)
-                    if beta_loss - 1 < 0:
-                        WHi[WHi < EPSILON] = EPSILON
-                    WHi **= beta_loss - 1
-                    WHHt[i, :] = np.dot(WHi, H.T)
-            else:
-                WH **= beta_loss - 1
-                WHHt = np.dot(WH, H.T)
-            denominator = WHHt
+        numerator, WH = _mu_update_w_beta_numer(X, W, H, beta_loss)
+        denominator, H_sum = _mu_update_w_beta_denom(
+            X, W, H, beta_loss, H_sum, WH
+        )
 
     # Add L1 and L2 regularization
     if l1_reg_W > 0:
@@ -626,6 +649,77 @@ def _multiplicative_update_w(
     return W, H_sum, HHt, XHt
 
 
+def _compute_h_numerator_general_beta(data_x, weight_w, weight_h, beta_loss):
+    """Compute the numerator for H update when beta_loss != 2.
+
+    Returns the numerator and, for the dense case, the WH product needed
+    for the denominator computation (None when data_x is sparse).
+    """
+    # Numerator
+    WH_safe_X = _special_sparse_dot(weight_w, weight_h, data_x)
+    wh_product = None
+    if sp.issparse(data_x):
+        WH_safe_X_data = WH_safe_X.data
+        X_data = data_x.data
+    else:
+        WH_safe_X_data = WH_safe_X
+        X_data = data_x
+        # copy used in the Denominator
+        wh_product = WH_safe_X.copy()
+        if beta_loss - 1.0 < 0:
+            wh_product[wh_product < EPSILON] = EPSILON
+
+    # to avoid division by zero
+    if beta_loss - 2.0 < 0:
+        WH_safe_X_data[WH_safe_X_data < EPSILON] = EPSILON
+
+    if beta_loss == 1:
+        np.divide(X_data, WH_safe_X_data, out=WH_safe_X_data)
+    elif beta_loss == 0:
+        # speeds up computation time
+        # refer to /numpy/numpy/issues/9363
+        WH_safe_X_data **= -1
+        WH_safe_X_data **= 2
+        # element-wise multiplication
+        WH_safe_X_data *= X_data
+    else:
+        WH_safe_X_data **= beta_loss - 2
+        # element-wise multiplication
+        WH_safe_X_data *= X_data
+
+    # here numerator = dot(W.T, (dot(W, H) ** (beta_loss - 2)) * X)
+    numerator = safe_sparse_dot(weight_w.T, WH_safe_X)
+    return numerator, wh_product
+
+
+def _compute_h_denominator_general_beta(
+    data_x, weight_w, weight_h, beta_loss, wh_product
+):
+    """Compute the denominator for H update when beta_loss != 2."""
+    # Denominator
+    if beta_loss == 1:
+        W_sum = np.sum(weight_w, axis=0)  # shape(n_components, )
+        W_sum[W_sum == 0] = 1.0
+        return W_sum[:, np.newaxis]
+
+    # beta_loss not in (1, 2)
+    # computation of WtWH = dot(W.T, dot(W, H) ** beta_loss - 1)
+    if sp.issparse(data_x):
+        # memory efficient computation
+        # (compute column by column, avoiding the dense matrix WH)
+        WtWH = np.empty(weight_h.shape)
+        for i in range(data_x.shape[1]):
+            WHi = np.dot(weight_w, weight_h[:, i])
+            if beta_loss - 1 < 0:
+                WHi[WHi < EPSILON] = EPSILON
+            WHi **= beta_loss - 1
+            WtWH[:, i] = np.dot(weight_w.T, WHi)
+    else:
+        wh_product **= beta_loss - 1
+        WtWH = np.dot(weight_w.T, wh_product)
+    return WtWH
+
+
 def _multiplicative_update_h(
     X, W, H, beta_loss, l1_reg_H, l2_reg_H, gamma, A=None, B=None, rho=None
 ):
@@ -633,65 +727,13 @@ def _multiplicative_update_h(
     if beta_loss == 2:
         numerator = safe_sparse_dot(W.T, X)
         denominator = np.linalg.multi_dot([W.T, W, H])
-
     else:
-        # Numerator
-        WH_safe_X = _special_sparse_dot(W, H, X)
-        if sp.issparse(X):
-            WH_safe_X_data = WH_safe_X.data
-            X_data = X.data
-        else:
-            WH_safe_X_data = WH_safe_X
-            X_data = X
-            # copy used in the Denominator
-            WH = WH_safe_X.copy()
-            if beta_loss - 1.0 < 0:
-                WH[WH < EPSILON] = EPSILON
-
-        # to avoid division by zero
-        if beta_loss - 2.0 < 0:
-            WH_safe_X_data[WH_safe_X_data < EPSILON] = EPSILON
-
-        if beta_loss == 1:
-            np.divide(X_data, WH_safe_X_data, out=WH_safe_X_data)
-        elif beta_loss == 0:
-            # speeds up computation time
-            # refer to /numpy/numpy/issues/9363
-            WH_safe_X_data **= -1
-            WH_safe_X_data **= 2
-            # element-wise multiplication
-            WH_safe_X_data *= X_data
-        else:
-            WH_safe_X_data **= beta_loss - 2
-            # element-wise multiplication
-            WH_safe_X_data *= X_data
-
-        # here numerator = dot(W.T, (dot(W, H) ** (beta_loss - 2)) * X)
-        numerator = safe_sparse_dot(W.T, WH_safe_X)
-
-        # Denominator
-        if beta_loss == 1:
-            W_sum = np.sum(W, axis=0)  # shape(n_components, )
-            W_sum[W_sum == 0] = 1.0
-            denominator = W_sum[:, np.newaxis]
-
-        # beta_loss not in (1, 2)
-        else:
-            # computation of WtWH = dot(W.T, dot(W, H) ** beta_loss - 1)
-            if sp.issparse(X):
-                # memory efficient computation
-                # (compute column by column, avoiding the dense matrix WH)
-                WtWH = np.empty(H.shape)
-                for i in range(X.shape[1]):
-                    WHi = np.dot(W, H[:, i])
-                    if beta_loss - 1 < 0:
-                        WHi[WHi < EPSILON] = EPSILON
-                    WHi **= beta_loss - 1
-                    WtWH[:, i] = np.dot(W.T, WHi)
-            else:
-                WH **= beta_loss - 1
-                WtWH = np.dot(W.T, WH)
-            denominator = WtWH
+        numerator, wh_product = _compute_h_numerator_general_beta(
+            X, W, H, beta_loss
+        )
+        denominator = _compute_h_denominator_general_beta(
+            X, W, H, beta_loss, wh_product
+        )
 
     # Add L1 and L2 regularization
     if l1_reg_H > 0:
@@ -721,6 +763,40 @@ def _multiplicative_update_h(
         H *= delta_H
 
     return H
+
+
+def _compute_gamma(beta_loss):
+    """Compute the gamma parameter for multiplicative update based on beta_loss."""
+    if beta_loss < 1:
+        return 1.0 / (2.0 - beta_loss)
+    elif beta_loss > 2:
+        return 1.0 / (beta_loss - 1.0)
+    else:
+        return 1.0
+
+
+def _check_convergence_mu(
+    x, w, h, beta_loss, n_iter, start_time, previous_error, error_at_init, tol, verbose
+):
+    """Check convergence for multiplicative update.
+
+    Returns (should_break, previous_error).
+    """
+    if tol <= 0 or n_iter % 10 != 0:
+        return False, previous_error
+
+    error = _beta_divergence(x, w, h, beta_loss, square_root=True)
+
+    if verbose:
+        iter_time = time.time()
+        print(
+            "Epoch %02d reached after %.3f seconds, error: %f"
+            % (n_iter, iter_time - start_time, error)
+        )
+
+    if (previous_error - error) / error_at_init < tol:
+        return True, previous_error
+    return False, error
 
 
 def _fit_multiplicative_update(
@@ -811,12 +887,7 @@ def _fit_multiplicative_update(
     beta_loss = _beta_loss_to_float(beta_loss)
 
     # gamma for Maximization-Minimization (MM) algorithm [Fevotte 2011]
-    if beta_loss < 1:
-        gamma = 1.0 / (2.0 - beta_loss)
-    elif beta_loss > 2:
-        gamma = 1.0 / (beta_loss - 1.0)
-    else:
-        gamma = 1.0
+    gamma = _compute_gamma(beta_loss)
 
     # used for the convergence criterion
     error_at_init = _beta_divergence(X, W, H, beta_loss, square_root=True)
@@ -864,19 +935,20 @@ def _fit_multiplicative_update(
                 H[H < np.finfo(np.float64).eps] = 0.0
 
         # test convergence criterion every 10 iterations
-        if tol > 0 and n_iter % 10 == 0:
-            error = _beta_divergence(X, W, H, beta_loss, square_root=True)
-
-            if verbose:
-                iter_time = time.time()
-                print(
-                    "Epoch %02d reached after %.3f seconds, error: %f"
-                    % (n_iter, iter_time - start_time, error)
-                )
-
-            if (previous_error - error) / error_at_init < tol:
-                break
-            previous_error = error
+        should_break, previous_error = _check_convergence_mu(
+            X,
+            W,
+            H,
+            beta_loss,
+            n_iter,
+            start_time,
+            previous_error,
+            error_at_init,
+            tol,
+            verbose,
+        )
+        if should_break:
+            break
 
     # do not print if we have already printed in the convergence test
     if verbose and (tol == 0 or n_iter % 10 != 0):
@@ -1186,65 +1258,80 @@ class _BaseNMF(ClassNamePrefixFeaturesOutMixin, TransformerMixin, BaseEstimator,
         # beta_loss
         self._beta_loss = _beta_loss_to_float(self.beta_loss)
 
-    def _check_w_h(self, X, W, H, update_H):
-        """Check W and H, or initialize them."""
+    def _check_w_h_custom_update(self, X, w, h):
+        """Validate W and H for custom initialization with update_H=True."""
         n_samples, n_features = X.shape
 
-        if self.init == "custom" and update_H:
-            _check_init(H, (self._n_components, n_features), "NMF (input H)")
-            _check_init(W, (n_samples, self._n_components), "NMF (input W)")
-            if self._n_components == "auto":
-                self._n_components = H.shape[0]
+        _check_init(h, (self._n_components, n_features), "NMF (input H)")
+        _check_init(w, (n_samples, self._n_components), "NMF (input W)")
+        if self._n_components == "auto":
+            self._n_components = h.shape[0]
 
-            if H.dtype != X.dtype or W.dtype != X.dtype:
-                raise TypeError(
-                    "H and W should have the same dtype as X. Got "
-                    "H.dtype = {} and W.dtype = {}.".format(H.dtype, W.dtype)
-                )
-
-        elif not update_H:
-            if W is not None:
-                warnings.warn(
-                    "When update_H=False, the provided initial W is not used.",
-                    RuntimeWarning,
-                )
-
-            _check_init(H, (self._n_components, n_features), "NMF (input H)")
-            if self._n_components == "auto":
-                self._n_components = H.shape[0]
-
-            if H.dtype != X.dtype:
-                raise TypeError(
-                    "H should have the same dtype as X. Got H.dtype = {}.".format(
-                        H.dtype
-                    )
-                )
-
-            # 'mu' solver should not be initialized by zeros
-            if self.solver == "mu":
-                avg = np.sqrt(X.mean() / self._n_components)
-                W = np.full((n_samples, self._n_components), avg, dtype=X.dtype)
-            else:
-                W = np.zeros((n_samples, self._n_components), dtype=X.dtype)
-
-        else:
-            if W is not None or H is not None:
-                warnings.warn(
-                    (
-                        "When init!='custom', provided W or H are ignored. Set "
-                        " init='custom' to use them as initialization."
-                    ),
-                    RuntimeWarning,
-                )
-
-            if self._n_components == "auto":
-                self._n_components = X.shape[1]
-
-            W, H = _initialize_nmf(
-                X, self._n_components, init=self.init, random_state=self.random_state
+        if h.dtype != X.dtype or w.dtype != X.dtype:
+            raise TypeError(
+                "H and W should have the same dtype as X. Got "
+                "H.dtype = {} and W.dtype = {}.".format(h.dtype, w.dtype)
             )
 
-        return W, H
+        return w, h
+
+    def _check_w_h_fixed_h(self, X, w, h):
+        """Validate H and initialize W when H is fixed (update_H=False)."""
+        n_samples, n_features = X.shape
+
+        if w is not None:
+            warnings.warn(
+                "When update_H=False, the provided initial W is not used.",
+                RuntimeWarning,
+            )
+
+        _check_init(h, (self._n_components, n_features), "NMF (input H)")
+        if self._n_components == "auto":
+            self._n_components = h.shape[0]
+
+        if h.dtype != X.dtype:
+            raise TypeError(
+                "H should have the same dtype as X. Got H.dtype = {}.".format(
+                    h.dtype
+                )
+            )
+
+        # 'mu' solver should not be initialized by zeros
+        if self.solver == "mu":
+            avg = np.sqrt(X.mean() / self._n_components)
+            w = np.full((n_samples, self._n_components), avg, dtype=X.dtype)
+        else:
+            w = np.zeros((n_samples, self._n_components), dtype=X.dtype)
+
+        return w, h
+
+    def _check_w_h_default_init(self, X, w, h):
+        """Initialize W and H using the default (non-custom) strategy."""
+        if w is not None or h is not None:
+            warnings.warn(
+                (
+                    "When init!='custom', provided W or H are ignored. Set "
+                    " init='custom' to use them as initialization."
+                ),
+                RuntimeWarning,
+            )
+
+        if self._n_components == "auto":
+            self._n_components = X.shape[1]
+
+        w, h = _initialize_nmf(
+            X, self._n_components, init=self.init, random_state=self.random_state
+        )
+
+        return w, h
+
+    def _check_w_h(self, X, W, H, update_H):
+        """Check W and H, or initialize them."""
+        if self.init == "custom" and update_H:
+            return self._check_w_h_custom_update(X, W, H)
+        if not update_H:
+            return self._check_w_h_fixed_h(X, W, H)
+        return self._check_w_h_default_init(X, W, H)
 
     def _compute_regularization(self, X):
         """Compute scaled regularization terms."""
