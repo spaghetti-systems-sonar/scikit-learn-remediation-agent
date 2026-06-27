@@ -663,6 +663,140 @@ def cross_val_score(
     return cv_results["test_score"]
 
 
+def _build_verbose_messages(verbose, split_progress, candidate_progress, parameters):
+    """Build progress and parameter messages for verbose logging."""
+    progress_msg = ""
+    if verbose > 2 and split_progress is not None:
+        progress_msg = f" {split_progress[0] + 1}/{split_progress[1]}"
+    if candidate_progress and verbose > 9:
+        progress_msg += f"; {candidate_progress[0] + 1}/{candidate_progress[1]}"
+
+    params_msg = ""
+    if verbose > 1 and parameters is not None:
+        sorted_keys = sorted(parameters)  # Ensure deterministic o/p
+        params_msg = ", ".join(f"{k}={parameters[k]}" for k in sorted_keys)
+
+    if verbose > 9:
+        start_msg = f"[CV{progress_msg}] START {params_msg}"
+        print(f"{start_msg}{(80 - len(start_msg)) * '.'}")
+
+    return progress_msg, params_msg
+
+
+def _fit_estimator(
+    estimator, X_train, y_train, fit_params, callback_ctx, caller, metadata_callbacks
+):
+    """Fit the estimator, optionally within a callback context."""
+    if callback_ctx is not None:
+        with callback_ctx.propagate_callback_context(estimator):
+            callback_ctx.call_on_fit_task_begin(
+                estimator=caller, X=X_train, y=y_train, metadata=metadata_callbacks
+            )
+            if y_train is None:
+                estimator.fit(X_train, **fit_params)
+            else:
+                estimator.fit(X_train, y_train, **fit_params)
+    else:  # custom search class that does not support callbacks
+        if y_train is None:
+            estimator.fit(X_train, **fit_params)
+        else:
+            estimator.fit(X_train, y_train, **fit_params)
+
+
+def _assign_error_scores(error_score, scorer, return_train_score):
+    """Assign error scores when fitting fails."""
+    if isinstance(scorer, _MultimetricScorer):
+        test_scores = {name: error_score for name in scorer._scorers}
+        train_scores = test_scores.copy() if return_train_score else None
+    else:
+        test_scores = error_score
+        train_scores = error_score if return_train_score else None
+    return test_scores, train_scores
+
+
+def _build_verbose_result_msg(
+    test_scores, train_scores, return_train_score, verbose
+):
+    """Build the score portion of the verbose result message."""
+    result_msg = ""
+    if verbose <= 2:
+        return result_msg
+    if isinstance(test_scores, dict):
+        for scorer_name in sorted(test_scores):
+            result_msg += f" {scorer_name}: ("
+            if return_train_score:
+                scorer_scores = train_scores[scorer_name]
+                result_msg += f"train={scorer_scores:.3f}, "
+            result_msg += f"test={test_scores[scorer_name]:.3f})"
+    else:
+        result_msg += ", score="
+        if return_train_score:
+            result_msg += (
+                f"(train={train_scores:.3f}, test={test_scores:.3f})"
+            )
+        else:
+            result_msg += f"{test_scores:.3f}"
+    return result_msg
+
+
+def _log_verbose_end(
+    verbose,
+    progress_msg,
+    params_msg,
+    test_scores,
+    train_scores,
+    return_train_score,
+    fit_time,
+    score_time,
+):
+    """Print verbose end message after scoring."""
+    if verbose <= 1:
+        return
+    total_time = score_time + fit_time
+    end_msg = f"[CV{progress_msg}] END "
+    result_msg = params_msg + (";" if params_msg else "")
+    result_msg += _build_verbose_result_msg(
+        test_scores, train_scores, return_train_score, verbose
+    )
+    result_msg += f" total time={logger.short_format_time(total_time)}"
+
+    # Right align the result_msg
+    end_msg += "." * (80 - len(end_msg) - len(result_msg))
+    end_msg += result_msg
+    print(end_msg)
+
+
+def _collect_results(
+    result,
+    test_scores,
+    train_scores,
+    return_train_score,
+    return_n_test_samples,
+    x_test,
+    return_times,
+    fit_time,
+    score_time,
+    return_parameters,
+    parameters,
+    return_estimator,
+    estimator,
+):
+    """Collect all results into the result dictionary."""
+    result["test_scores"] = test_scores
+    if return_train_score:
+        result["train_scores"] = train_scores
+    if return_n_test_samples:
+        result["n_test_samples"] = _num_samples(x_test)
+    if return_times:
+        result["fit_time"] = fit_time
+        result["score_time"] = score_time
+    if return_parameters:
+        result["parameters"] = parameters
+    if return_estimator:
+        result["estimator"] = estimator
+    return result
+
+
 def _fit_and_score(
     estimator,
     X,
@@ -796,22 +930,9 @@ def _fit_and_score(
             "spelled correctly.)"
         )
 
-    progress_msg = ""
-    if verbose > 2:
-        if split_progress is not None:
-            progress_msg = f" {split_progress[0] + 1}/{split_progress[1]}"
-        if candidate_progress and verbose > 9:
-            progress_msg += f"; {candidate_progress[0] + 1}/{candidate_progress[1]}"
-
-    if verbose > 1:
-        if parameters is None:
-            params_msg = ""
-        else:
-            sorted_keys = sorted(parameters)  # Ensure deterministic o/p
-            params_msg = ", ".join(f"{k}={parameters[k]}" for k in sorted_keys)
-    if verbose > 9:
-        start_msg = f"[CV{progress_msg}] START {params_msg}"
-        print(f"{start_msg}{(80 - len(start_msg)) * '.'}")
+    progress_msg, params_msg = _build_verbose_messages(
+        verbose, split_progress, candidate_progress, parameters
+    )
 
     # Adjust length of sample weights
     fit_params = fit_params if fit_params is not None else {}
@@ -838,22 +959,18 @@ def _fit_and_score(
         metadata_callbacks = None
 
     result = {}
+    train_scores = None
 
     try:
-        if callback_ctx is not None:
-            with callback_ctx.propagate_callback_context(estimator):
-                callback_ctx.call_on_fit_task_begin(
-                    estimator=caller, X=X_train, y=y_train, metadata=metadata_callbacks
-                )
-                if y_train is None:
-                    estimator.fit(X_train, **fit_params)
-                else:
-                    estimator.fit(X_train, y_train, **fit_params)
-        else:  # custom search class that does not support callbacks
-            if y_train is None:
-                estimator.fit(X_train, **fit_params)
-            else:
-                estimator.fit(X_train, y_train, **fit_params)
+        _fit_estimator(
+            estimator,
+            X_train,
+            y_train,
+            fit_params,
+            callback_ctx,
+            caller,
+            metadata_callbacks,
+        )
 
     except Exception:
         # Note fit time as time until error
@@ -862,14 +979,9 @@ def _fit_and_score(
         if error_score == "raise":
             raise
         elif isinstance(error_score, numbers.Number):
-            if isinstance(scorer, _MultimetricScorer):
-                test_scores = {name: error_score for name in scorer._scorers}
-                if return_train_score:
-                    train_scores = test_scores.copy()
-            else:
-                test_scores = error_score
-                if return_train_score:
-                    train_scores = error_score
+            test_scores, train_scores = _assign_error_scores(
+                error_score, scorer, return_train_score
+            )
         result["fit_error"] = format_exc()
     else:
         result["fit_error"] = None
@@ -889,45 +1001,32 @@ def _fit_and_score(
                 estimator=caller, X=X_train, y=y_train, metadata=metadata_callbacks
             )
 
-    if verbose > 1:
-        total_time = score_time + fit_time
-        end_msg = f"[CV{progress_msg}] END "
-        result_msg = params_msg + (";" if params_msg else "")
-        if verbose > 2:
-            if isinstance(test_scores, dict):
-                for scorer_name in sorted(test_scores):
-                    result_msg += f" {scorer_name}: ("
-                    if return_train_score:
-                        scorer_scores = train_scores[scorer_name]
-                        result_msg += f"train={scorer_scores:.3f}, "
-                    result_msg += f"test={test_scores[scorer_name]:.3f})"
-            else:
-                result_msg += ", score="
-                if return_train_score:
-                    result_msg += f"(train={train_scores:.3f}, test={test_scores:.3f})"
-                else:
-                    result_msg += f"{test_scores:.3f}"
-        result_msg += f" total time={logger.short_format_time(total_time)}"
+    _log_verbose_end(
+        verbose,
+        progress_msg,
+        params_msg,
+        test_scores,
+        train_scores,
+        return_train_score,
+        fit_time,
+        score_time,
+    )
 
-        # Right align the result_msg
-        end_msg += "." * (80 - len(end_msg) - len(result_msg))
-        end_msg += result_msg
-        print(end_msg)
-
-    result["test_scores"] = test_scores
-    if return_train_score:
-        result["train_scores"] = train_scores
-    if return_n_test_samples:
-        result["n_test_samples"] = _num_samples(X_test)
-    if return_times:
-        result["fit_time"] = fit_time
-        result["score_time"] = score_time
-    if return_parameters:
-        result["parameters"] = parameters
-    if return_estimator:
-        result["estimator"] = estimator
-
-    return result
+    return _collect_results(
+        result,
+        test_scores,
+        train_scores,
+        return_train_score,
+        return_n_test_samples,
+        X_test,
+        return_times,
+        fit_time,
+        score_time,
+        return_parameters,
+        parameters,
+        return_estimator,
+        estimator,
+    )
 
 
 def _score(estimator, X_test, y_test, scorer, score_params, error_score="raise"):

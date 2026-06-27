@@ -851,6 +851,122 @@ class BaseGradientBoosting(BaseEnsemble, metaclass=ABCMeta):
         self.n_estimators_ = n_stages
         return self
 
+    def _update_train_and_oob_scores(
+        self,
+        i,
+        y,
+        raw_predictions,
+        sample_weight,
+        sample_mask,
+        y_oob_masked,
+        sample_weight_oob_masked,
+        initial_loss,
+        factor,
+        do_oob,
+    ):
+        """Update training and OOB scores for a single boosting iteration."""
+        if do_oob:
+            self.train_score_[i] = factor * self._loss(
+                y_true=y[sample_mask],
+                raw_prediction=raw_predictions[sample_mask],
+                sample_weight=sample_weight[sample_mask],
+            )
+            self.oob_scores_[i] = factor * self._loss(
+                y_true=y_oob_masked,
+                raw_prediction=raw_predictions[~sample_mask],
+                sample_weight=sample_weight_oob_masked,
+            )
+            previous_loss = (
+                initial_loss if i == 0 else self.oob_scores_[i - 1]
+            )
+            self.oob_improvement_[i] = previous_loss - self.oob_scores_[i]
+            self.oob_score_ = self.oob_scores_[-1]
+        else:
+            # no need to fancy index w/ no subsampling
+            self.train_score_[i] = factor * self._loss(
+                y_true=y,
+                raw_prediction=raw_predictions,
+                sample_weight=sample_weight,
+            )
+
+    def _check_validation_loss(
+        self, factor, y_val, y_val_pred_iter, sample_weight_val, loss_history, i
+    ):
+        """Check validation loss for early stopping.
+
+        Returns True if training should stop, False otherwise.
+        """
+        # By calling next(y_val_pred_iter), we get the predictions
+        # for X_val after the addition of the current stage
+        validation_loss = factor * self._loss(
+            y_val, next(y_val_pred_iter), sample_weight_val
+        )
+
+        # Require validation_score to be better (less) than at least
+        # one of the last n_iter_no_change evaluations
+        if np.any(validation_loss + self.tol < loss_history):
+            loss_history[i % len(loss_history)] = validation_loss
+            return False
+        return True
+
+    def _compute_oob_sample_and_initial_loss(
+        self,
+        i,
+        y,
+        raw_predictions,
+        sample_weight,
+        n_samples,
+        n_inbag,
+        random_state,
+        factor,
+        previous_initial_loss,
+    ):
+        """Compute OOB sample mask and initial loss for a boosting iteration.
+
+        Returns the sample mask, OOB masked targets, OOB masked sample
+        weights, and initial loss (computed only at iteration 0, otherwise
+        ``previous_initial_loss`` is returned unchanged).
+        """
+        sample_mask = _random_sample_mask(n_samples, n_inbag, random_state)
+        y_oob_masked = y[~sample_mask]
+        sample_weight_oob_masked = sample_weight[~sample_mask]
+        initial_loss = previous_initial_loss
+        if i == 0:  # store the initial loss to compute the OOB score
+            initial_loss = factor * self._loss(
+                y_true=y_oob_masked,
+                raw_prediction=raw_predictions[~sample_mask],
+                sample_weight=sample_weight_oob_masked,
+            )
+        return sample_mask, y_oob_masked, sample_weight_oob_masked, initial_loss
+
+    def _check_monitor(self, i, monitor, local_variables):
+        """Check if the monitor requests early stopping.
+
+        Returns True if training should stop, False otherwise.
+        """
+        if monitor is None:
+            return False
+        early_stopping = monitor(i, self, local_variables)
+        return bool(early_stopping)
+
+    def _get_loss_factor(self):
+        """Return the loss scaling factor based on the loss type."""
+        # Older versions of GBT had its own loss functions. With the new common
+        # private loss function submodule _loss, we often are a factor of 2
+        # away from the old version. Here we keep backward compatibility for
+        # oob_scores_ and oob_improvement_, even if the old way is quite
+        # inconsistent (sometimes the gradient is half the gradient, sometimes
+        # not).
+        if isinstance(
+            self._loss,
+            (
+                HalfSquaredError,
+                HalfBinomialLoss,
+            ),
+        ):
+            return 2
+        return 1
+
     def _fit_stages(
         self,
         X,
@@ -889,37 +1005,32 @@ class BaseGradientBoosting(BaseEnsemble, metaclass=ABCMeta):
             # the addition of each successive stage
             y_val_pred_iter = self._staged_raw_predict(X_val, check_input=False)
 
-        # Older versions of GBT had its own loss functions. With the new common
-        # private loss function submodule _loss, we often are a factor of 2
-        # away from the old version. Here we keep backward compatibility for
-        # oob_scores_ and oob_improvement_, even if the old way is quite
-        # inconsistent (sometimes the gradient is half the gradient, sometimes
-        # not).
-        if isinstance(
-            self._loss,
-            (
-                HalfSquaredError,
-                HalfBinomialLoss,
-            ),
-        ):
-            factor = 2
-        else:
-            factor = 1
+        factor = self._get_loss_factor()
 
         # perform boosting iterations
         i = begin_at_stage
+        initial_loss = None
+        y_oob_masked = None
+        sample_weight_oob_masked = None
         for i in range(begin_at_stage, self.n_estimators):
             # subsampling
             if do_oob:
-                sample_mask = _random_sample_mask(n_samples, n_inbag, random_state)
-                y_oob_masked = y[~sample_mask]
-                sample_weight_oob_masked = sample_weight[~sample_mask]
-                if i == 0:  # store the initial loss to compute the OOB score
-                    initial_loss = factor * self._loss(
-                        y_true=y_oob_masked,
-                        raw_prediction=raw_predictions[~sample_mask],
-                        sample_weight=sample_weight_oob_masked,
-                    )
+                (
+                    sample_mask,
+                    y_oob_masked,
+                    sample_weight_oob_masked,
+                    initial_loss,
+                ) = self._compute_oob_sample_and_initial_loss(
+                    i,
+                    y,
+                    raw_predictions,
+                    sample_weight,
+                    n_samples,
+                    n_inbag,
+                    random_state,
+                    factor,
+                    initial_loss,
+                )
 
             # fit next stage of trees
             raw_predictions = self._fit_stage(
@@ -935,51 +1046,36 @@ class BaseGradientBoosting(BaseEnsemble, metaclass=ABCMeta):
             )
 
             # track loss
-            if do_oob:
-                self.train_score_[i] = factor * self._loss(
-                    y_true=y[sample_mask],
-                    raw_prediction=raw_predictions[sample_mask],
-                    sample_weight=sample_weight[sample_mask],
-                )
-                self.oob_scores_[i] = factor * self._loss(
-                    y_true=y_oob_masked,
-                    raw_prediction=raw_predictions[~sample_mask],
-                    sample_weight=sample_weight_oob_masked,
-                )
-                previous_loss = initial_loss if i == 0 else self.oob_scores_[i - 1]
-                self.oob_improvement_[i] = previous_loss - self.oob_scores_[i]
-                self.oob_score_ = self.oob_scores_[-1]
-            else:
-                # no need to fancy index w/ no subsampling
-                self.train_score_[i] = factor * self._loss(
-                    y_true=y,
-                    raw_prediction=raw_predictions,
-                    sample_weight=sample_weight,
-                )
+            self._update_train_and_oob_scores(
+                i,
+                y,
+                raw_predictions,
+                sample_weight,
+                sample_mask,
+                y_oob_masked,
+                sample_weight_oob_masked,
+                initial_loss,
+                factor,
+                do_oob,
+            )
 
             if self.verbose > 0:
                 verbose_reporter.update(i, self)
 
-            if monitor is not None:
-                early_stopping = monitor(i, self, locals())
-                if early_stopping:
-                    break
+            if self._check_monitor(i, monitor, locals()):
+                break
 
             # We also provide an early stopping based on the score from
             # validation set (X_val, y_val), if n_iter_no_change is set
-            if self.n_iter_no_change is not None:
-                # By calling next(y_val_pred_iter), we get the predictions
-                # for X_val after the addition of the current stage
-                validation_loss = factor * self._loss(
-                    y_val, next(y_val_pred_iter), sample_weight_val
-                )
-
-                # Require validation_score to be better (less) than at least
-                # one of the last n_iter_no_change evaluations
-                if np.any(validation_loss + self.tol < loss_history):
-                    loss_history[i % len(loss_history)] = validation_loss
-                else:
-                    break
+            if self.n_iter_no_change is not None and self._check_validation_loss(
+                factor,
+                y_val,
+                y_val_pred_iter,
+                sample_weight_val,
+                loss_history,
+                i,
+            ):
+                break
 
         return i + 1
 

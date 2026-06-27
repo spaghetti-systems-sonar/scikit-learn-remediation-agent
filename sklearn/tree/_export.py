@@ -1028,6 +1028,149 @@ def _compute_depth(tree, node):
     return max(depths)
 
 
+def _get_export_text_class_names(class_names, decision_tree):
+    """Resolve class names for export_text when the tree is a classifier."""
+    if class_names is None:
+        return decision_tree.classes_
+    if len(class_names) != len(decision_tree.classes_):
+        raise ValueError(
+            "When `class_names` is an array, it should contain as"
+            " many items as `decision_tree.classes_`. Got"
+            f" {len(class_names)} while the tree was fitted with"
+            f" {len(decision_tree.classes_)} classes."
+        )
+    return class_names
+
+
+def _get_export_text_value_fmt(decision_tree, show_weights):
+    """Determine the value format string for export_text."""
+    if not isinstance(decision_tree, DecisionTreeClassifier):
+        return "{}{} value: {}\n"
+    if show_weights:
+        return "{}{} weights: {}\n"
+    return "{}{}{}\n"
+
+
+def _get_export_text_feature_names(feature_names, tree_):
+    """Build the per-node feature name list for export_text."""
+    if feature_names is not None:
+        return [
+            feature_names[i] if i != _tree.TREE_UNDEFINED else None
+            for i in tree_.feature
+        ]
+    return ["feature_{}".format(i) for i in tree_.feature]
+
+
+def _export_text_add_leaf(
+    value,
+    weighted_n_node_samples,
+    class_name,
+    indent,
+    is_classifier_tree,
+    show_weights,
+    decimals,
+    value_fmt,
+    report,
+):
+    """Write a leaf node entry to the report for export_text."""
+    val = ""
+    if is_classifier_tree:
+        if show_weights:
+            val = [
+                "{1:.{0}f}, ".format(decimals, v * weighted_n_node_samples)
+                for v in value
+            ]
+            val = "[" + "".join(val)[:-2] + "]"
+        val += " class: " + str(class_name)
+    else:
+        val = ["{1:.{0}f}, ".format(decimals, v) for v in value]
+        val = "[" + "".join(val)[:-2] + "]"
+    report.write(value_fmt.format(indent, "", val))
+
+
+def _print_tree_recurse(
+    report,
+    node,
+    depth,
+    tree_,
+    class_names,
+    feature_names_,
+    max_depth,
+    spacing,
+    decimals,
+    is_classifier_tree,
+    show_weights,
+    value_fmt,
+):
+    """Recursively write tree nodes to the report for export_text."""
+    right_child_fmt = "{} {} <= {}\n"
+    left_child_fmt = "{} {} >  {}\n"
+    truncation_fmt = "{} {}\n"
+
+    indent = ("|" + (" " * spacing)) * depth
+    indent = indent[:-spacing] + "-" * spacing
+
+    if tree_.n_outputs == 1:
+        value = tree_.value[node][0]
+    else:
+        value = tree_.value[node].T[0]
+    class_name = np.argmax(value)
+
+    if tree_.n_classes[0] != 1 and tree_.n_outputs == 1:
+        class_name = class_names[class_name]
+
+    weighted_n_node_samples = tree_.weighted_n_node_samples[node]
+
+    leaf_kwargs = {
+        "is_classifier_tree": is_classifier_tree,
+        "show_weights": show_weights,
+        "decimals": decimals,
+        "value_fmt": value_fmt,
+        "report": report,
+    }
+    recurse_kwargs = {
+        "tree_": tree_,
+        "class_names": class_names,
+        "feature_names_": feature_names_,
+        "max_depth": max_depth,
+        "spacing": spacing,
+        "decimals": decimals,
+        "is_classifier_tree": is_classifier_tree,
+        "show_weights": show_weights,
+        "value_fmt": value_fmt,
+    }
+
+    if depth > max_depth + 1:
+        subtree_depth = _compute_depth(tree_, node)
+        if subtree_depth == 1:
+            _export_text_add_leaf(
+                value, weighted_n_node_samples, class_name, indent, **leaf_kwargs
+            )
+        else:
+            trunc_report = "truncated branch of depth %d" % subtree_depth
+            report.write(truncation_fmt.format(indent, trunc_report))
+        return
+
+    if tree_.feature[node] == _tree.TREE_UNDEFINED:
+        _export_text_add_leaf(
+            value, weighted_n_node_samples, class_name, indent, **leaf_kwargs
+        )
+        return
+
+    name = feature_names_[node]
+    threshold = "{1:.{0}f}".format(decimals, tree_.threshold[node])
+    info_fmt = ""
+    report.write(right_child_fmt.format(indent, name, threshold))
+    report.write(info_fmt)
+    _print_tree_recurse(report, tree_.children_left[node], depth + 1, **recurse_kwargs)
+
+    report.write(left_child_fmt.format(indent, name, threshold))
+    report.write(info_fmt)
+    _print_tree_recurse(
+        report, tree_.children_right[node], depth + 1, **recurse_kwargs
+    )
+
+
 @validate_params(
     {
         "decision_tree": [DecisionTreeClassifier, DecisionTreeRegressor],
@@ -1128,18 +1271,7 @@ def export_text(
     check_is_fitted(decision_tree)
     tree_ = decision_tree.tree_
     if is_classifier(decision_tree):
-        if class_names is None:
-            class_names = decision_tree.classes_
-        elif len(class_names) != len(decision_tree.classes_):
-            raise ValueError(
-                "When `class_names` is an array, it should contain as"
-                " many items as `decision_tree.classes_`. Got"
-                f" {len(class_names)} while the tree was fitted with"
-                f" {len(decision_tree.classes_)} classes."
-            )
-    right_child_fmt = "{} {} <= {}\n"
-    left_child_fmt = "{} {} >  {}\n"
-    truncation_fmt = "{} {}\n"
+        class_names = _get_export_text_class_names(class_names, decision_tree)
 
     if feature_names is not None and len(feature_names) != tree_.n_features:
         raise ValueError(
@@ -1147,80 +1279,23 @@ def export_text(
             % (tree_.n_features, len(feature_names))
         )
 
-    if isinstance(decision_tree, DecisionTreeClassifier):
-        value_fmt = "{}{} weights: {}\n"
-        if not show_weights:
-            value_fmt = "{}{}{}\n"
-    else:
-        value_fmt = "{}{} value: {}\n"
-
-    if feature_names is not None:
-        feature_names_ = [
-            feature_names[i] if i != _tree.TREE_UNDEFINED else None
-            for i in tree_.feature
-        ]
-    else:
-        feature_names_ = ["feature_{}".format(i) for i in tree_.feature]
+    value_fmt = _get_export_text_value_fmt(decision_tree, show_weights)
+    feature_names_ = _get_export_text_feature_names(feature_names, tree_)
+    is_classifier_tree = isinstance(decision_tree, DecisionTreeClassifier)
 
     report = StringIO()
-
-    def _add_leaf(value, weighted_n_node_samples, class_name, indent):
-        val = ""
-        if isinstance(decision_tree, DecisionTreeClassifier):
-            if show_weights:
-                val = [
-                    "{1:.{0}f}, ".format(decimals, v * weighted_n_node_samples)
-                    for v in value
-                ]
-                val = "[" + "".join(val)[:-2] + "]"
-                weighted_n_node_samples
-            val += " class: " + str(class_name)
-        else:
-            val = ["{1:.{0}f}, ".format(decimals, v) for v in value]
-            val = "[" + "".join(val)[:-2] + "]"
-        report.write(value_fmt.format(indent, "", val))
-
-    def print_tree_recurse(report, node, depth):
-        indent = ("|" + (" " * spacing)) * depth
-        indent = indent[:-spacing] + "-" * spacing
-
-        value = None
-        if tree_.n_outputs == 1:
-            value = tree_.value[node][0]
-        else:
-            value = tree_.value[node].T[0]
-        class_name = np.argmax(value)
-
-        if tree_.n_classes[0] != 1 and tree_.n_outputs == 1:
-            class_name = class_names[class_name]
-
-        weighted_n_node_samples = tree_.weighted_n_node_samples[node]
-
-        if depth <= max_depth + 1:
-            info_fmt = ""
-            info_fmt_left = info_fmt
-            info_fmt_right = info_fmt
-
-            if tree_.feature[node] != _tree.TREE_UNDEFINED:
-                name = feature_names_[node]
-                threshold = tree_.threshold[node]
-                threshold = "{1:.{0}f}".format(decimals, threshold)
-                report.write(right_child_fmt.format(indent, name, threshold))
-                report.write(info_fmt_left)
-                print_tree_recurse(report, tree_.children_left[node], depth + 1)
-
-                report.write(left_child_fmt.format(indent, name, threshold))
-                report.write(info_fmt_right)
-                print_tree_recurse(report, tree_.children_right[node], depth + 1)
-            else:  # leaf
-                _add_leaf(value, weighted_n_node_samples, class_name, indent)
-        else:
-            subtree_depth = _compute_depth(tree_, node)
-            if subtree_depth == 1:
-                _add_leaf(value, weighted_n_node_samples, class_name, indent)
-            else:
-                trunc_report = "truncated branch of depth %d" % subtree_depth
-                report.write(truncation_fmt.format(indent, trunc_report))
-
-    print_tree_recurse(report, 0, 1)
+    _print_tree_recurse(
+        report,
+        0,
+        1,
+        tree_=tree_,
+        class_names=class_names,
+        feature_names_=feature_names_,
+        max_depth=max_depth,
+        spacing=spacing,
+        decimals=decimals,
+        is_classifier_tree=is_classifier_tree,
+        show_weights=show_weights,
+        value_fmt=value_fmt,
+    )
     return report.getvalue()
