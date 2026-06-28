@@ -359,34 +359,8 @@ class BaseForest(MultiOutputMixin, BaseEnsemble, metaclass=ABCMeta):
             # ensemble sorts the indices.
             X.sort_indices()
 
-        y = np.atleast_1d(y)
-        if y.ndim == 2 and y.shape[1] == 1:
-            warn(
-                (
-                    "A column-vector y was passed when a 1d array was"
-                    " expected. Please change the shape of y to "
-                    "(n_samples,), for example using ravel()."
-                ),
-                DataConversionWarning,
-                stacklevel=2,
-            )
-
-        if y.ndim == 1:
-            # reshape is necessary to preserve the data contiguity against vs
-            # [:, np.newaxis] that does not.
-            y = np.reshape(y, (-1, 1))
-
-        if self.criterion == "poisson":
-            if np.any(y < 0):
-                raise ValueError(
-                    "Some value(s) of y are negative which is "
-                    "not allowed for Poisson regression."
-                )
-            if np.sum(y) <= 0:
-                raise ValueError(
-                    "Sum of y is not strictly positive which "
-                    "is necessary for Poisson regression."
-                )
+        y = self._preprocess_y(y)
+        self._validate_poisson_criterion(y)
 
         self._n_samples, self.n_outputs_ = y.shape
 
@@ -395,32 +369,16 @@ class BaseForest(MultiOutputMixin, BaseEnsemble, metaclass=ABCMeta):
         if getattr(y, "dtype", None) != np.float64 or not y.flags.contiguous:
             y = np.ascontiguousarray(y, dtype=np.float64)
 
-        # Combined _sample_weight = sample_weight * expanded_class_weight
-        # (when provided) used in _parallel_build_trees to draw indices
-        # (bootstrap=True) or passed to the trees (bootstrap=False).
-        if sample_weight is None:
-            _sample_weight = expanded_class_weight
-        elif expanded_class_weight is None:
-            _sample_weight = sample_weight
-        else:
-            _sample_weight = sample_weight * expanded_class_weight
+        _sample_weight = self._combine_sample_weight(
+            sample_weight, expanded_class_weight
+        )
 
         # Storing _sample_weight (needed by _get_estimators_indices).
         self._sample_weight = _sample_weight
 
-        if not self.bootstrap and self.max_samples is not None:
-            raise ValueError(
-                "`max_sample` cannot be set if `bootstrap=False`. "
-                "Either switch to `bootstrap=True` or set "
-                "`max_sample=None`."
-            )
-        elif self.bootstrap:
-            n_samples_bootstrap = _get_n_samples_bootstrap(
-                X.shape[0], self.max_samples, _sample_weight
-            )
-        else:
-            n_samples_bootstrap = None
-
+        n_samples_bootstrap = self._validate_and_get_n_samples_bootstrap(
+            _sample_weight, X.shape[0]
+        )
         self._n_samples_bootstrap = n_samples_bootstrap
 
         self._validate_estimator()
@@ -436,83 +394,17 @@ class BaseForest(MultiOutputMixin, BaseEnsemble, metaclass=ABCMeta):
 
         n_more_estimators = self.n_estimators - len(self.estimators_)
 
-        if n_more_estimators < 0:
-            raise ValueError(
-                "n_estimators=%d must be larger or equal to "
-                "len(estimators_)=%d when warm_start==True"
-                % (self.n_estimators, len(self.estimators_))
-            )
+        self._build_trees(
+            n_more_estimators,
+            X,
+            y,
+            _sample_weight,
+            random_state,
+            n_samples_bootstrap,
+            missing_values_in_feature_mask,
+        )
 
-        elif n_more_estimators == 0:
-            warn(
-                "Warm-start fitting without increasing n_estimators does not "
-                "fit new trees."
-            )
-        else:
-            if self.warm_start and len(self.estimators_) > 0:
-                # We draw from the random state to get the random state we
-                # would have got if we hadn't used a warm_start.
-                random_state.randint(MAX_INT, size=len(self.estimators_))
-
-            trees = [
-                self._make_estimator(append=False, random_state=random_state)
-                for i in range(n_more_estimators)
-            ]
-
-            # Parallel loop: we prefer the threading backend as the Cython code
-            # for fitting the trees is internally releasing the Python GIL
-            # making threading more efficient than multiprocessing in
-            # that case. However, for joblib 0.12+ we respect any
-            # parallel_backend contexts set at a higher level,
-            # since correctness does not rely on using threads.
-            trees = Parallel(
-                n_jobs=self.n_jobs,
-                verbose=self.verbose,
-                prefer="threads",
-            )(
-                delayed(_parallel_build_trees)(
-                    t,
-                    self.bootstrap,
-                    X,
-                    y,
-                    _sample_weight,
-                    i,
-                    len(trees),
-                    verbose=self.verbose,
-                    class_weight=self.class_weight,
-                    n_samples_bootstrap=n_samples_bootstrap,
-                    missing_values_in_feature_mask=missing_values_in_feature_mask,
-                )
-                for i, t in enumerate(trees)
-            )
-
-            # Collect newly grown trees
-            self.estimators_.extend(trees)
-
-        if self.oob_score and (
-            n_more_estimators > 0 or not hasattr(self, "oob_score_")
-        ):
-            y_type = type_of_target(y)
-            if y_type == "unknown" or (
-                is_classifier(self) and y_type == "multiclass-multioutput"
-            ):
-                # FIXME: we could consider to support multiclass-multioutput if
-                # we introduce or reuse a constructor parameter (e.g.
-                # oob_score) allowing our user to pass a callable defining the
-                # scoring strategy on OOB sample.
-                raise ValueError(
-                    "The type of target cannot be used to compute OOB "
-                    f"estimates. Got {y_type} while only the following are "
-                    "supported: continuous, continuous-multioutput, binary, "
-                    "multiclass, multilabel-indicator."
-                )
-
-            if callable(self.oob_score):
-                self._set_oob_score_and_attributes(
-                    X, y, scoring_function=self.oob_score
-                )
-            else:
-                self._set_oob_score_and_attributes(X, y)
+        self._compute_oob_score(X, y, n_more_estimators)
 
         # Decapsulate classes_ attributes
         if hasattr(self, "classes_") and self.n_outputs_ == 1:
@@ -520,6 +412,161 @@ class BaseForest(MultiOutputMixin, BaseEnsemble, metaclass=ABCMeta):
             self.classes_ = self.classes_[0]
 
         return self
+
+    def _preprocess_y(self, y):
+        """Reshape y and warn if column-vector is passed."""
+        y = np.atleast_1d(y)
+        if y.ndim == 2 and y.shape[1] == 1:
+            warn(
+                (
+                    "A column-vector y was passed when a 1d array was"
+                    " expected. Please change the shape of y to "
+                    "(n_samples,), for example using ravel()."
+                ),
+                DataConversionWarning,
+                stacklevel=3,
+            )
+
+        if y.ndim == 1:
+            # reshape is necessary to preserve the data contiguity against vs
+            # [:, np.newaxis] that does not.
+            y = np.reshape(y, (-1, 1))
+        return y
+
+    def _validate_poisson_criterion(self, y):
+        """Validate y values when using the Poisson criterion."""
+        if self.criterion != "poisson":
+            return
+        if np.any(y < 0):
+            raise ValueError(
+                "Some value(s) of y are negative which is "
+                "not allowed for Poisson regression."
+            )
+        if np.sum(y) <= 0:
+            raise ValueError(
+                "Sum of y is not strictly positive which "
+                "is necessary for Poisson regression."
+            )
+
+    @staticmethod
+    def _combine_sample_weight(sample_weight, expanded_class_weight):
+        """Combine sample weight with expanded class weight."""
+        # Combined _sample_weight = sample_weight * expanded_class_weight
+        # (when provided) used in _parallel_build_trees to draw indices
+        # (bootstrap=True) or passed to the trees (bootstrap=False).
+        if sample_weight is None:
+            return expanded_class_weight
+        if expanded_class_weight is None:
+            return sample_weight
+        return sample_weight * expanded_class_weight
+
+    def _validate_and_get_n_samples_bootstrap(self, sample_weight, n_samples):
+        """Validate bootstrap/max_samples and return n_samples_bootstrap."""
+        if not self.bootstrap and self.max_samples is not None:
+            raise ValueError(
+                "`max_sample` cannot be set if `bootstrap=False`. "
+                "Either switch to `bootstrap=True` or set "
+                "`max_sample=None`."
+            )
+        if self.bootstrap:
+            return _get_n_samples_bootstrap(
+                n_samples, self.max_samples, sample_weight
+            )
+        return None
+
+    def _build_trees(
+        self,
+        n_more_estimators,
+        X,
+        y,
+        sample_weight,
+        random_state,
+        n_samples_bootstrap,
+        missing_values_in_feature_mask,
+    ):
+        """Build trees, handling warm start and parallel construction."""
+        if n_more_estimators < 0:
+            raise ValueError(
+                "n_estimators=%d must be larger or equal to "
+                "len(estimators_)=%d when warm_start==True"
+                % (self.n_estimators, len(self.estimators_))
+            )
+
+        if n_more_estimators == 0:
+            warn(
+                "Warm-start fitting without increasing n_estimators does not "
+                "fit new trees."
+            )
+            return
+
+        if self.warm_start and len(self.estimators_) > 0:
+            # We draw from the random state to get the random state we
+            # would have got if we hadn't used a warm_start.
+            random_state.randint(MAX_INT, size=len(self.estimators_))
+
+        trees = [
+            self._make_estimator(append=False, random_state=random_state)
+            for i in range(n_more_estimators)
+        ]
+
+        # Parallel loop: we prefer the threading backend as the Cython code
+        # for fitting the trees is internally releasing the Python GIL
+        # making threading more efficient than multiprocessing in
+        # that case. However, for joblib 0.12+ we respect any
+        # parallel_backend contexts set at a higher level,
+        # since correctness does not rely on using threads.
+        trees = Parallel(
+            n_jobs=self.n_jobs,
+            verbose=self.verbose,
+            prefer="threads",
+        )(
+            delayed(_parallel_build_trees)(
+                t,
+                self.bootstrap,
+                X,
+                y,
+                sample_weight,
+                i,
+                len(trees),
+                verbose=self.verbose,
+                class_weight=self.class_weight,
+                n_samples_bootstrap=n_samples_bootstrap,
+                missing_values_in_feature_mask=missing_values_in_feature_mask,
+            )
+            for i, t in enumerate(trees)
+        )
+
+        # Collect newly grown trees
+        self.estimators_.extend(trees)
+
+    def _compute_oob_score(self, X, y, n_more_estimators):
+        """Compute OOB score if applicable."""
+        if not self.oob_score:
+            return
+        if n_more_estimators <= 0 and hasattr(self, "oob_score_"):
+            return
+
+        y_type = type_of_target(y)
+        if y_type == "unknown" or (
+            is_classifier(self) and y_type == "multiclass-multioutput"
+        ):
+            # FIXME: we could consider to support multiclass-multioutput if
+            # we introduce or reuse a constructor parameter (e.g.
+            # oob_score) allowing our user to pass a callable defining the
+            # scoring strategy on OOB sample.
+            raise ValueError(
+                "The type of target cannot be used to compute OOB "
+                f"estimates. Got {y_type} while only the following are "
+                "supported: continuous, continuous-multioutput, binary, "
+                "multiclass, multilabel-indicator."
+            )
+
+        if callable(self.oob_score):
+            self._set_oob_score_and_attributes(
+                X, y, scoring_function=self.oob_score
+            )
+        else:
+            self._set_oob_score_and_attributes(X, y)
 
     @abstractmethod
     def _set_oob_score_and_attributes(self, X, y, scoring_function=None):
