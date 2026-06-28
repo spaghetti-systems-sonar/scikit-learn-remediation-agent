@@ -769,6 +769,43 @@ class ArffDecoder:
 
         return (name, type_)
 
+    @staticmethod
+    def _check_state(state, expected_states):
+        '''Validate that the current parsing state is one of the expected states.'''
+        if state not in expected_states:
+            raise BadLayout()
+
+    @staticmethod
+    def _make_conversor(attr_type, encode_nominal):
+        '''Create the appropriate conversor for an attribute type.'''
+        if isinstance(attr_type, (list, tuple)):
+            if encode_nominal:
+                return EncodedNominalConversor(attr_type)
+            return NominalConversor(attr_type)
+        CONVERSOR_MAP = {'STRING': str,
+                         'INTEGER': lambda x: int(float(x)),
+                         'NUMERIC': float,
+                         'REAL': float}
+        return CONVERSOR_MAP[attr_type]
+
+    def _process_attribute(self, row, attribute_names, obj, encode_nominal):
+        '''Process an attribute row: decode, validate, and create conversor.'''
+        attr = self._decode_attribute(row)
+        if attr[0] in attribute_names:
+            raise BadAttributeName(attr[0], attribute_names[attr[0]])
+        attribute_names[attr[0]] = self._current_line
+        obj['attributes'].append(attr)
+        self._conversors.append(self._make_conversor(attr[1], encode_nominal))
+
+    def _stream_data(self, s):
+        '''Yield non-empty, non-comment data rows from the iterator.'''
+        for row in s:
+            self._current_line += 1
+            row = row.strip()
+            # Ignore empty lines and comment lines.
+            if row and not row.startswith(_TK_COMMENT):
+                yield row
+
     def _decode(self, s, encode_nominal=False, matrix_type=DENSE):
         '''Do the job the ``encode``.'''
 
@@ -809,47 +846,23 @@ class ArffDecoder:
 
             # RELATION --------------------------------------------------------
             elif u_row.startswith(_TK_RELATION):
-                if STATE != _TK_DESCRIPTION:
-                    raise BadLayout()
-
+                self._check_state(STATE, (_TK_DESCRIPTION,))
                 STATE = _TK_RELATION
                 obj['relation'] = self._decode_relation(row)
             # -----------------------------------------------------------------
 
             # ATTRIBUTE -------------------------------------------------------
             elif u_row.startswith(_TK_ATTRIBUTE):
-                if STATE != _TK_RELATION and STATE != _TK_ATTRIBUTE:
-                    raise BadLayout()
-
+                self._check_state(STATE, (_TK_RELATION, _TK_ATTRIBUTE))
                 STATE = _TK_ATTRIBUTE
-
-                attr = self._decode_attribute(row)
-                if attr[0] in attribute_names:
-                    raise BadAttributeName(attr[0], attribute_names[attr[0]])
-                else:
-                    attribute_names[attr[0]] = self._current_line
-                obj['attributes'].append(attr)
-
-                if isinstance(attr[1], (list, tuple)):
-                    if encode_nominal:
-                        conversor = EncodedNominalConversor(attr[1])
-                    else:
-                        conversor = NominalConversor(attr[1])
-                else:
-                    CONVERSOR_MAP = {'STRING': str,
-                                     'INTEGER': lambda x: int(float(x)),
-                                     'NUMERIC': float,
-                                     'REAL': float}
-                    conversor = CONVERSOR_MAP[attr[1]]
-
-                self._conversors.append(conversor)
+                self._process_attribute(
+                    row, attribute_names, obj, encode_nominal
+                )
             # -----------------------------------------------------------------
 
             # DATA ------------------------------------------------------------
             elif u_row.startswith(_TK_DATA):
-                if STATE != _TK_ATTRIBUTE:
-                    raise BadLayout()
-
+                self._check_state(STATE, (_TK_ATTRIBUTE,))
                 break
             # -----------------------------------------------------------------
 
@@ -861,16 +874,8 @@ class ArffDecoder:
             # Never found @DATA
             raise BadLayout()
 
-        def stream():
-            for row in s:
-                self._current_line += 1
-                row = row.strip()
-                # Ignore empty lines and comment lines.
-                if row and not row.startswith(_TK_COMMENT):
-                    yield row
-
         # Alter the data object
-        obj['data'] = data.decode_rows(stream(), self._conversors)
+        obj['data'] = data.decode_rows(self._stream_data(s), self._conversors)
         if obj['description'].endswith('\n'):
             obj['description'] = obj['description'][:-1]
 

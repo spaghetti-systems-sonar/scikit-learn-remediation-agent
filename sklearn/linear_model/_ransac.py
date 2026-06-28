@@ -314,6 +314,146 @@ class RANSACRegressor(
         self.random_state = random_state
         self.loss = loss
 
+    def _resolve_estimator(self, random_state):
+        """Clone the estimator and set random_state if supported."""
+        if self.estimator is not None:
+            estimator = clone(self.estimator)
+        else:
+            estimator = LinearRegression()
+
+        try:  # Not all estimator accept a random_state
+            estimator.set_params(random_state=random_state)
+        except ValueError:
+            pass
+
+        return estimator
+
+    def _resolve_min_samples(self, estimator, n_features, n_samples):
+        """Resolve the min_samples parameter."""
+        if self.min_samples is None:
+            if not isinstance(estimator, LinearRegression):
+                raise ValueError(
+                    "`min_samples` needs to be explicitly set when estimator "
+                    "is not a LinearRegression."
+                )
+            min_samples = n_features + 1
+        elif 0 < self.min_samples < 1:
+            min_samples = np.ceil(self.min_samples * n_samples)
+        elif self.min_samples >= 1:
+            min_samples = self.min_samples
+        if min_samples > n_samples:
+            raise ValueError(
+                "`min_samples` may not be larger than number "
+                "of samples: n_samples = %d." % (n_samples)
+            )
+        return min_samples
+
+    def _resolve_residual_threshold(self, y):
+        """Resolve the residual threshold."""
+        if self.residual_threshold is None:
+            # MAD (median absolute deviation)
+            return np.median(np.abs(y - np.median(y)))
+        return self.residual_threshold
+
+    def _resolve_loss_function(self, y):
+        """Resolve the loss function based on self.loss and y dimensions."""
+        if self.loss == "absolute_error":
+            if y.ndim == 1:
+                return lambda y_true, y_pred: np.abs(y_true - y_pred)
+            else:
+                return lambda y_true, y_pred: np.sum(
+                    np.abs(y_true - y_pred), axis=1
+                )
+        elif self.loss == "squared_error":
+            if y.ndim == 1:
+                return lambda y_true, y_pred: (y_true - y_pred) ** 2
+            else:
+                return lambda y_true, y_pred: np.sum(
+                    (y_true - y_pred) ** 2, axis=1
+                )
+        elif callable(self.loss):
+            return self.loss
+
+    def _handle_sample_weight(self, estimator, sample_weight, fit_params):
+        """Validate sample_weight support and update fit_params."""
+        if sample_weight is not None and not has_fit_parameter(
+            estimator, "sample_weight"
+        ):
+            raise ValueError(
+                "%s does not support sample_weight. Sample"
+                " weights are only used for the calibration"
+                " itself." % type(estimator).__name__
+            )
+        if sample_weight is not None:
+            fit_params["sample_weight"] = sample_weight
+
+    def _prepare_routing(self, fit_params, sample_weight, X):
+        """Prepare routed parameters for the estimator."""
+        if _routing_enabled():
+            return process_routing(self, "fit", **fit_params)
+
+        routed_params = Bunch()
+        routed_params.estimator = Bunch(fit={}, predict={}, score={})
+        if sample_weight is not None:
+            sample_weight = _check_sample_weight(sample_weight, X)
+            routed_params.estimator.fit = {"sample_weight": sample_weight}
+        return routed_params
+
+    def _check_data_validity(self, x_subset, y_subset):
+        """Check if the data subset is valid. Returns False if invalid."""
+        if self.is_data_valid is not None and not self.is_data_valid(
+            x_subset, y_subset
+        ):
+            self.n_skips_invalid_data_ += 1
+            return False
+        return True
+
+    def _check_model_validity(self, estimator, x_subset, y_subset):
+        """Check if the fitted model is valid. Returns False if invalid."""
+        if self.is_model_valid is not None and not self.is_model_valid(
+            estimator, x_subset, y_subset
+        ):
+            self.n_skips_invalid_model_ += 1
+            return False
+        return True
+
+    def _exceeded_max_skips(self):
+        """Check if the number of skips exceeds max_skips."""
+        return (
+            self.n_skips_no_inliers_
+            + self.n_skips_invalid_data_
+            + self.n_skips_invalid_model_
+        ) > self.max_skips
+
+    def _validate_result(self, inlier_mask_best):
+        """Validate the RANSAC result after the trial loop."""
+        if inlier_mask_best is None:
+            if self._exceeded_max_skips():
+                raise ValueError(
+                    "RANSAC skipped more iterations than `max_skips` without"
+                    " finding a valid consensus set. Iterations were skipped"
+                    " because each randomly chosen sub-sample failed the"
+                    " passing criteria. See estimator attributes for"
+                    " diagnostics (n_skips*)."
+                )
+            else:
+                raise ValueError(
+                    "RANSAC could not find a valid consensus set. All"
+                    " `max_trials` iterations were skipped because each"
+                    " randomly chosen sub-sample failed the passing criteria."
+                    " See estimator attributes for diagnostics (n_skips*)."
+                )
+        elif self._exceeded_max_skips():
+            warnings.warn(
+                (
+                    "RANSAC found a valid consensus set but exited"
+                    " early due to skipping more iterations than"
+                    " `max_skips`. See estimator attributes for"
+                    " diagnostics (n_skips*)."
+                ),
+                ConvergenceWarning,
+            )
+
     @_fit_context(
         # RansacRegressor.estimator is not validated yet
         prefer_skip_nested_validation=False
@@ -370,79 +510,16 @@ class RANSACRegressor(
         )
         check_consistent_length(X, y)
 
-        if self.estimator is not None:
-            estimator = clone(self.estimator)
-        else:
-            estimator = LinearRegression()
-
-        if self.min_samples is None:
-            if not isinstance(estimator, LinearRegression):
-                raise ValueError(
-                    "`min_samples` needs to be explicitly set when estimator "
-                    "is not a LinearRegression."
-                )
-            min_samples = X.shape[1] + 1
-        elif 0 < self.min_samples < 1:
-            min_samples = np.ceil(self.min_samples * X.shape[0])
-        elif self.min_samples >= 1:
-            min_samples = self.min_samples
-        if min_samples > X.shape[0]:
-            raise ValueError(
-                "`min_samples` may not be larger than number "
-                "of samples: n_samples = %d." % (X.shape[0])
-            )
-
-        if self.residual_threshold is None:
-            # MAD (median absolute deviation)
-            residual_threshold = np.median(np.abs(y - np.median(y)))
-        else:
-            residual_threshold = self.residual_threshold
-
-        if self.loss == "absolute_error":
-            if y.ndim == 1:
-                loss_function = lambda y_true, y_pred: np.abs(y_true - y_pred)
-            else:
-                loss_function = lambda y_true, y_pred: np.sum(
-                    np.abs(y_true - y_pred), axis=1
-                )
-        elif self.loss == "squared_error":
-            if y.ndim == 1:
-                loss_function = lambda y_true, y_pred: (y_true - y_pred) ** 2
-            else:
-                loss_function = lambda y_true, y_pred: np.sum(
-                    (y_true - y_pred) ** 2, axis=1
-                )
-
-        elif callable(self.loss):
-            loss_function = self.loss
-
         random_state = check_random_state(self.random_state)
+        estimator = self._resolve_estimator(random_state)
+        min_samples = self._resolve_min_samples(
+            estimator, X.shape[1], X.shape[0]
+        )
+        residual_threshold = self._resolve_residual_threshold(y)
+        loss_function = self._resolve_loss_function(y)
 
-        try:  # Not all estimator accept a random_state
-            estimator.set_params(random_state=random_state)
-        except ValueError:
-            pass
-
-        estimator_fit_has_sample_weight = has_fit_parameter(estimator, "sample_weight")
-        estimator_name = type(estimator).__name__
-        if sample_weight is not None and not estimator_fit_has_sample_weight:
-            raise ValueError(
-                "%s does not support sample_weight. Sample"
-                " weights are only used for the calibration"
-                " itself." % estimator_name
-            )
-
-        if sample_weight is not None:
-            fit_params["sample_weight"] = sample_weight
-
-        if _routing_enabled():
-            routed_params = process_routing(self, "fit", **fit_params)
-        else:
-            routed_params = Bunch()
-            routed_params.estimator = Bunch(fit={}, predict={}, score={})
-            if sample_weight is not None:
-                sample_weight = _check_sample_weight(sample_weight, X)
-                routed_params.estimator.fit = {"sample_weight": sample_weight}
+        self._handle_sample_weight(estimator, sample_weight, fit_params)
+        routed_params = self._prepare_routing(fit_params, sample_weight, X)
 
         n_inliers_best = 1
         score_best = -np.inf
@@ -463,11 +540,7 @@ class RANSACRegressor(
         while self.n_trials_ < max_trials:
             self.n_trials_ += 1
 
-            if (
-                self.n_skips_no_inliers_
-                + self.n_skips_invalid_data_
-                + self.n_skips_invalid_model_
-            ) > self.max_skips:
+            if self._exceeded_max_skips():
                 break
 
             # choose random sample set
@@ -478,10 +551,7 @@ class RANSACRegressor(
             y_subset = y[subset_idxs]
 
             # check if random sample set is valid
-            if self.is_data_valid is not None and not self.is_data_valid(
-                X_subset, y_subset
-            ):
-                self.n_skips_invalid_data_ += 1
+            if not self._check_data_validity(X_subset, y_subset):
                 continue
 
             # cut `fit_params` down to `subset_idxs`
@@ -493,10 +563,7 @@ class RANSACRegressor(
             estimator.fit(X_subset, y_subset, **fit_params_subset)
 
             # check if estimated model is valid
-            if self.is_model_valid is not None and not self.is_model_valid(
-                estimator, X_subset, y_subset
-            ):
-                self.n_skips_invalid_model_ += 1
+            if not self._check_model_validity(estimator, X_subset, y_subset):
                 continue
 
             # residuals of all data for current random sample model
@@ -554,41 +621,7 @@ class RANSACRegressor(
                 break
 
         # if none of the iterations met the required criteria
-        if inlier_mask_best is None:
-            if (
-                self.n_skips_no_inliers_
-                + self.n_skips_invalid_data_
-                + self.n_skips_invalid_model_
-            ) > self.max_skips:
-                raise ValueError(
-                    "RANSAC skipped more iterations than `max_skips` without"
-                    " finding a valid consensus set. Iterations were skipped"
-                    " because each randomly chosen sub-sample failed the"
-                    " passing criteria. See estimator attributes for"
-                    " diagnostics (n_skips*)."
-                )
-            else:
-                raise ValueError(
-                    "RANSAC could not find a valid consensus set. All"
-                    " `max_trials` iterations were skipped because each"
-                    " randomly chosen sub-sample failed the passing criteria."
-                    " See estimator attributes for diagnostics (n_skips*)."
-                )
-        else:
-            if (
-                self.n_skips_no_inliers_
-                + self.n_skips_invalid_data_
-                + self.n_skips_invalid_model_
-            ) > self.max_skips:
-                warnings.warn(
-                    (
-                        "RANSAC found a valid consensus set but exited"
-                        " early due to skipping more iterations than"
-                        " `max_skips`. See estimator attributes for"
-                        " diagnostics (n_skips*)."
-                    ),
-                    ConvergenceWarning,
-                )
+        self._validate_result(inlier_mask_best)
 
         # estimate final model using all inliers
         fit_params_best_idxs_subset = _check_method_params(

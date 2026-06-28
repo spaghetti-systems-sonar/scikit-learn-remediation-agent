@@ -1018,6 +1018,72 @@ def _correct_predecessor(reachability_plot, predecessor_plot, ordering, s, e):
     return None, None
 
 
+def _get_cluster_candidate(
+    sda,
+    u_end,
+    u_start,
+    reachability_plot,
+    predecessor_plot,
+    ordering,
+    xi_complement,
+    predecessor_correction,
+    min_cluster_size,
+):
+    """Validate and return a cluster candidate from a steep down area.
+
+    Returns a (c_start, c_end) tuple if the candidate is valid, or None
+    otherwise.
+    """
+    c_start = sda["start"]
+    c_end = u_end
+
+    # line (**), sc2*
+    if reachability_plot[c_end + 1] * xi_complement < sda["mib"]:
+        return None
+
+    # Definition 11: criterion 4
+    D_max = reachability_plot[sda["start"]]
+    if D_max * xi_complement >= reachability_plot[c_end + 1]:
+        # Find the first index from the left side which is almost
+        # at the same level as the end of the detected cluster.
+        while (
+            reachability_plot[c_start + 1] > reachability_plot[c_end + 1]
+            and c_start < sda["end"]
+        ):
+            c_start += 1
+    elif reachability_plot[c_end + 1] * xi_complement >= D_max:
+        # Find the first index from the right side which is almost
+        # at the same level as the beginning of the detected
+        # cluster.
+        # Our implementation corrects a mistake in the original
+        # paper, i.e., in Definition 11 4c, r(x) < r(sD) should be
+        # r(x) > r(sD).
+        while reachability_plot[c_end - 1] > D_max and c_end > u_start:
+            c_end -= 1
+
+    # predecessor correction
+    if predecessor_correction:
+        c_start, c_end = _correct_predecessor(
+            reachability_plot, predecessor_plot, ordering, c_start, c_end
+        )
+    if c_start is None:
+        return None
+
+    # Definition 11: criterion 3.a
+    if c_end - c_start + 1 < min_cluster_size:
+        return None
+
+    # Definition 11: criterion 1
+    if c_start > sda["end"]:
+        return None
+
+    # Definition 11: criterion 2
+    if c_end < u_start:
+        return None
+
+    return (c_start, c_end)
+
+
 def _xi_cluster(
     reachability_plot,
     predecessor_plot,
@@ -1117,54 +1183,19 @@ def _xi_cluster(
 
             U_clusters = []
             for D in sdas:
-                c_start = D["start"]
-                c_end = U_end
-
-                # line (**), sc2*
-                if reachability_plot[c_end + 1] * xi_complement < D["mib"]:
-                    continue
-
-                # Definition 11: criterion 4
-                D_max = reachability_plot[D["start"]]
-                if D_max * xi_complement >= reachability_plot[c_end + 1]:
-                    # Find the first index from the left side which is almost
-                    # at the same level as the end of the detected cluster.
-                    while (
-                        reachability_plot[c_start + 1] > reachability_plot[c_end + 1]
-                        and c_start < D["end"]
-                    ):
-                        c_start += 1
-                elif reachability_plot[c_end + 1] * xi_complement >= D_max:
-                    # Find the first index from the right side which is almost
-                    # at the same level as the beginning of the detected
-                    # cluster.
-                    # Our implementation corrects a mistake in the original
-                    # paper, i.e., in Definition 11 4c, r(x) < r(sD) should be
-                    # r(x) > r(sD).
-                    while reachability_plot[c_end - 1] > D_max and c_end > U_start:
-                        c_end -= 1
-
-                # predecessor correction
-                if predecessor_correction:
-                    c_start, c_end = _correct_predecessor(
-                        reachability_plot, predecessor_plot, ordering, c_start, c_end
-                    )
-                if c_start is None:
-                    continue
-
-                # Definition 11: criterion 3.a
-                if c_end - c_start + 1 < min_cluster_size:
-                    continue
-
-                # Definition 11: criterion 1
-                if c_start > D["end"]:
-                    continue
-
-                # Definition 11: criterion 2
-                if c_end < U_start:
-                    continue
-
-                U_clusters.append((c_start, c_end))
+                candidate = _get_cluster_candidate(
+                    D,
+                    U_end,
+                    U_start,
+                    reachability_plot,
+                    predecessor_plot,
+                    ordering,
+                    xi_complement,
+                    predecessor_correction,
+                    min_cluster_size,
+                )
+                if candidate is not None:
+                    U_clusters.append(candidate)
 
             # add smaller clusters first.
             U_clusters.reverse()
