@@ -550,6 +550,118 @@ class FastICA(ClassNamePrefixFeaturesOutMixin, TransformerMixin, BaseEstimator):
         self.whiten_solver = whiten_solver
         self.random_state = random_state
 
+    def _resolve_fun(self):
+        """Resolve the contrast function from ``self.fun``."""
+        if self.fun == "logcosh":
+            return _logcosh
+        if self.fun == "exp":
+            return _exp
+        if self.fun == "cube":
+            return _cube
+
+        # callable case
+        def g(x, fun_args):
+            return self.fun(x, **fun_args)
+
+        return g
+
+    def _resolve_n_components(self, n_samples, n_features):
+        """Resolve and validate ``n_components``."""
+        n_components = self.n_components
+        if not self.whiten and n_components is not None:
+            n_components = None
+            warnings.warn("Ignoring n_components with whiten=False.")
+
+        if n_components is None:
+            n_components = min(n_samples, n_features)
+        if n_components > min(n_samples, n_features):
+            n_components = min(n_samples, n_features)
+            warnings.warn(
+                "n_components is too large: it will be set to %s" % n_components
+            )
+        return n_components
+
+    def _whiten_data(self, x_t, x_orig, n_components, n_samples):
+        """Center and whiten data.
+
+        Returns ``(x1, k, x_mean)`` where *x_t* is modified in-place.
+        """
+        # Centering the features of X
+        x_mean = x_t.mean(axis=-1)
+        x_t -= x_mean[:, np.newaxis]
+
+        # Whitening and preprocessing by PCA
+        if self.whiten_solver == "eigh":
+            # Faster when num_samples >> n_features
+            d, u = linalg.eigh(x_t.dot(x_orig))
+            sort_indices = np.argsort(d)[::-1]
+            eps = np.finfo(d.dtype).eps * 10
+            degenerate_idx = d < eps
+            if np.any(degenerate_idx):
+                warnings.warn(
+                    "There are some small singular values, using "
+                    "whiten_solver = 'svd' might lead to more "
+                    "accurate results."
+                )
+            d[degenerate_idx] = eps  # For numerical issues
+            np.sqrt(d, out=d)
+            d, u = d[sort_indices], u[:, sort_indices]
+        elif self.whiten_solver == "svd":
+            u, d = linalg.svd(x_t, full_matrices=False, check_finite=False)[:2]
+
+        # Give consistent eigenvectors for both svd solvers
+        u *= np.sign(u[0])
+
+        k = (u / d).T[:n_components]  # see (6.33) p.140
+        del u, d
+        x1 = np.dot(k, x_t)
+        # see (13.6) p.267 Here X1 is white and data
+        # in X has been projected onto a subspace by PCA
+        x1 *= np.sqrt(n_samples)
+        return x1, k, x_mean
+
+    def _resolve_w_init(self, n_components, random_state, dtype):
+        """Resolve and validate ``w_init``."""
+        if self.w_init is None:
+            return np.asarray(
+                random_state.normal(size=(n_components, n_components)),
+                dtype=dtype,
+            )
+
+        w_init = np.asarray(self.w_init)
+        if w_init.shape != (n_components, n_components):
+            raise ValueError(
+                "w_init has invalid shape -- should be %(shape)s"
+                % {"shape": (n_components, n_components)}
+            )
+        return w_init
+
+    def _compute_sources_and_components(
+        self, unmixing, whitening, x_t, compute_sources
+    ):
+        """Compute source signals and set ``self.components_``."""
+        if compute_sources:
+            if self.whiten:
+                s = np.linalg.multi_dot([unmixing, whitening, x_t]).T
+            else:
+                s = np.dot(unmixing, x_t).T
+        else:
+            s = None
+
+        if self.whiten:
+            if self.whiten == "unit-variance":
+                if not compute_sources:
+                    s = np.linalg.multi_dot([unmixing, whitening, x_t]).T
+                s_std = np.std(s, axis=0, keepdims=True)
+                s /= s_std
+                unmixing /= s_std.T
+
+            self.components_ = np.dot(unmixing, whitening)
+        else:
+            self.components_ = unmixing
+
+        return s, unmixing
+
     def _fit_transform(self, X, compute_sources=False):
         """Fit the model.
 
@@ -582,82 +694,21 @@ class FastICA(ClassNamePrefixFeaturesOutMixin, TransformerMixin, BaseEstimator):
         if not 1 <= alpha <= 2:
             raise ValueError("alpha must be in [1,2]")
 
-        if self.fun == "logcosh":
-            g = _logcosh
-        elif self.fun == "exp":
-            g = _exp
-        elif self.fun == "cube":
-            g = _cube
-        elif callable(self.fun):
-
-            def g(x, fun_args):
-                return self.fun(x, **fun_args)
+        g = self._resolve_fun()
 
         n_features, n_samples = XT.shape
-        n_components = self.n_components
-        if not self.whiten and n_components is not None:
-            n_components = None
-            warnings.warn("Ignoring n_components with whiten=False.")
+        n_components = self._resolve_n_components(n_samples, n_features)
 
-        if n_components is None:
-            n_components = min(n_samples, n_features)
-        if n_components > min(n_samples, n_features):
-            n_components = min(n_samples, n_features)
-            warnings.warn(
-                "n_components is too large: it will be set to %s" % n_components
-            )
-
+        K = None
+        x_mean = None
         if self.whiten:
-            # Centering the features of X
-            X_mean = XT.mean(axis=-1)
-            XT -= X_mean[:, np.newaxis]
-
-            # Whitening and preprocessing by PCA
-            if self.whiten_solver == "eigh":
-                # Faster when num_samples >> n_features
-                d, u = linalg.eigh(XT.dot(X))
-                sort_indices = np.argsort(d)[::-1]
-                eps = np.finfo(d.dtype).eps * 10
-                degenerate_idx = d < eps
-                if np.any(degenerate_idx):
-                    warnings.warn(
-                        "There are some small singular values, using "
-                        "whiten_solver = 'svd' might lead to more "
-                        "accurate results."
-                    )
-                d[degenerate_idx] = eps  # For numerical issues
-                np.sqrt(d, out=d)
-                d, u = d[sort_indices], u[:, sort_indices]
-            elif self.whiten_solver == "svd":
-                u, d = linalg.svd(XT, full_matrices=False, check_finite=False)[:2]
-
-            # Give consistent eigenvectors for both svd solvers
-            u *= np.sign(u[0])
-
-            K = (u / d).T[:n_components]  # see (6.33) p.140
-            del u, d
-            X1 = np.dot(K, XT)
-            # see (13.6) p.267 Here X1 is white and data
-            # in X has been projected onto a subspace by PCA
-            X1 *= np.sqrt(n_samples)
+            X1, K, x_mean = self._whiten_data(XT, X, n_components, n_samples)
         else:
             # X must be casted to floats to avoid typing issues with numpy
             # 2.0 and the line below
             X1 = as_float_array(XT, copy=False)  # copy has been taken care of
 
-        w_init = self.w_init
-        if w_init is None:
-            w_init = np.asarray(
-                random_state.normal(size=(n_components, n_components)), dtype=X1.dtype
-            )
-
-        else:
-            w_init = np.asarray(w_init)
-            if w_init.shape != (n_components, n_components):
-                raise ValueError(
-                    "w_init has invalid shape -- should be %(shape)s"
-                    % {"shape": (n_components, n_components)}
-                )
+        w_init = self._resolve_w_init(n_components, random_state, X1.dtype)
 
         kwargs = {
             "tol": self.tol,
@@ -675,27 +726,11 @@ class FastICA(ClassNamePrefixFeaturesOutMixin, TransformerMixin, BaseEstimator):
 
         self.n_iter_ = n_iter
 
-        if compute_sources:
-            if self.whiten:
-                S = np.linalg.multi_dot([W, K, XT]).T
-            else:
-                S = np.dot(W, XT).T
-        else:
-            S = None
+        S, W = self._compute_sources_and_components(W, K, XT, compute_sources)
 
         if self.whiten:
-            if self.whiten == "unit-variance":
-                if not compute_sources:
-                    S = np.linalg.multi_dot([W, K, XT]).T
-                S_std = np.std(S, axis=0, keepdims=True)
-                S /= S_std
-                W /= S_std.T
-
-            self.components_ = np.dot(W, K)
-            self.mean_ = X_mean
+            self.mean_ = x_mean
             self.whitening_ = K
-        else:
-            self.components_ = W
 
         self.mixing_ = linalg.pinv(self.components_, check_finite=False)
         self._unmixing = W

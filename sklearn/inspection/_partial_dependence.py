@@ -346,6 +346,157 @@ def _partial_dependence_brute(
     return averaged_predictions, predictions
 
 
+def _validate_estimator_params(estimator, X, response_method):
+    """Validate the estimator and input parameters for partial dependence."""
+    check_is_fitted(estimator)
+
+    if not (is_classifier(estimator) or is_regressor(estimator)):
+        raise ValueError("'estimator' must be a fitted regressor or classifier.")
+
+    if is_classifier(estimator) and isinstance(estimator.classes_[0], np.ndarray):
+        raise ValueError("Multiclass-multioutput estimators are not supported")
+
+    # Use check_array only on lists and other non-array-likes / sparse. Do not
+    # convert DataFrame into a NumPy array.
+    if not (hasattr(X, "__array__") or sparse.issparse(X)):
+        X = check_array(X, ensure_all_finite="allow-nan", dtype=object)
+
+    if is_regressor(estimator) and response_method != "auto":
+        raise ValueError(
+            "The response_method parameter is ignored for regressors and "
+            "must be 'auto'."
+        )
+
+    return X
+
+
+def _resolve_method(method, kind, sample_weight, estimator):
+    """Resolve the computation method for partial dependence."""
+    if kind != "average":
+        if method == "recursion":
+            raise ValueError(
+                "The 'recursion' method only applies when 'kind' is set to 'average'"
+            )
+        method = "brute"
+
+    if method == "recursion" and sample_weight is not None:
+        raise ValueError(
+            "The 'recursion' method can only be applied when sample_weight is None."
+        )
+
+    if method == "auto":
+        if sample_weight is not None:
+            method = "brute"
+        elif isinstance(estimator, BaseGradientBoosting) and estimator.init is None:
+            method = "recursion"
+        elif isinstance(
+            estimator,
+            (BaseHistGradientBoosting, DecisionTreeRegressor, RandomForestRegressor),
+        ):
+            method = "recursion"
+        else:
+            method = "brute"
+
+    return method
+
+
+def _validate_recursion_method(estimator, method, response_method):
+    """Validate and resolve response_method for the recursion method."""
+    if method != "recursion":
+        return response_method
+
+    if not isinstance(
+        estimator,
+        (
+            BaseGradientBoosting,
+            BaseHistGradientBoosting,
+            DecisionTreeRegressor,
+            RandomForestRegressor,
+        ),
+    ):
+        supported_classes_recursion = (
+            "GradientBoostingClassifier",
+            "GradientBoostingRegressor",
+            "HistGradientBoostingClassifier",
+            "HistGradientBoostingRegressor",
+            "HistGradientBoostingRegressor",
+            "DecisionTreeRegressor",
+            "RandomForestRegressor",
+        )
+        raise ValueError(
+            "Only the following estimators support the 'recursion' "
+            "method: {}. Try using method='brute'.".format(
+                ", ".join(supported_classes_recursion)
+            )
+        )
+    if response_method == "auto":
+        response_method = "decision_function"
+
+    if response_method != "decision_function":
+        raise ValueError(
+            "With the 'recursion' method, the response_method must be "
+            f"'decision_function'. Got {response_method}."
+        )
+
+    return response_method
+
+
+def _resolve_categorical_features(
+    categorical_features, features_indices, n_features, feature_names
+):
+    """Resolve categorical_features into a list of booleans for each feature."""
+    if categorical_features is None:
+        return [False] * len(features_indices)
+
+    categorical_features = np.asarray(categorical_features)
+    if categorical_features.size == 0:
+        raise ValueError(
+            "Passing an empty list (`[]`) to `categorical_features` is not "
+            "supported. Use `None` instead to indicate that there are no "
+            "categorical features."
+        )
+    if categorical_features.dtype.kind == "b":
+        # categorical features provided as a list of boolean
+        if categorical_features.size != n_features:
+            raise ValueError(
+                "When `categorical_features` is a boolean array-like, "
+                "the array should be of shape (n_features,). Got "
+                f"{categorical_features.size} elements while `X` contains "
+                f"{n_features} features."
+            )
+        return [categorical_features[idx] for idx in features_indices]
+    elif categorical_features.dtype.kind in ("i", "O", "U"):
+        # categorical features provided as a list of indices or feature names
+        categorical_features_idx = [
+            _get_feature_index(cat, feature_names=feature_names)
+            for cat in categorical_features
+        ]
+        return [idx in categorical_features_idx for idx in features_indices]
+    else:
+        raise ValueError(
+            "Expected `categorical_features` to be an array-like of boolean,"
+            f" integer, or string. Got {categorical_features.dtype} instead."
+        )
+
+
+def _validate_feature_dtypes(X, features_indices, features, is_categorical):
+    """Validate that non-categorical features do not contain integer data."""
+    for feature_idx, feature, is_cat in zip(
+        features_indices, features, is_categorical
+    ):
+        if is_cat:
+            continue
+
+        if _safe_indexing(X, feature_idx, axis=1).dtype.kind in "iu":
+            raise ValueError(
+                f"The column {feature!r} contains integer data. Partial "
+                "dependence plots are not supported for integer data: this "
+                "can lead to implicit rounding with NumPy arrays or even errors "
+                "with newer pandas versions. Please convert numerical features "
+                "to floating point dtypes ahead of time to avoid problems."
+            )
+
+
 @validate_params(
     {
         "estimator": [
@@ -577,83 +728,10 @@ def partial_dependence(
     ...                    grid_resolution=2) # doctest: +SKIP
     (array([[-4.52,  4.52]]), [array([ 0.,  1.])])
     """
-    check_is_fitted(estimator)
+    X = _validate_estimator_params(estimator, X, response_method)
 
-    if not (is_classifier(estimator) or is_regressor(estimator)):
-        raise ValueError("'estimator' must be a fitted regressor or classifier.")
-
-    if is_classifier(estimator) and isinstance(estimator.classes_[0], np.ndarray):
-        raise ValueError("Multiclass-multioutput estimators are not supported")
-
-    # Use check_array only on lists and other non-array-likes / sparse. Do not
-    # convert DataFrame into a NumPy array.
-    if not (hasattr(X, "__array__") or sparse.issparse(X)):
-        X = check_array(X, ensure_all_finite="allow-nan", dtype=object)
-
-    if is_regressor(estimator) and response_method != "auto":
-        raise ValueError(
-            "The response_method parameter is ignored for regressors and "
-            "must be 'auto'."
-        )
-
-    if kind != "average":
-        if method == "recursion":
-            raise ValueError(
-                "The 'recursion' method only applies when 'kind' is set to 'average'"
-            )
-        method = "brute"
-
-    if method == "recursion" and sample_weight is not None:
-        raise ValueError(
-            "The 'recursion' method can only be applied when sample_weight is None."
-        )
-
-    if method == "auto":
-        if sample_weight is not None:
-            method = "brute"
-        elif isinstance(estimator, BaseGradientBoosting) and estimator.init is None:
-            method = "recursion"
-        elif isinstance(
-            estimator,
-            (BaseHistGradientBoosting, DecisionTreeRegressor, RandomForestRegressor),
-        ):
-            method = "recursion"
-        else:
-            method = "brute"
-
-    if method == "recursion":
-        if not isinstance(
-            estimator,
-            (
-                BaseGradientBoosting,
-                BaseHistGradientBoosting,
-                DecisionTreeRegressor,
-                RandomForestRegressor,
-            ),
-        ):
-            supported_classes_recursion = (
-                "GradientBoostingClassifier",
-                "GradientBoostingRegressor",
-                "HistGradientBoostingClassifier",
-                "HistGradientBoostingRegressor",
-                "HistGradientBoostingRegressor",
-                "DecisionTreeRegressor",
-                "RandomForestRegressor",
-            )
-            raise ValueError(
-                "Only the following estimators support the 'recursion' "
-                "method: {}. Try using method='brute'.".format(
-                    ", ".join(supported_classes_recursion)
-                )
-            )
-        if response_method == "auto":
-            response_method = "decision_function"
-
-        if response_method != "decision_function":
-            raise ValueError(
-                "With the 'recursion' method, the response_method must be "
-                f"'decision_function'. Got {response_method}."
-            )
+    method = _resolve_method(method, kind, sample_weight, estimator)
+    response_method = _validate_recursion_method(estimator, method, response_method)
 
     if sample_weight is not None:
         sample_weight = _check_sample_weight(sample_weight, X)
@@ -671,58 +749,15 @@ def partial_dependence(
 
     feature_names = _check_feature_names(X, feature_names)
 
-    n_features = X.shape[1]
-    if categorical_features is None:
-        is_categorical = [False] * len(features_indices)
-    else:
-        categorical_features = np.asarray(categorical_features)
-        if categorical_features.size == 0:
-            raise ValueError(
-                "Passing an empty list (`[]`) to `categorical_features` is not "
-                "supported. Use `None` instead to indicate that there are no "
-                "categorical features."
-            )
-        if categorical_features.dtype.kind == "b":
-            # categorical features provided as a list of boolean
-            if categorical_features.size != n_features:
-                raise ValueError(
-                    "When `categorical_features` is a boolean array-like, "
-                    "the array should be of shape (n_features,). Got "
-                    f"{categorical_features.size} elements while `X` contains "
-                    f"{n_features} features."
-                )
-            is_categorical = [categorical_features[idx] for idx in features_indices]
-        elif categorical_features.dtype.kind in ("i", "O", "U"):
-            # categorical features provided as a list of indices or feature names
-            categorical_features_idx = [
-                _get_feature_index(cat, feature_names=feature_names)
-                for cat in categorical_features
-            ]
-            is_categorical = [
-                idx in categorical_features_idx for idx in features_indices
-            ]
-        else:
-            raise ValueError(
-                "Expected `categorical_features` to be an array-like of boolean,"
-                f" integer, or string. Got {categorical_features.dtype} instead."
-            )
+    is_categorical = _resolve_categorical_features(
+        categorical_features, features_indices, X.shape[1], feature_names
+    )
 
     custom_values = custom_values or {}
     if isinstance(features, (str, int)):
         features = [features]
 
-    for feature_idx, feature, is_cat in zip(features_indices, features, is_categorical):
-        if is_cat:
-            continue
-
-        if _safe_indexing(X, feature_idx, axis=1).dtype.kind in "iu":
-            raise ValueError(
-                f"The column {feature!r} contains integer data. Partial "
-                "dependence plots are not supported for integer data: this "
-                "can lead to implicit rounding with NumPy arrays or even errors "
-                "with newer pandas versions. Please convert numerical features "
-                "to floating point dtypes ahead of time to avoid problems."
-            )
+    _validate_feature_dtypes(X, features_indices, features, is_categorical)
 
     X_subset = _safe_indexing(X, features_indices, axis=1)
 
