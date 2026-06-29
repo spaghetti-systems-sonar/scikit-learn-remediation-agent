@@ -56,6 +56,87 @@ def _check_boundary_response_method(estimator, response_method):
     return prediction_method
 
 
+def _validate_from_estimator_params(grid_resolution, eps, plot_method, num_features):
+    """Validate input parameters for DecisionBoundaryDisplay.from_estimator."""
+    if not grid_resolution > 1:
+        raise ValueError(
+            "grid_resolution must be greater than 1. Got"
+            f" {grid_resolution} instead."
+        )
+
+    if not eps >= 0:
+        raise ValueError(
+            f"eps must be greater than or equal to 0. Got {eps} instead."
+        )
+
+    possible_plot_methods = ("contourf", "contour", "pcolormesh")
+    if plot_method not in possible_plot_methods:
+        available_methods = ", ".join(possible_plot_methods)
+        raise ValueError(
+            f"plot_method must be one of {available_methods}. "
+            f"Got {plot_method} instead."
+        )
+
+    if num_features != 2:
+        raise ValueError(
+            f"n_features must be equal to 2. Got {num_features} instead."
+        )
+
+
+def _determine_n_classes(estimator, response, class_of_interest):
+    """Determine the number of classes for the decision boundary display."""
+    if (
+        class_of_interest is not None
+        or is_regressor(estimator)
+        or is_outlier_detector(estimator)
+    ):
+        return 2
+
+    if is_classifier(estimator) and hasattr(estimator, "classes_"):
+        return len(estimator.classes_)
+
+    if is_clusterer(estimator) and hasattr(estimator, "labels_"):
+        return len(np.unique(estimator.labels_))
+
+    target_type = type_of_target(response)
+    if target_type in ("binary", "continuous"):
+        return 2
+    if target_type == "multiclass":
+        return len(np.unique(response))
+
+    raise ValueError(
+        "Number of classes or labels cannot be inferred from "
+        f"{estimator.__class__.__name__}. Please make sure your estimator "
+        "follows scikit-learn's estimator API as described here: "
+        "https://scikit-learn.org/stable/developers/develop.html#rolling-your-own-estimator"
+    )
+
+
+def _reshape_response(response, estimator, class_of_interest, grid_shape):
+    """Reshape the response array for the decision boundary display."""
+    if response.ndim == 1:
+        return response.reshape(*grid_shape)
+
+    if is_regressor(estimator):
+        raise ValueError("Multi-output regressors are not supported")
+
+    if class_of_interest is not None:
+        # For the multiclass case, `_get_response_values` returns the response
+        # as-is. Thus, we have a column per class and we need to select the
+        # column corresponding to the positive class.
+        col_idx = np.flatnonzero(estimator.classes_ == class_of_interest)[0]
+        return response[:, col_idx].reshape(*grid_shape)
+
+    return response.reshape(*grid_shape, response.shape[-1])
+
+
+def _get_column_label(data, col_index):
+    """Get column label from data if available, otherwise return empty string."""
+    if hasattr(data, "columns"):
+        return data.columns[col_index]
+    return ""
+
+
 def _select_colors(mpl, multiclass_colors, n_classes):
     """Select colors for multiclass decision boundary display.
 
@@ -388,85 +469,100 @@ class DecisionBoundaryDisplay:
         if self.n_classes == 2:
             self.surface_ = plot_func(self.xx0, self.xx1, self.response, **kwargs)
         else:  # multiclass
-            for kwarg in ("cmap", "colors"):
-                if kwarg in kwargs:
-                    warnings.warn(
-                        f"'{kwarg}' is ignored in favor of 'multiclass_colors' "
-                        "in the multiclass case."
-                    )
-                    del kwargs[kwarg]
+            self._plot_multiclass(mpl, plot_method, plot_func, kwargs)
 
-            self.multiclass_colors_ = _select_colors(
-                mpl, self.multiclass_colors, self.n_classes
-            )
-
-            # If not set by the user, set default values for `zorder` to ensure that the
-            # decision boundary is plotted in the background (in case a scatter plot is
-            # added on top)
-            if "zorder" not in kwargs:
-                kwargs["zorder"] = -1
-
-            if self.response.ndim == 3:  # predict_proba and decision_function
-                multiclass_cmaps = [
-                    mpl.colors.LinearSegmentedColormap.from_list(
-                        f"colormap_{class_idx}",
-                        [(1.0, 1.0, 1.0, 1.0), (r, g, b, 1.0)],
-                    )
-                    for class_idx, (r, g, b, _) in enumerate(self.multiclass_colors_)
-                ]
-                self.surface_ = []
-                for class_idx, cmap in enumerate(multiclass_cmaps):
-                    response = np.ma.array(
-                        self.response[:, :, class_idx],
-                        mask=(self.response.argmax(axis=2) != class_idx),
-                    )
-                    self.surface_.append(
-                        plot_func(self.xx0, self.xx1, response, cmap=cmap, **kwargs)
-                    )
-
-                if plot_method == "contour":
-                    # Additionally plot the decision boundaries between classes.
-                    self.surface_.append(
-                        plot_func(
-                            self.xx0,
-                            self.xx1,
-                            self.response.argmax(axis=2),
-                            colors="black",
-                            zorder=-1,
-                            # set levels to ensure all boundaries are plotted correctly
-                            levels=np.arange(self.n_classes),
-                        )
-                    )
-
-            elif self.response.ndim == 2:  # predict
-                # Set `levels` to ensure all class boundaries are displayed.
-                if "levels" not in kwargs:
-                    if plot_method == "contour":
-                        kwargs["levels"] = np.arange(self.n_classes)
-                    elif plot_method == "contourf":
-                        kwargs["levels"] = np.arange(self.n_classes + 1) - 0.5
-
-                if plot_method == "contour":
-                    self.surface_ = plot_func(
-                        self.xx0, self.xx1, self.response, colors="black", **kwargs
-                    )
-                else:
-                    # `pcolormesh` requires cmap, for `contourf` it makes no difference
-                    cmap = mpl.colors.ListedColormap(self.multiclass_colors_)
-                    self.surface_ = plot_func(
-                        self.xx0, self.xx1, self.response, cmap=cmap, **kwargs
-                    )
-
-        if xlabel is not None or not ax.get_xlabel():
-            xlabel = self.xlabel if xlabel is None else xlabel
-            ax.set_xlabel(xlabel)
-        if ylabel is not None or not ax.get_ylabel():
-            ylabel = self.ylabel if ylabel is None else ylabel
-            ax.set_ylabel(ylabel)
+        self._set_axis_labels(ax, xlabel, ylabel)
 
         self.ax_ = ax
         self.figure_ = ax.figure
         return self
+
+    def _plot_multiclass(self, mpl, plot_method, plot_func, kwargs):
+        """Plot decision boundaries for multiclass problems."""
+        for kwarg in ("cmap", "colors"):
+            if kwarg in kwargs:
+                warnings.warn(
+                    f"'{kwarg}' is ignored in favor of 'multiclass_colors' "
+                    "in the multiclass case."
+                )
+                del kwargs[kwarg]
+
+        self.multiclass_colors_ = _select_colors(
+            mpl, self.multiclass_colors, self.n_classes
+        )
+
+        # If not set by the user, set default values for `zorder` to ensure that the
+        # decision boundary is plotted in the background (in case a scatter plot is
+        # added on top)
+        if "zorder" not in kwargs:
+            kwargs["zorder"] = -1
+
+        if self.response.ndim == 3:  # predict_proba and decision_function
+            self._plot_multiclass_3d(mpl, plot_method, plot_func, kwargs)
+        elif self.response.ndim == 2:  # predict
+            self._plot_multiclass_2d(mpl, plot_method, plot_func, kwargs)
+
+    def _plot_multiclass_3d(self, mpl, plot_method, plot_func, kwargs):
+        """Plot multiclass decision boundaries when response is 3D."""
+        multiclass_cmaps = [
+            mpl.colors.LinearSegmentedColormap.from_list(
+                f"colormap_{class_idx}",
+                [(1.0, 1.0, 1.0, 1.0), (r, g, b, 1.0)],
+            )
+            for class_idx, (r, g, b, _) in enumerate(self.multiclass_colors_)
+        ]
+        self.surface_ = []
+        for class_idx, cmap in enumerate(multiclass_cmaps):
+            response = np.ma.array(
+                self.response[:, :, class_idx],
+                mask=(self.response.argmax(axis=2) != class_idx),
+            )
+            self.surface_.append(
+                plot_func(self.xx0, self.xx1, response, cmap=cmap, **kwargs)
+            )
+
+        if plot_method == "contour":
+            # Additionally plot the decision boundaries between classes.
+            self.surface_.append(
+                plot_func(
+                    self.xx0,
+                    self.xx1,
+                    self.response.argmax(axis=2),
+                    colors="black",
+                    zorder=-1,
+                    # set levels to ensure all boundaries are plotted correctly
+                    levels=np.arange(self.n_classes),
+                )
+            )
+
+    def _plot_multiclass_2d(self, mpl, plot_method, plot_func, kwargs):
+        """Plot multiclass decision boundaries when response is 2D."""
+        # Set `levels` to ensure all class boundaries are displayed.
+        if "levels" not in kwargs:
+            if plot_method == "contour":
+                kwargs["levels"] = np.arange(self.n_classes)
+            elif plot_method == "contourf":
+                kwargs["levels"] = np.arange(self.n_classes + 1) - 0.5
+
+        if plot_method == "contour":
+            self.surface_ = plot_func(
+                self.xx0, self.xx1, self.response, colors="black", **kwargs
+            )
+        else:
+            # `pcolormesh` requires cmap, for `contourf` it makes no difference
+            cmap = mpl.colors.ListedColormap(self.multiclass_colors_)
+            self.surface_ = plot_func(
+                self.xx0, self.xx1, self.response, cmap=cmap, **kwargs
+            )
+
+    def _set_axis_labels(self, ax, xlabel, ylabel):
+        """Set axis labels on the plot."""
+        if xlabel is not None or not ax.get_xlabel():
+            effective_xlabel = self.xlabel if xlabel is None else xlabel
+            ax.set_xlabel(effective_xlabel)
+        if ylabel is not None or not ax.get_ylabel():
+            effective_ylabel = self.ylabel if ylabel is None else ylabel
+            ax.set_ylabel(effective_ylabel)
 
     @classmethod
     def from_estimator(
@@ -619,31 +715,9 @@ class DecisionBoundaryDisplay:
         >>> plt.show()
         """
         check_is_fitted(estimator)
-
-        if not grid_resolution > 1:
-            raise ValueError(
-                "grid_resolution must be greater than 1. Got"
-                f" {grid_resolution} instead."
-            )
-
-        if not eps >= 0:
-            raise ValueError(
-                f"eps must be greater than or equal to 0. Got {eps} instead."
-            )
-
-        possible_plot_methods = ("contourf", "contour", "pcolormesh")
-        if plot_method not in possible_plot_methods:
-            available_methods = ", ".join(possible_plot_methods)
-            raise ValueError(
-                f"plot_method must be one of {available_methods}. "
-                f"Got {plot_method} instead."
-            )
-
-        num_features = _num_features(X)
-        if num_features != 2:
-            raise ValueError(
-                f"n_features must be equal to 2. Got {num_features} instead."
-            )
+        _validate_from_estimator_params(
+            grid_resolution, eps, plot_method, _num_features(X)
+        )
 
         x0, x1 = _safe_indexing(X, 0, axis=1), _safe_indexing(X, 1, axis=1)
 
@@ -688,50 +762,16 @@ class DecisionBoundaryDisplay:
             response = encoder.transform(response)
 
         # infer n_classes from the estimator
-        if (
-            class_of_interest is not None
-            or is_regressor(estimator)
-            or is_outlier_detector(estimator)
-        ):
-            n_classes = 2
-        elif is_classifier(estimator) and hasattr(estimator, "classes_"):
-            n_classes = len(estimator.classes_)
-        elif is_clusterer(estimator) and hasattr(estimator, "labels_"):
-            n_classes = len(np.unique(estimator.labels_))
-        else:
-            target_type = type_of_target(response)
-            if target_type in ("binary", "continuous"):
-                n_classes = 2
-            elif target_type == "multiclass":
-                n_classes = len(np.unique(response))
-            else:
-                raise ValueError(
-                    "Number of classes or labels cannot be inferred from "
-                    f"{estimator.__class__.__name__}. Please make sure your estimator "
-                    "follows scikit-learn's estimator API as described here: "
-                    "https://scikit-learn.org/stable/developers/develop.html#rolling-your-own-estimator"
-                )
-
-        if response.ndim == 1:
-            response = response.reshape(*xx0.shape)
-        else:
-            if is_regressor(estimator):
-                raise ValueError("Multi-output regressors are not supported")
-
-            if class_of_interest is not None:
-                # For the multiclass case, `_get_response_values` returns the response
-                # as-is. Thus, we have a column per class and we need to select the
-                # column corresponding to the positive class.
-                col_idx = np.flatnonzero(estimator.classes_ == class_of_interest)[0]
-                response = response[:, col_idx].reshape(*xx0.shape)
-            else:
-                response = response.reshape(*xx0.shape, response.shape[-1])
+        n_classes = _determine_n_classes(estimator, response, class_of_interest)
+        response = _reshape_response(
+            response, estimator, class_of_interest, xx0.shape
+        )
 
         if xlabel is None:
-            xlabel = X.columns[0] if hasattr(X, "columns") else ""
+            xlabel = _get_column_label(X, 0)
 
         if ylabel is None:
-            ylabel = X.columns[1] if hasattr(X, "columns") else ""
+            ylabel = _get_column_label(X, 1)
 
         display = cls(
             xx0=xx0,
