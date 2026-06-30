@@ -461,6 +461,28 @@ def k_means(
         return est.cluster_centers_, est.labels_, est.inertia_
 
 
+def _check_convergence(labels, labels_old, center_shift, tol, verbose, iteration):
+    """Check convergence of k-means iterations.
+
+    Returns a tuple (converged, strict_convergence).
+    """
+    if np.array_equal(labels, labels_old):
+        if verbose:
+            print(f"Converged at iteration {iteration}: strict convergence.")
+        return True, True
+
+    center_shift_tot = (center_shift**2).sum()
+    if center_shift_tot <= tol:
+        if verbose:
+            print(
+                f"Converged at iteration {iteration}: center shift "
+                f"{center_shift_tot} within tolerance {tol}."
+            )
+        return True, False
+
+    return False, False
+
+
 def _kmeans_single_elkan(
     X,
     sample_weight,
@@ -584,22 +606,11 @@ def _kmeans_single_elkan(
 
         centers, centers_new = centers_new, centers
 
-        if np.array_equal(labels, labels_old):
-            # First check the labels for strict convergence.
-            if verbose:
-                print(f"Converged at iteration {i}: strict convergence.")
-            strict_convergence = True
+        converged, strict_convergence = _check_convergence(
+            labels, labels_old, center_shift, tol, verbose, i
+        )
+        if converged:
             break
-        else:
-            # No strict convergence, check for tol based convergence.
-            center_shift_tot = (center_shift**2).sum()
-            if center_shift_tot <= tol:
-                if verbose:
-                    print(
-                        f"Converged at iteration {i}: center shift "
-                        f"{center_shift_tot} within tolerance {tol}."
-                    )
-                break
 
         labels_old[:] = labels
 
@@ -722,22 +733,11 @@ def _kmeans_single_lloyd(
 
         centers, centers_new = centers_new, centers
 
-        if np.array_equal(labels, labels_old):
-            # First check the labels for strict convergence.
-            if verbose:
-                print(f"Converged at iteration {i}: strict convergence.")
-            strict_convergence = True
+        converged, strict_convergence = _check_convergence(
+            labels, labels_old, center_shift, tol, verbose, i
+        )
+        if converged:
             break
-        else:
-            # No strict convergence, check for tol based convergence.
-            center_shift_tot = (center_shift**2).sum()
-            if center_shift_tot <= tol:
-                if verbose:
-                    print(
-                        f"Converged at iteration {i}: center shift "
-                        f"{center_shift_tot} within tolerance {tol}."
-                    )
-                break
 
         labels_old[:] = labels
 
@@ -1411,8 +1411,8 @@ class KMeans(_BaseKMeans):
         self.copy_x = copy_x
         self.algorithm = algorithm
 
-    def _check_params_vs_input(self, X):
-        super()._check_params_vs_input(X, default_n_init=10)
+    def _check_params_vs_input(self, X, default_n_init=10):
+        super()._check_params_vs_input(X, default_n_init=default_n_init)
 
         self._algorithm = self.algorithm
         if self._algorithm == "elkan" and self.n_clusters == 1:
@@ -1433,6 +1433,13 @@ class KMeans(_BaseKMeans):
             "threads. You can avoid it by setting the environment"
             f" variable OMP_NUM_THREADS={n_active_threads}."
         )
+
+    def _get_kmeans_single(self, X):
+        """Select the appropriate kmeans single function based on algorithm."""
+        if self._algorithm == "elkan":
+            return _kmeans_single_elkan
+        self._check_mkl_vcomp(X, X.shape[0])
+        return _kmeans_single_lloyd
 
     @_fit_context(prefer_skip_nested_validation=True)
     def fit(self, X, y=None, sample_weight=None):
@@ -1497,11 +1504,7 @@ class KMeans(_BaseKMeans):
         # precompute squared norms of data points
         x_squared_norms = row_norms(X, squared=True)
 
-        if self._algorithm == "elkan":
-            kmeans_single = _kmeans_single_elkan
-        else:
-            kmeans_single = _kmeans_single_lloyd
-            self._check_mkl_vcomp(X, X.shape[0])
+        kmeans_single = self._get_kmeans_single(X)
 
         best_inertia, best_labels = None, None
 
@@ -1672,7 +1675,7 @@ def _mini_batch_step(
                 assign_rows_csr(
                     X,
                     new_centers.astype(np.intp, copy=False),
-                    np.where(to_reassign)[0].astype(np.intp, copy=False),
+                    np.nonzero(to_reassign)[0].astype(np.intp, copy=False),
                     centers_new,
                 )
             else:
