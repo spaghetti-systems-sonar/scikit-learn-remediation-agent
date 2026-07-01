@@ -29,6 +29,15 @@ from sklearn.utils.validation import (
 )
 
 
+def _prepare_sparse_key(key, key_dtype):
+    """Prepare the indexing key for sparse array indexing."""
+    if key_dtype == "bool":
+        return np.asarray(key)
+    if SCIPY_VERSION_BELOW_1_12 and isinstance(key, numbers.Integral):
+        return [key]
+    return key
+
+
 def _array_indexing(array, key, key_dtype, axis):
     """Index an array or scipy.sparse consistently across NumPy version."""
     xp, is_array_api, device_ = get_namespace_and_device(array)
@@ -52,11 +61,7 @@ def _array_indexing(array, key, key_dtype, axis):
                 return xp.take(array, indices[key], axis=axis)
 
     if issparse(array):
-        if key_dtype == "bool":
-            key = np.asarray(key)
-        elif SCIPY_VERSION_BELOW_1_12:
-            if isinstance(key, numbers.Integral):
-                key = [key]
+        key = _prepare_sparse_key(key, key_dtype)
     if isinstance(key, tuple):
         key = list(key)
     return array[key, ...] if axis == 0 else array[:, key]
@@ -364,6 +369,36 @@ def _get_column_indices_for_bool_or_int(key, n_columns):
     return np.atleast_1d(idx).tolist()
 
 
+def _get_column_indices_for_str_key(key, column_names, n_columns):
+    """Resolve string-based column key to integer indices."""
+    if column_names is None:
+        raise ValueError(
+            "Specifying the columns using strings is only supported for dataframes."
+        )
+
+    if isinstance(key, slice):
+        if key.step not in [1, None]:
+            raise NotImplementedError("key.step must be 1 or None")
+
+        start, stop = key.start, key.stop
+        if start is not None:
+            start = column_names.index(start)
+
+        if stop is not None:
+            stop = column_names.index(stop) + 1
+        else:
+            stop = n_columns + 1
+        return list(islice(range(n_columns), start, stop))
+
+    selected_columns = [key] if np.isscalar(key) else key
+    try:
+        return [column_names.index(col) for col in selected_columns]
+    except ValueError as e:
+        missing = {*selected_columns} - {*column_names}
+        msg = f"Some column names are not columns of the dataframe: {missing}"
+        raise ValueError(msg) from e
+
+
 def _get_column_indices(X, key):
     """Get feature column indices for input data X and key.
 
@@ -387,32 +422,42 @@ def _get_column_indices(X, key):
     elif key_dtype in ("bool", "int"):
         return _get_column_indices_for_bool_or_int(key, n_columns)
     else:
-        if column_names is None:
-            raise ValueError(
-                "Specifying the columns using strings is only supported for dataframes."
+        return _get_column_indices_for_str_key(key, column_names, n_columns)
+
+
+def _validate_resample_params(sample_weight, replace, stratify):
+    """Validate parameter combinations for resample."""
+    if sample_weight is not None and not replace:
+        raise NotImplementedError(
+            "Resampling with sample_weight is only implemented for replace=True."
+        )
+    if sample_weight is not None and stratify is not None:
+        raise NotImplementedError(
+            "Resampling with sample_weight is only implemented for stratify=None."
+        )
+
+
+def _resample_unstratified(
+    replace, n_samples, max_n_samples, random_state, sample_weight, first
+):
+    """Compute resampling indices without stratification."""
+    if replace:
+        if sample_weight is not None:
+            sample_weight = _check_sample_weight(
+                sample_weight, first, dtype=np.float64
             )
-
-        if isinstance(key, slice):
-            if key.step not in [1, None]:
-                raise NotImplementedError("key.step must be 1 or None")
-
-            start, stop = key.start, key.stop
-            if start is not None:
-                start = column_names.index(start)
-
-            if stop is not None:
-                stop = column_names.index(stop) + 1
-            else:
-                stop = n_columns + 1
-            return list(islice(range(n_columns), start, stop))
+            p = sample_weight / sample_weight.sum()
         else:
-            selected_columns = [key] if np.isscalar(key) else key
-            try:
-                return [column_names.index(col) for col in selected_columns]
-            except ValueError as e:
-                missing = {*selected_columns} - {*column_names}
-                msg = f"Some column names are not columns of the dataframe: {missing}"
-                raise ValueError(msg) from e
+            p = None
+        return random_state.choice(
+            n_samples,
+            size=max_n_samples,
+            p=p,
+            replace=True,
+        )
+    indices = np.arange(n_samples)
+    random_state.shuffle(indices)
+    return indices[:max_n_samples]
 
 
 @validate_params(
@@ -546,33 +591,12 @@ def resample(
 
     check_consistent_length(*arrays)
 
-    if sample_weight is not None and not replace:
-        raise NotImplementedError(
-            "Resampling with sample_weight is only implemented for replace=True."
-        )
-    if sample_weight is not None and stratify is not None:
-        raise NotImplementedError(
-            "Resampling with sample_weight is only implemented for stratify=None."
-        )
+    _validate_resample_params(sample_weight, replace, stratify)
+
     if stratify is None:
-        if replace:
-            if sample_weight is not None:
-                sample_weight = _check_sample_weight(
-                    sample_weight, first, dtype=np.float64
-                )
-                p = sample_weight / sample_weight.sum()
-            else:
-                p = None
-            indices = random_state.choice(
-                n_samples,
-                size=max_n_samples,
-                p=p,
-                replace=True,
-            )
-        else:
-            indices = np.arange(n_samples)
-            random_state.shuffle(indices)
-            indices = indices[:max_n_samples]
+        indices = _resample_unstratified(
+            replace, n_samples, max_n_samples, random_state, sample_weight, first
+        )
     else:
         # Code adapted from StratifiedShuffleSplit()
         y = check_array(stratify, ensure_2d=False, dtype=None)
