@@ -95,6 +95,36 @@ def _set_order(X, y, order="C"):
 # Paths functions
 
 
+def _compute_xyw(x, y, fit_intercept, sample_weight):
+    """Compute the weighted cross-correlation term when Xy is not precomputed."""
+    if fit_intercept:
+        # TODO: For y.ndim >> 1, think about avoiding memory of y = y - y.mean()
+        y = y - np.average(y, axis=0, weights=sample_weight)
+        if sparse.issparse(x):
+            x_mean, _ = mean_variance_axis(x, axis=0, weights=sample_weight)
+        else:
+            x_mean = np.average(x, axis=0, weights=sample_weight)
+
+    if sample_weight is None:
+        yw = y
+    else:
+        if y.ndim > 1:
+            yw = y * sample_weight.reshape(-1, 1)
+        else:
+            yw = y * sample_weight
+
+    if fit_intercept:
+        # Avoid copy of X, i.e. avoid explicitly computing X - X_mean
+        if y.ndim > 1:
+            xyw = x.T @ yw - x_mean[:, None] * np.sum(yw, axis=0)
+        else:
+            xyw = x.T @ yw - x_mean * np.sum(yw, axis=0)
+    else:
+        xyw = x.T @ yw
+
+    return xyw
+
+
 def _alpha_grid(
     X,
     y,
@@ -161,30 +191,7 @@ def _alpha_grid(
     if Xy is not None:
         Xyw = Xy
     else:
-        if fit_intercept:
-            # TODO: For y.ndim >> 1, think about avoiding memory of y = y - y.mean()
-            y = y - np.average(y, axis=0, weights=sample_weight)
-            if sparse.issparse(X):
-                X_mean, _ = mean_variance_axis(X, axis=0, weights=sample_weight)
-            else:
-                X_mean = np.average(X, axis=0, weights=sample_weight)
-
-        if sample_weight is None:
-            yw = y
-        else:
-            if y.ndim > 1:
-                yw = y * sample_weight.reshape(-1, 1)
-            else:
-                yw = y * sample_weight
-
-        if fit_intercept:
-            # Avoid copy of X, i.e. avoid explicitly computing X - X_mean
-            if y.ndim > 1:
-                Xyw = X.T @ yw - X_mean[:, None] * np.sum(yw, axis=0)
-            else:
-                Xyw = X.T @ yw - X_mean * np.sum(yw, axis=0)
-        else:
-            Xyw = X.T @ yw
+        Xyw = _compute_xyw(X, y, fit_intercept, sample_weight)
 
     if Xyw.ndim == 1:
         Xyw = Xyw[:, np.newaxis]
