@@ -511,7 +511,7 @@ class OneVsRestClassifier(
             indices = array.array("i")
             indptr = array.array("i", [0])
             for e in self.estimators_:
-                indices.extend(np.where(_predict_binary(e, X) > thresh)[0])
+                indices.extend(np.nonzero(_predict_binary(e, X) > thresh)[0])
                 indptr.append(len(indices))
             data = np.ones(len(indices), dtype=int)
             indicator = sp.csc_array(
