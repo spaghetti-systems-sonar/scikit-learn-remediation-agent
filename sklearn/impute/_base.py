@@ -679,7 +679,7 @@ class SimpleImputer(_BaseImputer):
                 mask_valid_features = missing_mask[:, valid_statistics_indexes]
             n_missing = np.sum(mask_valid_features, axis=0)
             values = np.repeat(valid_statistics, n_missing)
-            coordinates = np.where(mask_valid_features.transpose())[::-1]
+            coordinates = np.nonzero(mask_valid_features.transpose())[::-1]
 
             X[coordinates] = values
 
