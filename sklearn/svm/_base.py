@@ -228,26 +228,52 @@ class BaseLibSVM(BaseEstimator, metaclass=ABCMeta):
         )
         solver_type = LIBSVM_IMPL.index(self._impl)
 
-        # TODO(1.11): remove probability
-        self._effective_probability = self.probability
-        if self._impl in ["c_svc", "nu_svc"]:
-            if self._impl == "nu_scv":
-                est_dep = "NuSVC"
-            else:
-                est_dep = "SVC"
-            if self.probability != "deprecated":
-                warnings.warn(
-                    f"The `probability` parameter was deprecated in 1.9 and "
-                    f"will be removed in version 1.11. "
-                    f"Use `CalibratedClassifierCV({est_dep}(), ensemble=False)` "
-                    f"instead of `{est_dep}(probability=True)`",
-                    FutureWarning,
-                )
-            else:
-                self._effective_probability = False
+        self._handle_probability_deprecation()
 
         # input validation
         n_samples = _num_samples(X)
+        self._validate_for_fit(X, y, sample_weight, solver_type, n_samples)
+
+        kernel = "precomputed" if callable(self.kernel) else self.kernel
+        self._compute_gamma(X, sparse, kernel)
+
+        fit = self._sparse_fit if self._sparse else self._dense_fit
+        if self.verbose:
+            print("[LibSVM]", end="")
+
+        seed = rnd.randint(np.iinfo("i").max)
+        fit(X, y, sample_weight, solver_type, kernel, random_seed=seed)
+        # see comment on the other call to np.iinfo in this file
+
+        self.shape_fit_ = X.shape if hasattr(X, "shape") else (n_samples,)
+
+        self._post_fit()
+
+        return self
+
+    def _handle_probability_deprecation(self):
+        """Handle deprecation of the probability parameter."""
+        # TODO(1.11): remove probability
+        self._effective_probability = self.probability
+        if self._impl not in ["c_svc", "nu_svc"]:
+            return
+        if self._impl == "nu_scv":
+            est_dep = "NuSVC"
+        else:
+            est_dep = "SVC"
+        if self.probability != "deprecated":
+            warnings.warn(
+                f"The `probability` parameter was deprecated in 1.9 and "
+                f"will be removed in version 1.11. "
+                f"Use `CalibratedClassifierCV({est_dep}(), ensemble=False)` "
+                f"instead of `{est_dep}(probability=True)`",
+                FutureWarning,
+            )
+        else:
+            self._effective_probability = False
+
+    def _validate_for_fit(self, X, y, sample_weight, solver_type, n_samples):
+        """Validate input shapes for fit."""
         if solver_type != 2 and n_samples != y.shape[0]:
             raise ValueError(
                 "X and y have incompatible shapes.\n"
@@ -269,8 +295,8 @@ class BaseLibSVM(BaseEstimator, metaclass=ABCMeta):
                 % (sample_weight.shape, X.shape)
             )
 
-        kernel = "precomputed" if callable(self.kernel) else self.kernel
-
+    def _compute_gamma(self, X, sparse, kernel):
+        """Compute the gamma parameter for the kernel."""
         if kernel == "precomputed":
             # unused but needs to be a float for cython code that ignores
             # it anyway
@@ -278,23 +304,21 @@ class BaseLibSVM(BaseEstimator, metaclass=ABCMeta):
         elif isinstance(self.gamma, str):
             if self.gamma == "scale":
                 # var = E[X^2] - E[X]^2 if sparse
-                X_var = (X.multiply(X)).mean() - (X.mean()) ** 2 if sparse else X.var()
-                self._gamma = 1.0 / (X.shape[1] * X_var) if X_var != 0 else 1.0
+                X_var = (
+                    (X.multiply(X)).mean() - (X.mean()) ** 2
+                    if sparse
+                    else X.var()
+                )
+                self._gamma = (
+                    1.0 / (X.shape[1] * X_var) if X_var != 0 else 1.0
+                )
             elif self.gamma == "auto":
                 self._gamma = 1.0 / X.shape[1]
         elif isinstance(self.gamma, Real):
             self._gamma = self.gamma
 
-        fit = self._sparse_fit if self._sparse else self._dense_fit
-        if self.verbose:
-            print("[LibSVM]", end="")
-
-        seed = rnd.randint(np.iinfo("i").max)
-        fit(X, y, sample_weight, solver_type, kernel, random_seed=seed)
-        # see comment on the other call to np.iinfo in this file
-
-        self.shape_fit_ = X.shape if hasattr(X, "shape") else (n_samples,)
-
+    def _post_fit(self):
+        """Process results after fitting the SVM model."""
         # In binary case, we need to flip the sign of coef, intercept and
         # decision function. Use self._intercept_ and self._dual_coef_
         # internally.
@@ -304,7 +328,9 @@ class BaseLibSVM(BaseEstimator, metaclass=ABCMeta):
             self.intercept_ *= -1
             self.dual_coef_ = -self.dual_coef_
 
-        dual_coef = self._dual_coef_.data if self._sparse else self._dual_coef_
+        dual_coef = (
+            self._dual_coef_.data if self._sparse else self._dual_coef_
+        )
         intercept_finiteness = np.isfinite(self._intercept_).all()
         dual_coef_finiteness = np.isfinite(dual_coef).all()
         if not (intercept_finiteness and dual_coef_finiteness):
@@ -314,18 +340,16 @@ class BaseLibSVM(BaseEstimator, metaclass=ABCMeta):
                 " preprocessed."
             )
 
-        # Since, in the case of SVC and NuSVC, the number of models optimized by
-        # libSVM could be greater than one (depending on the input), `n_iter_`
-        # stores an ndarray.
-        # For the other sub-classes (SVR, NuSVR, and OneClassSVM), the number of
-        # models optimized by libSVM is always one, so `n_iter_` stores an
+        # Since, in the case of SVC and NuSVC, the number of models optimized
+        # by libSVM could be greater than one (depending on the input),
+        # `n_iter_` stores an ndarray.
+        # For the other sub-classes (SVR, NuSVR, and OneClassSVM), the number
+        # of models optimized by libSVM is always one, so `n_iter_` stores an
         # integer.
         if self._impl in ["c_svc", "nu_svc"]:
             self.n_iter_ = self._num_iter
         else:
             self.n_iter_ = self._num_iter.item()
-
-        return self
 
     def _validate_targets(self, y):
         """Validation of y and class_weight.
