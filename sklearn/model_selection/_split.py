@@ -773,7 +773,7 @@ class StratifiedKFold(_BaseKFold):
     def __init__(self, n_splits=5, *, shuffle=False, random_state=None):
         super().__init__(n_splits=n_splits, shuffle=shuffle, random_state=random_state)
 
-    def _make_test_folds(self, X, y=None):
+    def _make_test_folds(self, X=None, y=None):
         rng = check_random_state(self.random_state)
         # XXX: as of now, cross-validation splitters only operate in NumPy-land
         # without attempting to leverage array API namespace features. However
@@ -843,12 +843,12 @@ class StratifiedKFold(_BaseKFold):
             test_folds[y_encoded == k] = folds_for_class
         return test_folds
 
-    def _iter_test_masks(self, X, y=None, groups=None):
+    def _iter_test_masks(self, X=None, y=None, groups=None):
         test_folds = self._make_test_folds(X, y)
         for i in range(self.n_splits):
             yield test_folds == i
 
-    def split(self, X, y, groups=None):
+    def split(self, X, y=None, groups=None):
         """Generate indices to split data into training and test set.
 
         Parameters
@@ -861,7 +861,7 @@ class StratifiedKFold(_BaseKFold):
             hence ``np.zeros(n_samples)`` may be used as a placeholder for
             ``X`` instead of actual training data.
 
-        y : array-like of shape (n_samples,)
+        y : array-like of shape (n_samples,), default=None
             The target variable for supervised learning problems.
             Stratification is done based on the y labels.
 
@@ -2444,6 +2444,20 @@ class StratifiedShuffleSplit(BaseShuffleSplit):
         return super().split(X, y, groups)
 
 
+def _validate_single_size(size, size_type, n_samples, size_name):
+    """Validate that a single train/test size parameter is in a valid range."""
+    if (size_type == "i" and (size >= n_samples or size <= 0)) or (
+        size_type == "f" and (size <= 0 or size >= 1)
+    ):
+        raise ValueError(
+            "{}={} should be either positive and smaller"
+            " than the number of samples {} or a float in the "
+            "(0, 1) range".format(size_name, size, n_samples)
+        )
+    if size is not None and size_type not in ("i", "f"):
+        raise ValueError("Invalid value for {}: {}".format(size_name, size))
+
+
 def _validate_shuffle_split(n_samples, test_size, train_size, default_test_size=None):
     """
     Validation helper to check if the train/test sizes are meaningful w.r.t. the
@@ -2455,28 +2469,8 @@ def _validate_shuffle_split(n_samples, test_size, train_size, default_test_size=
     test_size_type = np.asarray(test_size).dtype.kind
     train_size_type = np.asarray(train_size).dtype.kind
 
-    if (test_size_type == "i" and (test_size >= n_samples or test_size <= 0)) or (
-        test_size_type == "f" and (test_size <= 0 or test_size >= 1)
-    ):
-        raise ValueError(
-            "test_size={0} should be either positive and smaller"
-            " than the number of samples {1} or a float in the "
-            "(0, 1) range".format(test_size, n_samples)
-        )
-
-    if (train_size_type == "i" and (train_size >= n_samples or train_size <= 0)) or (
-        train_size_type == "f" and (train_size <= 0 or train_size >= 1)
-    ):
-        raise ValueError(
-            "train_size={0} should be either positive and smaller"
-            " than the number of samples {1} or a float in the "
-            "(0, 1) range".format(train_size, n_samples)
-        )
-
-    if train_size is not None and train_size_type not in ("i", "f"):
-        raise ValueError("Invalid value for train_size: {}".format(train_size))
-    if test_size is not None and test_size_type not in ("i", "f"):
-        raise ValueError("Invalid value for test_size: {}".format(test_size))
+    _validate_single_size(test_size, test_size_type, n_samples, "test_size")
+    _validate_single_size(train_size, train_size_type, n_samples, "train_size")
 
     if train_size_type == "f" and test_size_type == "f" and train_size + test_size > 1:
         raise ValueError(
