@@ -163,6 +163,19 @@ def density(w):
     return d
 
 
+def _check_sparse_matmul_to_dense(a, b, dense_output):
+    """Check if sparse_matmul_to_dense can be used for a @ b."""
+    return (
+        dense_output
+        and a.ndim == 2
+        and b.ndim == 2
+        and (sparse.issparse(a) and a.format in ("csc", "csr"))
+        and (sparse.issparse(b) and b.format in ("csc", "csr"))
+        and a.dtype in (np.float32, np.float64)
+        and b.dtype in (np.float32, np.float64)
+    )
+
+
 def safe_sparse_dot(a, b, *, dense_output=False):
     """Dot product that handle the sparse matrix case correctly.
 
@@ -214,15 +227,7 @@ def safe_sparse_dot(a, b, *, dense_output=False):
             # if b is >= 2-dim then the second to last axis is taken.
             b_axis = -1 if b.ndim == 1 else -2
             ret = xp.tensordot(a, b, axes=[-1, b_axis])
-    elif (
-        dense_output
-        and a.ndim == 2
-        and b.ndim == 2
-        and (sparse.issparse(a) and a.format in ("csc", "csr"))
-        and (sparse.issparse(b) and b.format in ("csc", "csr"))
-        and a.dtype in (np.float32, np.float64)
-        and b.dtype in (np.float32, np.float64)
-    ):
+    elif _check_sparse_matmul_to_dense(a, b, dense_output):
         # Use dedicated fast method for dense_C = sparse_A @ sparse_B
         return sparse_matmul_to_dense(a, b)
     else:
@@ -310,6 +315,31 @@ def randomized_range_finder(
     )
 
 
+def _resolve_power_iteration_normalizer(
+    power_iteration_normalizer, n_iter, is_array_api_compliant
+):
+    """Resolve the power iteration normalizer, validating Array API constraints."""
+    if power_iteration_normalizer == "auto":
+        if n_iter <= 2:
+            return "none"
+        elif is_array_api_compliant:
+            # XXX: https://github.com/data-apis/array-api/issues/627
+            warnings.warn(
+                "Array API does not support LU factorization, falling back to QR"
+                " instead. Set `power_iteration_normalizer='QR'` explicitly to"
+                " silence this warning."
+            )
+            return "QR"
+        else:
+            return "LU"
+    elif power_iteration_normalizer == "LU" and is_array_api_compliant:
+        raise ValueError(
+            "Array API does not support LU factorization. Set "
+            "`power_iteration_normalizer='QR'` instead."
+        )
+    return power_iteration_normalizer
+
+
 def _randomized_range_finder(
     A, *, size, n_iter, power_iteration_normalizer="auto", random_state=None
 ):
@@ -338,25 +368,9 @@ def _randomized_range_finder(
     else:
         Q = xp.asarray(Q)
 
-    # Deal with "auto" mode
-    if power_iteration_normalizer == "auto":
-        if n_iter <= 2:
-            power_iteration_normalizer = "none"
-        elif is_array_api_compliant:
-            # XXX: https://github.com/data-apis/array-api/issues/627
-            warnings.warn(
-                "Array API does not support LU factorization, falling back to QR"
-                " instead. Set `power_iteration_normalizer='QR'` explicitly to silence"
-                " this warning."
-            )
-            power_iteration_normalizer = "QR"
-        else:
-            power_iteration_normalizer = "LU"
-    elif power_iteration_normalizer == "LU" and is_array_api_compliant:
-        raise ValueError(
-            "Array API does not support LU factorization. Set "
-            "`power_iteration_normalizer='QR'` instead."
-        )
+    power_iteration_normalizer = _resolve_power_iteration_normalizer(
+        power_iteration_normalizer, n_iter, is_array_api_compliant
+    )
 
     if is_array_api_compliant:
         qr_normalizer = partial(xp.linalg.qr, mode="reduced")
