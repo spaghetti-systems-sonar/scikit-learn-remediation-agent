@@ -399,6 +399,18 @@ def _update_coordinate_descent(X, W, Ht, l1_reg, l2_reg, shuffle, random_state):
     return _update_cdnmf_fast(W, HHt, XHt, permutation)
 
 
+def _cd_check_convergence(violation, violation_init, tol, n_iter, verbose):
+    """Check convergence and optionally print status for coordinate descent."""
+    if verbose:
+        print("violation:", violation / violation_init)
+
+    if violation / violation_init <= tol:
+        if verbose:
+            print("Converged at iteration", n_iter + 1)
+        return True
+    return False
+
+
 def _fit_coordinate_descent(
     X,
     W,
@@ -510,12 +522,7 @@ def _fit_coordinate_descent(
         if violation_init == 0:
             break
 
-        if verbose:
-            print("violation:", violation / violation_init)
-
-        if violation / violation_init <= tol:
-            if verbose:
-                print("Converged at iteration", n_iter + 1)
+        if _cd_check_convergence(violation, violation_init, tol, n_iter, verbose):
             break
 
     return W, Ht.T, n_iter

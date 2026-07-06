@@ -281,6 +281,19 @@ def _unquote(v):
         return v
 
 
+def _parse_sparse_values(s):
+    '''(INTERNAL) Parse a sparse ARFF data line into a dict of values'''
+    try:
+        return {int(k): _unquote(v)
+                for k, v in _RE_SPARSE_KEY_VALUES.findall(s)}
+    except ValueError:
+        # an ARFF syntax error in sparse data
+        for match in _RE_SPARSE_KEY_VALUES.finditer(s):
+            if not match.group(1):
+                raise BadLayout('Error parsing %r' % match.group())
+        raise BadLayout('Unknown parsing error')
+
+
 def _parse_values(s):
     '''(INTERNAL) Split a line into a list of values'''
     if not _RE_NONTRIVIAL_DATA.search(s):
@@ -294,21 +307,12 @@ def _parse_values(s):
     if not any(errors):
         return [_unquote(v) for v in values]
     if _RE_SPARSE_LINE.match(s):
-        try:
-            return {int(k): _unquote(v)
-                    for k, v in _RE_SPARSE_KEY_VALUES.findall(s)}
-        except ValueError:
-            # an ARFF syntax error in sparse data
-            for match in _RE_SPARSE_KEY_VALUES.finditer(s):
-                if not match.group(1):
-                    raise BadLayout('Error parsing %r' % match.group())
-            raise BadLayout('Unknown parsing error')
-    else:
-        # an ARFF syntax error
-        for match in _RE_DENSE_VALUES.finditer(s):
-            if match.group(2):
-                raise BadLayout('Error parsing %r' % match.group())
-        raise BadLayout('Unknown parsing error')
+        return _parse_sparse_values(s)
+    # an ARFF syntax error
+    for match in _RE_DENSE_VALUES.finditer(s):
+        if match.group(2):
+            raise BadLayout('Error parsing %r' % match.group())
+    raise BadLayout('Unknown parsing error')
 
 
 DENSE = 0     # Constant value representing a dense matrix
