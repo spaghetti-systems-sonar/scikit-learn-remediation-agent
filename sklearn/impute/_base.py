@@ -479,52 +479,61 @@ class SimpleImputer(_BaseImputer):
         statistics = np.empty(X.shape[1])
 
         if strategy == "constant":
-            # for constant strategy, self.statistics_ is used to store
-            # fill_value in each column, or np.nan for columns to drop
-            statistics.fill(fill_value)
-
-            if not self.keep_empty_features:
-                if SCIPY_VERSION_BELOW_1_12:
-                    for i in range(missing_mask.shape[1]):
-                        if all(missing_mask[:, [i]].data):
-                            statistics[i] = np.nan
-                else:
-                    for i in range(missing_mask.shape[1]):
-                        if all(missing_mask[:, i].data):
-                            statistics[i] = np.nan
-
+            self._sparse_fit_constant(statistics, missing_mask, fill_value)
         else:
             for i in range(X.shape[1]):
-                column = X.data[X.indptr[i] : X.indptr[i + 1]]
-                mask_column = mask_data[X.indptr[i] : X.indptr[i + 1]]
-                column = column[~mask_column]
-
-                # combine explicit and implicit zeros
-                mask_zeros = _get_mask(column, 0)
-                column = column[~mask_zeros]
-                n_explicit_zeros = mask_zeros.sum()
-                n_zeros = n_implicit_zeros[i] + n_explicit_zeros
-
-                if len(column) == 0 and self.keep_empty_features:
-                    # in case we want to keep columns with only missing values.
-                    statistics[i] = 0
-                else:
-                    if strategy == "mean":
-                        s = column.size + n_zeros
-                        statistics[i] = np.nan if s == 0 else column.sum() / s
-
-                    elif strategy == "median":
-                        statistics[i] = _get_median(column, n_zeros)
-
-                    elif strategy == "most_frequent":
-                        statistics[i] = _most_frequent(column, 0, n_zeros)
-
-                    elif isinstance(strategy, Callable):
-                        statistics[i] = self.strategy(column)
+                statistics[i] = self._sparse_fit_column_statistic(
+                    X, mask_data, n_implicit_zeros, strategy, i
+                )
 
         super()._fit_indicator(missing_mask)
 
         return statistics
+
+    def _sparse_fit_constant(self, statistics, missing_mask, fill_value):
+        """Fill statistics for the constant strategy on sparse data."""
+        # for constant strategy, self.statistics_ is used to store
+        # fill_value in each column, or np.nan for columns to drop
+        statistics.fill(fill_value)
+
+        if self.keep_empty_features:
+            return
+
+        for i in range(missing_mask.shape[1]):
+            if SCIPY_VERSION_BELOW_1_12:
+                col_data = missing_mask[:, [i]].data
+            else:
+                col_data = missing_mask[:, i].data
+            if all(col_data):
+                statistics[i] = np.nan
+
+    def _sparse_fit_column_statistic(
+        self, X, mask_data, n_implicit_zeros, strategy, i
+    ):
+        """Compute the statistic for a single column on sparse data."""
+        column = X.data[X.indptr[i] : X.indptr[i + 1]]
+        mask_column = mask_data[X.indptr[i] : X.indptr[i + 1]]
+        column = column[~mask_column]
+
+        # combine explicit and implicit zeros
+        mask_zeros = _get_mask(column, 0)
+        column = column[~mask_zeros]
+        n_explicit_zeros = mask_zeros.sum()
+        n_zeros = n_implicit_zeros[i] + n_explicit_zeros
+
+        if len(column) == 0 and self.keep_empty_features:
+            # in case we want to keep columns with only missing values.
+            return 0
+
+        if strategy == "mean":
+            s = column.size + n_zeros
+            return np.nan if s == 0 else column.sum() / s
+        elif strategy == "median":
+            return _get_median(column, n_zeros)
+        elif strategy == "most_frequent":
+            return _most_frequent(column, 0, n_zeros)
+        elif isinstance(strategy, Callable):
+            return self.strategy(column)
 
     def _dense_fit(self, X, strategy, missing_values, fill_value):
         """Fit the transformer on dense data."""
