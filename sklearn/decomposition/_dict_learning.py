@@ -548,28 +548,8 @@ def _update_dict(
         print(f"{n_unused} unused atoms resampled.")
 
 
-def _dict_learning(
-    X,
-    n_components,
-    *,
-    alpha,
-    max_iter,
-    tol,
-    method,
-    n_jobs,
-    dict_init,
-    code_init,
-    callback,
-    verbose,
-    random_state,
-    return_n_iter,
-    positive_dict,
-    positive_code,
-    method_max_iter,
-):
-    """Main dictionary learning algorithm"""
-    t0 = time.time()
-    # Init the code and the dictionary with SVD of Y
+def _init_code_and_dictionary(X, n_components, code_init, dict_init):
+    """Initialize code and dictionary for dictionary learning."""
     if code_init is not None and dict_init is not None:
         code = np.array(code_init, order="F")
         # Don't copy V, it will happen below
@@ -592,6 +572,51 @@ def _dict_learning(
     # Fortran-order dict better suited for the sparse coding which is the
     # bottleneck of this algorithm.
     dictionary = np.asfortranarray(dictionary)
+    return code, dictionary
+
+
+def _check_convergence(errors, ii, tol, verbose):
+    """Check if dictionary learning has converged.
+
+    Returns True if convergence is reached, False otherwise.
+    """
+    if ii > 0:
+        dE = errors[-2] - errors[-1]
+        if dE < tol * errors[-1]:
+            if verbose == 1:
+                # A line return
+                print("")
+            elif verbose:
+                print("--- Convergence reached after %d iterations" % ii)
+            return True
+    return False
+
+
+def _dict_learning(
+    X,
+    n_components,
+    *,
+    alpha,
+    max_iter,
+    tol,
+    method,
+    n_jobs,
+    dict_init,
+    code_init,
+    callback,
+    verbose,
+    random_state,
+    return_n_iter,
+    positive_dict,
+    positive_code,
+    method_max_iter,
+):
+    """Main dictionary learning algorithm"""
+    t0 = time.time()
+    # Init the code and the dictionary with SVD of Y
+    code, dictionary = _init_code_and_dictionary(
+        X, n_components, code_init, dict_init
+    )
 
     errors = []
     current_cost = np.nan
@@ -642,16 +667,8 @@ def _dict_learning(
         )
         errors.append(current_cost)
 
-        if ii > 0:
-            dE = errors[-2] - errors[-1]
-            # assert(dE >= -tol * errors[-1])
-            if dE < tol * errors[-1]:
-                if verbose == 1:
-                    # A line return
-                    print("")
-                elif verbose:
-                    print("--- Convergence reached after %d iterations" % ii)
-                break
+        if _check_convergence(errors, ii, tol, verbose):
+            break
         if ii % 5 == 0 and callback is not None:
             callback(locals())
 
@@ -2135,6 +2152,17 @@ class MiniBatchDictionaryLearning(_BaseSparseCoding, BaseEstimator):
 
         return batch_cost
 
+    def _check_dict_convergence(self, new_dict, old_dict, step, n_steps):
+        """Check convergence based on small change of dictionary."""
+        dict_diff = linalg.norm(new_dict - old_dict) / self._n_components
+        if self.tol > 0 and dict_diff <= self.tol:
+            if self.verbose:
+                print(
+                    f"Converged (small dictionary change) at step {step}/{n_steps}"
+                )
+            return True
+        return False
+
     def _check_convergence(
         self, X, batch_cost, new_dict, old_dict, n_samples, step, n_steps
     ):
@@ -2176,10 +2204,7 @@ class MiniBatchDictionaryLearning(_BaseSparseCoding, BaseEstimator):
             )
 
         # Early stopping based on change of dictionary
-        dict_diff = linalg.norm(new_dict - old_dict) / self._n_components
-        if self.tol > 0 and dict_diff <= self.tol:
-            if self.verbose:
-                print(f"Converged (small dictionary change) at step {step}/{n_steps}")
+        if self._check_dict_convergence(new_dict, old_dict, step, n_steps):
             return True
 
         # Early stopping heuristic due to lack of improvement on smoothed
