@@ -265,19 +265,7 @@ class _BinMapper(TransformerMixin, BaseEstimator):
         if known_categories is None:
             known_categories = [None] * n_features
 
-        # validate is_categorical and known_categories parameters
-        for f_idx in range(n_features):
-            is_categorical = self.is_categorical_[f_idx]
-            known_cats = known_categories[f_idx]
-            if is_categorical and known_cats is None:
-                raise ValueError(
-                    f"Known categories for feature {f_idx} must be provided."
-                )
-            if not is_categorical and known_cats is not None:
-                raise ValueError(
-                    f"Feature {f_idx} isn't marked as a categorical feature, "
-                    "but categories were passed."
-                )
+        self._validate_categories(n_features, known_categories)
 
         self.missing_values_bin_idx_ = self.n_bins - 1
 
@@ -308,6 +296,21 @@ class _BinMapper(TransformerMixin, BaseEstimator):
 
         self.n_bins_non_missing_ = np.array(n_bins_non_missing, dtype=np.uint32)
         return self
+
+    def _validate_categories(self, n_features, known_categories):
+        """Validate is_categorical and known_categories parameters."""
+        for f_idx in range(n_features):
+            is_categorical = self.is_categorical_[f_idx]
+            known_cats = known_categories[f_idx]
+            if is_categorical and known_cats is None:
+                raise ValueError(
+                    f"Known categories for feature {f_idx} must be provided."
+                )
+            if not is_categorical and known_cats is not None:
+                raise ValueError(
+                    f"Feature {f_idx} isn't marked as a categorical feature, "
+                    "but categories were passed."
+                )
 
     def transform(self, X):
         """Bin data X.
