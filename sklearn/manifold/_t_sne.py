@@ -298,6 +298,64 @@ def _kl_divergence_bh(
     return error, grad
 
 
+def _check_convergence(
+    error,
+    grad,
+    i,
+    n_iter_check,
+    n_iter_without_progress,
+    min_grad_norm,
+    best_error,
+    best_iter,
+    duration,
+    verbose,
+):
+    """Check t-SNE convergence and log progress.
+
+    Returns
+    -------
+    should_stop : bool
+        Whether the optimization should stop.
+
+    best_error : float
+        Updated best error.
+
+    best_iter : int
+        Updated best iteration.
+    """
+    grad_norm = linalg.norm(grad)
+
+    if verbose >= 2:
+        print(
+            "[t-SNE] Iteration %d: error = %.7f,"
+            " gradient norm = %.7f"
+            " (%s iterations in %0.3fs)"
+            % (i + 1, error, grad_norm, n_iter_check, duration)
+        )
+
+    if error < best_error:
+        best_error = error
+        best_iter = i
+    elif i - best_iter > n_iter_without_progress:
+        if verbose >= 2:
+            print(
+                "[t-SNE] Iteration %d: did not make any progress "
+                "during the last %d episodes. Finished."
+                % (i + 1, n_iter_without_progress)
+            )
+        return True, best_error, best_iter
+
+    if grad_norm <= min_grad_norm:
+        if verbose >= 2:
+            print(
+                "[t-SNE] Iteration %d: gradient norm %f. Finished."
+                % (i + 1, grad_norm)
+            )
+        return True, best_error, best_iter
+
+    return False, best_error, best_iter
+
+
 def _gradient_descent(
     objective,
     p0,
@@ -412,33 +470,19 @@ def _gradient_descent(
             toc = time()
             duration = toc - tic
             tic = toc
-            grad_norm = linalg.norm(grad)
-
-            if verbose >= 2:
-                print(
-                    "[t-SNE] Iteration %d: error = %.7f,"
-                    " gradient norm = %.7f"
-                    " (%s iterations in %0.3fs)"
-                    % (i + 1, error, grad_norm, n_iter_check, duration)
-                )
-
-            if error < best_error:
-                best_error = error
-                best_iter = i
-            elif i - best_iter > n_iter_without_progress:
-                if verbose >= 2:
-                    print(
-                        "[t-SNE] Iteration %d: did not make any progress "
-                        "during the last %d episodes. Finished."
-                        % (i + 1, n_iter_without_progress)
-                    )
-                break
-            if grad_norm <= min_grad_norm:
-                if verbose >= 2:
-                    print(
-                        "[t-SNE] Iteration %d: gradient norm %f. Finished."
-                        % (i + 1, grad_norm)
-                    )
+            should_stop, best_error, best_iter = _check_convergence(
+                error,
+                grad,
+                i,
+                n_iter_check,
+                n_iter_without_progress,
+                min_grad_norm,
+                best_error,
+                best_iter,
+                duration,
+                verbose,
+            )
+            if should_stop:
                 break
 
     return p, error, i

@@ -292,25 +292,9 @@ class IncrementalPCA(_BasePCA):
         if first_pass:
             self.components_ = None
 
-        if self.n_components is None:
-            if self.components_ is None:
-                self.n_components_ = min(n_samples, n_features)
-            else:
-                self.n_components_ = self.components_.shape[0]
-        elif not self.n_components <= n_features:
-            raise ValueError(
-                "n_components=%r invalid for n_features=%d, need "
-                "more rows than columns for IncrementalPCA "
-                "processing" % (self.n_components, n_features)
-            )
-        elif self.n_components > n_samples and first_pass:
-            raise ValueError(
-                f"n_components={self.n_components} must be less or equal to "
-                f"the batch number of samples {n_samples} for the first "
-                "partial_fit call."
-            )
-        else:
-            self.n_components_ = self.n_components
+        self.n_components_ = self._validate_n_components(
+            n_samples, n_features, first_pass
+        )
 
         if (self.components_ is not None) and (
             self.components_.shape[0] != self.n_components_
@@ -374,6 +358,28 @@ class IncrementalPCA(_BasePCA):
         else:
             self.noise_variance_ = 0.0
         return self
+
+    def _validate_n_components(self, n_samples, n_features, first_pass):
+        """Validate and return the number of components."""
+        if self.n_components is None:
+            if self.components_ is None:
+                return min(n_samples, n_features)
+            else:
+                return self.components_.shape[0]
+        elif not self.n_components <= n_features:
+            raise ValueError(
+                "n_components=%r invalid for n_features=%d, need "
+                "more rows than columns for IncrementalPCA "
+                "processing" % (self.n_components, n_features)
+            )
+        elif self.n_components > n_samples and first_pass:
+            raise ValueError(
+                f"n_components={self.n_components} must be less or equal to "
+                f"the batch number of samples {n_samples} for the first "
+                "partial_fit call."
+            )
+        else:
+            return self.n_components
 
     def transform(self, X):
         """Apply dimensionality reduction to X.

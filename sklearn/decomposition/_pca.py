@@ -522,24 +522,29 @@ class PCA(_BasePCA):
             n_components = self.n_components
 
         if self._fit_svd_solver == "auto":
-            # Tall and skinny problems are best handled by precomputing the
-            # covariance matrix.
-            if X.shape[1] <= 1_000 and X.shape[0] >= 10 * X.shape[1]:
-                self._fit_svd_solver = "covariance_eigh"
-            # Small problem or n_components == 'mle', just call full PCA
-            elif max(X.shape) <= 500 or n_components == "mle":
-                self._fit_svd_solver = "full"
-            elif 1 <= n_components < 0.8 * min(X.shape):
-                self._fit_svd_solver = "randomized"
-            # This is also the case of n_components in (0, 1)
-            else:
-                self._fit_svd_solver = "full"
+            self._fit_svd_solver = self._resolve_auto_svd_solver(
+                X, n_components
+            )
 
         # Call different fits for either full or truncated SVD
         if self._fit_svd_solver in ("full", "covariance_eigh"):
             return self._fit_full(X, n_components, xp, is_array_api_compliant)
         elif self._fit_svd_solver in ["arpack", "randomized"]:
             return self._fit_truncated(X, n_components, xp)
+
+    def _resolve_auto_svd_solver(self, X, n_components):
+        """Determine the SVD solver to use when svd_solver='auto'."""
+        # Tall and skinny problems are best handled by precomputing the
+        # covariance matrix.
+        if X.shape[1] <= 1_000 and X.shape[0] >= 10 * X.shape[1]:
+            return "covariance_eigh"
+        # Small problem or n_components == 'mle', just call full PCA
+        if max(X.shape) <= 500 or n_components == "mle":
+            return "full"
+        if 1 <= n_components < 0.8 * min(X.shape):
+            return "randomized"
+        # This is also the case of n_components in (0, 1)
+        return "full"
 
     def _fit_full(self, X, n_components, xp, is_array_api_compliant):
         """Fit the model by computing full SVD on X."""

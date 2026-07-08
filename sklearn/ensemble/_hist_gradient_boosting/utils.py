@@ -7,36 +7,9 @@ from sklearn.base import is_classifier
 from sklearn.ensemble._hist_gradient_boosting.binning import _BinMapper
 
 
-def get_equivalent_estimator(estimator, lib="lightgbm", n_classes=None):
-    """Return an unfitted estimator from another lib with matching hyperparams.
-
-    This utility function takes care of renaming the sklearn parameters into
-    their LightGBM, XGBoost or CatBoost equivalent parameters.
-
-    # unmapped XGB parameters:
-    # - min_samples_leaf
-    # - min_data_in_bin
-    # - min_split_gain (there is min_split_loss though?)
-
-    # unmapped Catboost parameters:
-    # max_leaves
-    # min_*
-    """
-
-    if lib not in ("lightgbm", "xgboost", "catboost"):
-        raise ValueError(
-            "accepted libs are lightgbm, xgboost, and catboost.  got {}".format(lib)
-        )
-
-    sklearn_params = estimator.get_params()
-
-    if sklearn_params["loss"] == "auto":
-        raise ValueError(
-            "auto loss is not accepted. We need to know if "
-            "the problem is binary or multiclass classification."
-        )
-    if sklearn_params["early_stopping"]:
-        raise NotImplementedError("Early stopping should be deactivated.")
+def _get_lightgbm_estimator(sklearn_params, n_classes, is_clf):
+    """Return a LightGBM estimator with matching hyperparams."""
+    from lightgbm import LGBMClassifier, LGBMRegressor
 
     lightgbm_loss_mapping = {
         "squared_error": "regression_l2",
@@ -69,14 +42,21 @@ def get_equivalent_estimator(estimator, lib="lightgbm", n_classes=None):
     if sklearn_params["loss"] == "log_loss" and n_classes > 2:
         # LightGBM multiplies hessians by 2 in multiclass loss.
         lightgbm_params["min_sum_hessian_in_leaf"] *= 2
-        # LightGBM 3.0 introduced a different scaling of the hessian for the multiclass
-        # case.
-        # It is equivalent of scaling the learning rate.
+        # LightGBM 3.0 introduced a different scaling of the hessian for the
+        # multiclass case. It is equivalent of scaling the learning rate.
         # See https://github.com/lightgbm-org/LightGBM/pull/3256.
         if n_classes is not None:
             lightgbm_params["learning_rate"] *= n_classes / (n_classes - 1)
 
-    # XGB
+    if is_clf:
+        return LGBMClassifier(**lightgbm_params)
+    return LGBMRegressor(**lightgbm_params)
+
+
+def _get_xgboost_estimator(sklearn_params, n_classes, is_clf):
+    """Return an XGBoost estimator with matching hyperparams."""
+    from xgboost import XGBClassifier, XGBRegressor
+
     xgboost_loss_mapping = {
         "squared_error": "reg:linear",
         "absolute_error": "LEAST_ABSOLUTE_DEV_NOT_SUPPORTED",
@@ -102,7 +82,15 @@ def get_equivalent_estimator(estimator, lib="lightgbm", n_classes=None):
         "colsample_bynode": sklearn_params["max_features"],
     }
 
-    # Catboost
+    if is_clf:
+        return XGBClassifier(**xgboost_params)
+    return XGBRegressor(**xgboost_params)
+
+
+def _get_catboost_estimator(sklearn_params, n_classes, is_clf):
+    """Return a CatBoost estimator with matching hyperparams."""
+    from catboost import CatBoostClassifier, CatBoostRegressor
+
     catboost_loss_mapping = {
         "squared_error": "RMSE",
         # catboost does not support MAE when leaf_estimation_method is Newton
@@ -124,26 +112,47 @@ def get_equivalent_estimator(estimator, lib="lightgbm", n_classes=None):
         "verbose": bool(sklearn_params["verbose"]),
     }
 
+    if is_clf:
+        return CatBoostClassifier(**catboost_params)
+    return CatBoostRegressor(**catboost_params)
+
+
+def get_equivalent_estimator(estimator, lib="lightgbm", n_classes=None):
+    """Return an unfitted estimator from another lib with matching hyperparams.
+
+    This utility function takes care of renaming the sklearn parameters into
+    their LightGBM, XGBoost or CatBoost equivalent parameters.
+
+    # unmapped XGB parameters:
+    # - min_samples_leaf
+    # - min_data_in_bin
+    # - min_split_gain (there is min_split_loss though?)
+
+    # unmapped Catboost parameters:
+    # max_leaves
+    # min_*
+    """
+
+    if lib not in ("lightgbm", "xgboost", "catboost"):
+        raise ValueError(
+            "accepted libs are lightgbm, xgboost, and catboost.  got {}".format(lib)
+        )
+
+    sklearn_params = estimator.get_params()
+
+    if sklearn_params["loss"] == "auto":
+        raise ValueError(
+            "auto loss is not accepted. We need to know if "
+            "the problem is binary or multiclass classification."
+        )
+    if sklearn_params["early_stopping"]:
+        raise NotImplementedError("Early stopping should be deactivated.")
+
+    is_clf = is_classifier(estimator)
+
     if lib == "lightgbm":
-        from lightgbm import LGBMClassifier, LGBMRegressor
-
-        if is_classifier(estimator):
-            return LGBMClassifier(**lightgbm_params)
-        else:
-            return LGBMRegressor(**lightgbm_params)
-
+        return _get_lightgbm_estimator(sklearn_params, n_classes, is_clf)
     elif lib == "xgboost":
-        from xgboost import XGBClassifier, XGBRegressor
-
-        if is_classifier(estimator):
-            return XGBClassifier(**xgboost_params)
-        else:
-            return XGBRegressor(**xgboost_params)
-
+        return _get_xgboost_estimator(sklearn_params, n_classes, is_clf)
     else:
-        from catboost import CatBoostClassifier, CatBoostRegressor
-
-        if is_classifier(estimator):
-            return CatBoostClassifier(**catboost_params)
-        else:
-            return CatBoostRegressor(**catboost_params)
+        return _get_catboost_estimator(sklearn_params, n_classes, is_clf)
