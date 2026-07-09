@@ -59,6 +59,8 @@ __all__ = [
     "pickle_unflatten",
 ]
 
+_COMPLEX_FLOATING = "complex floating"
+
 
 def in1d(
     x1: Array,
@@ -136,7 +138,7 @@ def mean(
     if xp is None:
         xp = array_namespace(x)
 
-    if xp.isdtype(x.dtype, "complex floating"):
+    if xp.isdtype(x.dtype, _COMPLEX_FLOATING):
         x_real = xp.real(x)
         x_imag = xp.imag(x)
         mean_real = xp.mean(x_real, axis=axis, keepdims=keepdims)
@@ -206,9 +208,9 @@ def asarrays(
         # https://data-apis.org/array-api/draft/API_specification/type_promotion.html#mixing-arrays-with-python-scalars
         same_dtype = {
             bool: "bool",
-            int: ("integral", "real floating", "complex floating"),
-            float: ("real floating", "complex floating"),
-            complex: "complex floating",
+            int: ("integral", "real floating", _COMPLEX_FLOATING),
+            float: ("real floating", _COMPLEX_FLOATING),
+            complex: _COMPLEX_FLOATING,
         }
         kind = same_dtype[type(cast(complex, b))]
         if xp.isdtype(a.dtype, kind):
@@ -301,6 +303,9 @@ def meta_namespace(
     return array_namespace(*metas)
 
 
+_BOOLEAN_INDEXING = "boolean indexing"
+
+
 def capabilities(
     xp: ModuleType, *, device: Device | None = None
 ) -> dict[str, int | None]:
@@ -323,25 +328,21 @@ def capabilities(
         Capabilities of the namespace.
     """
     out = xp.__array_namespace_info__().capabilities()
-    if is_pydata_sparse_namespace(xp):
-        if out["boolean indexing"]:
+    if is_pydata_sparse_namespace(xp) or is_jax_namespace(xp):
+        if out[_BOOLEAN_INDEXING]:
             # FIXME https://github.com/pydata/sparse/issues/876
             # boolean indexing is supported, but not when the index is a sparse array.
             # boolean indexing by list or numpy array is not part of the Array API.
-            out = out.copy()
-            out["boolean indexing"] = False
-    elif is_jax_namespace(xp):
-        if out["boolean indexing"]:  # pragma: no cover
             # Backwards compatibility with jax <0.6.0
             # https://github.com/jax-ml/jax/issues/27418
             out = out.copy()
-            out["boolean indexing"] = False
+            out[_BOOLEAN_INDEXING] = False
     elif is_torch_namespace(xp):
         # FIXME https://github.com/data-apis/array-api/issues/945
         device = xp.get_default_device() if device is None else xp.device(device)
         if device.type == "meta":  # type: ignore[union-attr]  # pyright: ignore[reportAttributeAccessIssue,reportOptionalMemberAccess]
             out = out.copy()
-            out["boolean indexing"] = False
+            out[_BOOLEAN_INDEXING] = False
             out["data-dependent shapes"] = False
 
     return out
