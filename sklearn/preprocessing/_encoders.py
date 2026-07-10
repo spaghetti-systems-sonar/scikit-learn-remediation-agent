@@ -834,6 +834,90 @@ class OneHotEncoder(_BaseEncoder):
             )
         return default_to_infrequent[drop_idx]
 
+    def _compute_drop_idx_if_binary(self):
+        """Compute drop indices for the 'if_binary' drop strategy."""
+        n_features_out_no_drop = [len(cat) for cat in self.categories_]
+        if self._infrequent_enabled:
+            for i, infreq_idx in enumerate(self._infrequent_indices):
+                if infreq_idx is None:
+                    continue
+                n_features_out_no_drop[i] -= infreq_idx.size - 1
+
+        return np.array(
+            [
+                0 if n_features_out == 2 else None
+                for n_features_out in n_features_out_no_drop
+            ],
+            dtype=object,
+        )
+
+    def _compute_drop_idx_from_array(self):
+        """Compute drop indices when `self.drop` is an array-like."""
+        drop_array = np.asarray(self.drop, dtype=object)
+        droplen = len(drop_array)
+
+        if droplen != len(self.categories_):
+            msg = (
+                "`drop` should have length equal to the number "
+                "of features ({}), got {}"
+            )
+            raise ValueError(msg.format(len(self.categories_), droplen))
+
+        missing_drops = []
+        drop_indices = []
+        for feature_idx, (drop_val, cat_list) in enumerate(
+            zip(drop_array, self.categories_)
+        ):
+            if not is_scalar_nan(drop_val):
+                drop_idx = np.where(cat_list == drop_val)[0]
+                if drop_idx.size:  # found drop idx
+                    drop_indices.append(
+                        self._map_drop_idx_to_infrequent(feature_idx, drop_idx[0])
+                    )
+                else:
+                    missing_drops.append((feature_idx, drop_val))
+                continue
+
+            # drop_val is nan, find nan in categories manually
+            if is_scalar_nan(cat_list[-1]):
+                drop_indices.append(
+                    self._map_drop_idx_to_infrequent(feature_idx, cat_list.size - 1)
+                )
+            else:  # nan is missing
+                missing_drops.append((feature_idx, drop_val))
+
+        if any(missing_drops):
+            msg = (
+                "The following categories were supposed to be "
+                "dropped, but were not found in the training "
+                "data.\n{}".format(
+                    "\n".join(
+                        [
+                            "Category: {}, Feature: {}".format(c, v)
+                            for c, v in missing_drops
+                        ]
+                    )
+                )
+            )
+            raise ValueError(msg)
+        return np.array(drop_indices, dtype=object)
+
+    def _remap_drop_idx_to_original(self, drop_idx_after_grouping):
+        """Remap drop indices after grouping back to original category indices."""
+        drop_idx_ = []
+        for feature_idx, drop_idx in enumerate(drop_idx_after_grouping):
+            default_to_infrequent = self._default_to_infrequent_mappings[
+                feature_idx
+            ]
+            if drop_idx is None or default_to_infrequent is None:
+                orig_drop_idx = drop_idx
+            else:
+                orig_drop_idx = np.flatnonzero(default_to_infrequent == drop_idx)[0]
+
+            drop_idx_.append(orig_drop_idx)
+
+        return np.asarray(drop_idx_, dtype=object)
+
     def _set_drop_idx(self):
         """Compute the drop indices associated with `self.categories_`.
 
@@ -864,69 +948,9 @@ class OneHotEncoder(_BaseEncoder):
             if self.drop == "first":
                 drop_idx_after_grouping = np.zeros(len(self.categories_), dtype=object)
             elif self.drop == "if_binary":
-                n_features_out_no_drop = [len(cat) for cat in self.categories_]
-                if self._infrequent_enabled:
-                    for i, infreq_idx in enumerate(self._infrequent_indices):
-                        if infreq_idx is None:
-                            continue
-                        n_features_out_no_drop[i] -= infreq_idx.size - 1
-
-                drop_idx_after_grouping = np.array(
-                    [
-                        0 if n_features_out == 2 else None
-                        for n_features_out in n_features_out_no_drop
-                    ],
-                    dtype=object,
-                )
-
+                drop_idx_after_grouping = self._compute_drop_idx_if_binary()
         else:
-            drop_array = np.asarray(self.drop, dtype=object)
-            droplen = len(drop_array)
-
-            if droplen != len(self.categories_):
-                msg = (
-                    "`drop` should have length equal to the number "
-                    "of features ({}), got {}"
-                )
-                raise ValueError(msg.format(len(self.categories_), droplen))
-            missing_drops = []
-            drop_indices = []
-            for feature_idx, (drop_val, cat_list) in enumerate(
-                zip(drop_array, self.categories_)
-            ):
-                if not is_scalar_nan(drop_val):
-                    drop_idx = np.where(cat_list == drop_val)[0]
-                    if drop_idx.size:  # found drop idx
-                        drop_indices.append(
-                            self._map_drop_idx_to_infrequent(feature_idx, drop_idx[0])
-                        )
-                    else:
-                        missing_drops.append((feature_idx, drop_val))
-                    continue
-
-                # drop_val is nan, find nan in categories manually
-                if is_scalar_nan(cat_list[-1]):
-                    drop_indices.append(
-                        self._map_drop_idx_to_infrequent(feature_idx, cat_list.size - 1)
-                    )
-                else:  # nan is missing
-                    missing_drops.append((feature_idx, drop_val))
-
-            if any(missing_drops):
-                msg = (
-                    "The following categories were supposed to be "
-                    "dropped, but were not found in the training "
-                    "data.\n{}".format(
-                        "\n".join(
-                            [
-                                "Category: {}, Feature: {}".format(c, v)
-                                for c, v in missing_drops
-                            ]
-                        )
-                    )
-                )
-                raise ValueError(msg)
-            drop_idx_after_grouping = np.array(drop_indices, dtype=object)
+            drop_idx_after_grouping = self._compute_drop_idx_from_array()
 
         # `_drop_idx_after_grouping` are the categories to drop *after* the infrequent
         # categories are grouped together. If needed, we remap `drop_idx` back
@@ -936,19 +960,7 @@ class OneHotEncoder(_BaseEncoder):
         if not self._infrequent_enabled or drop_idx_after_grouping is None:
             self.drop_idx_ = self._drop_idx_after_grouping
         else:
-            drop_idx_ = []
-            for feature_idx, drop_idx in enumerate(drop_idx_after_grouping):
-                default_to_infrequent = self._default_to_infrequent_mappings[
-                    feature_idx
-                ]
-                if drop_idx is None or default_to_infrequent is None:
-                    orig_drop_idx = drop_idx
-                else:
-                    orig_drop_idx = np.flatnonzero(default_to_infrequent == drop_idx)[0]
-
-                drop_idx_.append(orig_drop_idx)
-
-            self.drop_idx_ = np.asarray(drop_idx_, dtype=object)
+            self.drop_idx_ = self._remap_drop_idx_to_original(drop_idx_after_grouping)
 
     def _compute_transformed_categories(self, i, remove_dropped=True):
         """Compute the transformed categories used for column `i`.
@@ -1118,6 +1130,74 @@ class OneHotEncoder(_BaseEncoder):
         else:
             return out.toarray()
 
+    def _is_unknown_ignored_for_feature(self, feature_idx, infrequent_indices):
+        """Check whether unknown categories are silently ignored for a feature.
+
+        Returns ``True`` when ``handle_unknown='ignore'`` or when
+        ``handle_unknown`` is ``'infrequent_if_exist'``/``'warn'`` but no
+        infrequent category exists for the given feature.
+        """
+        if self.handle_unknown == "ignore":
+            return True
+        return (
+            self.handle_unknown in ("infrequent_if_exist", "warn")
+            and infrequent_indices[feature_idx] is None
+        )
+
+    def _inverse_transform_handle_unknown(
+        self, sub, feature_idx, result, found_unknown
+    ):
+        """Map all-zero rows to the dropped category or record as unknown."""
+        unknown = np.asarray(sub.sum(axis=1) == 0).flatten()
+        if not unknown.any():
+            return
+        # if categories were dropped then unknown categories will
+        # be mapped to the dropped category
+        if (
+            self._drop_idx_after_grouping is None
+            or self._drop_idx_after_grouping[feature_idx] is None
+        ):
+            found_unknown[feature_idx] = unknown
+        else:
+            result[unknown, feature_idx] = self.categories_[feature_idx][
+                self._drop_idx_after_grouping[feature_idx]
+            ]
+
+    def _inverse_transform_handle_dropped(
+        self, sub, feature_idx, result, transformed_features
+    ):
+        """Map all-zero rows to the dropped category or raise on error."""
+        dropped = np.asarray(sub.sum(axis=1) == 0).flatten()
+        if not dropped.any():
+            return
+        if self._drop_idx_after_grouping is None:
+            all_zero_samples = np.flatnonzero(dropped)
+            raise ValueError(
+                f"Samples {all_zero_samples} can not be inverted "
+                "when drop=None and handle_unknown='error' "
+                "because they contain all zeros"
+            )
+        # we can safely assume that all of the nulls in each column
+        # are the dropped value
+        drop_idx = self._drop_idx_after_grouping[feature_idx]
+        result[dropped, feature_idx] = transformed_features[feature_idx][
+            drop_idx
+        ]
+
+    def _apply_inverse_unknown(self, result, found_unknown):
+        """Replace entries for unknown categories with ``None``.
+
+        If any unknowns were found, the result array is upcast to object dtype
+        so that ``None`` values can be inserted.
+        """
+        if not found_unknown:
+            return result
+        if result.dtype != object:
+            result = result.astype(object)
+        for idx, mask in found_unknown.items():
+            result[mask, idx] = None
+        return result
+
     def inverse_transform(self, X):
         """
         Convert the data back to the original representation.
@@ -1191,51 +1271,18 @@ class OneHotEncoder(_BaseEncoder):
             labels = np.asarray(sub.argmax(axis=1)).flatten()
             X_tr[:, i] = cats_wo_dropped[labels]
 
-            if self.handle_unknown == "ignore" or (
-                self.handle_unknown in ("infrequent_if_exist", "warn")
-                and infrequent_indices[i] is None
-            ):
-                unknown = np.asarray(sub.sum(axis=1) == 0).flatten()
-                # ignored unknown categories: we have a row of all zero
-                if unknown.any():
-                    # if categories were dropped then unknown categories will
-                    # be mapped to the dropped category
-                    if (
-                        self._drop_idx_after_grouping is None
-                        or self._drop_idx_after_grouping[i] is None
-                    ):
-                        found_unknown[i] = unknown
-                    else:
-                        X_tr[unknown, i] = self.categories_[i][
-                            self._drop_idx_after_grouping[i]
-                        ]
+            if self._is_unknown_ignored_for_feature(i, infrequent_indices):
+                self._inverse_transform_handle_unknown(
+                    sub, i, X_tr, found_unknown
+                )
             else:
-                dropped = np.asarray(sub.sum(axis=1) == 0).flatten()
-                if dropped.any():
-                    if self._drop_idx_after_grouping is None:
-                        all_zero_samples = np.flatnonzero(dropped)
-                        raise ValueError(
-                            f"Samples {all_zero_samples} can not be inverted "
-                            "when drop=None and handle_unknown='error' "
-                            "because they contain all zeros"
-                        )
-                    # we can safely assume that all of the nulls in each column
-                    # are the dropped value
-                    drop_idx = self._drop_idx_after_grouping[i]
-                    X_tr[dropped, i] = transformed_features[i][drop_idx]
+                self._inverse_transform_handle_dropped(
+                    sub, i, X_tr, transformed_features
+                )
 
             j += n_categories
 
-        # if ignored are found: potentially need to upcast result to
-        # insert None values
-        if found_unknown:
-            if X_tr.dtype != object:
-                X_tr = X_tr.astype(object)
-
-            for idx, mask in found_unknown.items():
-                X_tr[mask, idx] = None
-
-        return X_tr
+        return self._apply_inverse_unknown(X_tr, found_unknown)
 
     def get_feature_names_out(self, input_features=None):
         """Get output feature names for transformation.
