@@ -954,6 +954,81 @@ class BaseSearchCV(
                 routed_params.scorer.score["sample_weight"] = params["sample_weight"]
         return routed_params
 
+    @staticmethod
+    def _build_metadata_callbacks(params):
+        """Build metadata callbacks dict from fit params."""
+        if (sample_weight := params.get("sample_weight")) is not None:
+            return {"sample_weight": sample_weight}
+        return None
+
+    @staticmethod
+    def _accumulate_more_results(all_more_results, more_results):
+        """Accumulate additional results from evaluate_candidates."""
+        if more_results is not None:
+            for key, value in more_results.items():
+                all_more_results[key].extend(value)
+
+    def _store_results(self, scorers, refit_metric, results, first_test_score):
+        """Store multimetric, best index/score/params, and scorer attributes."""
+        self.multimetric_ = isinstance(first_test_score, dict)
+
+        if callable(self.scoring) and self.multimetric_:
+            self._check_refit_for_multimetric(first_test_score)
+            refit_metric = self.refit
+
+        if self.refit or not self.multimetric_:
+            self.best_index_ = self._select_best_index(
+                self.refit, refit_metric, results
+            )
+            if not callable(self.refit):
+                self.best_score_ = results[f"mean_test_{refit_metric}"][
+                    self.best_index_
+                ]
+            self.best_params_ = results["params"][self.best_index_]
+
+        if isinstance(scorers, _MultimetricScorer):
+            self.scorer_ = scorers._scorers
+        else:
+            self.scorer_ = scorers
+
+    def _refit_best_estimator(
+        self,
+        base_estimator,
+        X,
+        y,
+        routed_params,
+        root_callback_ctx,
+        metadata_callbacks,
+    ):
+        """Refit the best estimator on the full dataset."""
+        self.best_estimator_ = clone(base_estimator).set_params(
+            **clone(self.best_params_, safe=False)
+        )
+
+        refit_subctx = root_callback_ctx.subcontext(
+            task_name="refit-with-best-params"
+        )
+
+        with refit_subctx.propagate_callback_context(self.best_estimator_):
+            refit_subctx.call_on_fit_task_begin(
+                estimator=self, X=X, y=y, metadata=metadata_callbacks
+            )
+
+            refit_start_time = time.time()
+            if y is not None:
+                self.best_estimator_.fit(X, y, **routed_params.estimator.fit)
+            else:
+                self.best_estimator_.fit(X, **routed_params.estimator.fit)
+            refit_end_time = time.time()
+        self.refit_time_ = refit_end_time - refit_start_time
+
+        if hasattr(self.best_estimator_, "feature_names_in_"):
+            self.feature_names_in_ = self.best_estimator_.feature_names_in_
+
+        refit_subctx.call_on_fit_task_end(
+            estimator=self, X=X, y=y, metadata=metadata_callbacks
+        )
+
     @_fit_context(
         # *SearchCV.estimator is not validated yet
         prefer_skip_nested_validation=False
@@ -998,10 +1073,7 @@ class BaseSearchCV(
         params = _check_method_params(X, params=params)
         routed_params = self._get_routed_params_for_fit(params)
 
-        if (sample_weight := params.get("sample_weight")) is not None:
-            metadata_callbacks = {"sample_weight": sample_weight}
-        else:
-            metadata_callbacks = None
+        metadata_callbacks = self._build_metadata_callbacks(params)
         root_callback_ctx = self._init_callback_context(
             max_subtasks=1 + (self.refit is not False)  # refit can be str or callable
         ).call_on_fit_task_begin(estimator=self, X=X, y=y, metadata=metadata_callbacks)
@@ -1116,9 +1188,7 @@ class BaseSearchCV(
                 all_candidate_params.extend(candidate_params)
                 all_out.extend(out)
 
-                if more_results is not None:
-                    for key, value in more_results.items():
-                        all_more_results[key].extend(value)
+                self._accumulate_more_results(all_more_results, more_results)
 
                 nonlocal results
                 results = self._format_results(
@@ -1136,66 +1206,18 @@ class BaseSearchCV(
             # multimetric is determined here because in the case of a callable
             # self.scoring the return type is only known after calling
             first_test_score = all_out[0]["test_scores"]
-            self.multimetric_ = isinstance(first_test_score, dict)
 
-            # check refit_metric now for a callable scorer that is multimetric
-            if callable(self.scoring) and self.multimetric_:
-                self._check_refit_for_multimetric(first_test_score)
-                refit_metric = self.refit
-
-        # For multi-metric evaluation, store the best_index_, best_params_ and
-        # best_score_ iff refit is one of the scorer names
-        # In single metric evaluation, refit_metric is "score"
-        if self.refit or not self.multimetric_:
-            self.best_index_ = self._select_best_index(
-                self.refit, refit_metric, results
-            )
-            if not callable(self.refit):
-                # With a non-custom callable, we can select the best score
-                # based on the best index
-                self.best_score_ = results[f"mean_test_{refit_metric}"][
-                    self.best_index_
-                ]
-            self.best_params_ = results["params"][self.best_index_]
+        self._store_results(scorers, refit_metric, results, first_test_score)
 
         if self.refit:
-            # here we clone the estimator as well as the parameters, since
-            # sometimes the parameters themselves might be estimators, e.g.
-            # when we search over different estimators in a pipeline.
-            # ref: https://github.com/scikit-learn/scikit-learn/pull/26786
-            self.best_estimator_ = clone(base_estimator).set_params(
-                **clone(self.best_params_, safe=False)
+            self._refit_best_estimator(
+                base_estimator,
+                X,
+                y,
+                routed_params,
+                root_callback_ctx,
+                metadata_callbacks,
             )
-
-            refit_subctx = root_callback_ctx.subcontext(
-                task_name="refit-with-best-params"
-            )
-
-            with refit_subctx.propagate_callback_context(self.best_estimator_):
-                refit_subctx.call_on_fit_task_begin(
-                    estimator=self, X=X, y=y, metadata=metadata_callbacks
-                )
-
-                refit_start_time = time.time()
-                if y is not None:
-                    self.best_estimator_.fit(X, y, **routed_params.estimator.fit)
-                else:
-                    self.best_estimator_.fit(X, **routed_params.estimator.fit)
-                refit_end_time = time.time()
-            self.refit_time_ = refit_end_time - refit_start_time
-
-            if hasattr(self.best_estimator_, "feature_names_in_"):
-                self.feature_names_in_ = self.best_estimator_.feature_names_in_
-
-            refit_subctx.call_on_fit_task_end(
-                estimator=self, X=X, y=y, metadata=metadata_callbacks
-            )
-
-        # Store the only scorer not as a dict for single metric evaluation
-        if isinstance(scorers, _MultimetricScorer):
-            self.scorer_ = scorers._scorers
-        else:
-            self.scorer_ = scorers
 
         self.cv_results_ = results
 

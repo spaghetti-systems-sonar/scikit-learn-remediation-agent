@@ -286,6 +286,32 @@ class CallbackContext:
             sequential_subtasks=sequential_subtasks,
         )
 
+    def _evaluate_arg(self, param_name, evaluated_args, estimator, **kwargs):
+        """Evaluate and cache a single hook argument.
+
+        Handles the special case of "fitted_estimator" which is built from
+        "reconstruction_attributes". For all other parameters, the value is
+        retrieved from kwargs and called if it is a callable (lazy evaluation).
+        """
+        if param_name in evaluated_args:
+            return evaluated_args[param_name]
+
+        if param_name == "fitted_estimator":
+            attrs = kwargs.get("reconstruction_attributes", None)
+            attrs = attrs() if callable(attrs) else attrs
+            new_est = (
+                _from_reconstruction_attributes(estimator, attrs)
+                if attrs is not None
+                else None
+            )
+            evaluated_args["fitted_estimator"] = new_est
+        else:
+            val = kwargs.get(param_name, None)
+            val = val() if callable(val) else val
+            evaluated_args[param_name] = val
+
+        return evaluated_args[param_name]
+
     def _call_hooks(self, estimator, hook_name, **kwargs):
         """Helper to call the hook of all callbacks with their respective arguments.
 
@@ -334,27 +360,12 @@ class CallbackContext:
                     f"are: {VALID_HOOK_PARAMS_OUT}."
                 )
 
-            args_to_pass = {}
-            for param_name in params_names:
-                if param_name not in evaluated_args:
-                    # Special case: "reconstruction_attributes" is not directly passed
-                    # to the hook. A ready to predict/transform estimator is created
-                    # from these attributes and passed to the hook as "fitted_estimator"
-                    if param_name == "fitted_estimator":
-                        attrs = kwargs.get("reconstruction_attributes", None)
-                        attrs = attrs() if callable(attrs) else attrs
-                        new_est = (
-                            _from_reconstruction_attributes(estimator, attrs)
-                            if attrs is not None
-                            else None
-                        )
-                        evaluated_args["fitted_estimator"] = new_est
-                    else:
-                        val = kwargs.get(param_name, None)
-                        val = val() if callable(val) else val
-                        evaluated_args[param_name] = val
-
-                args_to_pass[param_name] = evaluated_args[param_name]
+            args_to_pass = {
+                param_name: self._evaluate_arg(
+                    param_name, evaluated_args, estimator, **kwargs
+                )
+                for param_name in params_names
+            }
 
             result |= bool(
                 getattr(callback, hook_name)(estimator, self, **args_to_pass)

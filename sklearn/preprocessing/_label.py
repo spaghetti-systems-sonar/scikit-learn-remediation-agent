@@ -532,15 +532,90 @@ def label_binarize(y, *, classes, neg_label=0, pos_label=1, sparse_output=False)
            [0],
            [1]])
     """
+    y, pos_label, pos_switch = _validate_and_prepare_label_binarize(
+        y, neg_label, pos_label, sparse_output
+    )
+
+    y_type = type_of_target(y)
+    if "multioutput" in y_type:
+        raise ValueError(
+            "Multioutput target data is not supported with label binarization"
+        )
+    if y_type == "unknown":
+        raise ValueError("The type of target data is not known")
+
+    xp, is_array_api, device_ = get_namespace_and_device(y)
+
+    if is_array_api and sparse_output and not _is_numpy_namespace(xp):
+        raise ValueError(
+            "`sparse_output=True` is not supported for array API "
+            f"'namespace {xp.__name__}'. "
+            "Use `sparse_output=False` to return a dense array instead."
+        )
+
+    classes = _prepare_classes_array(classes, xp, device_)
+
+    n_samples = y.shape[0] if hasattr(y, "shape") else len(y)
+    n_classes = classes.shape[0]
+    int_dtype_ = _resolve_int_dtype(y, xp)
+
+    # Align `classes` dtype with integral `y` to ensure correct comparisons
+    # and avoid signed/unsigned dtype mismatches
+    if hasattr(y, "dtype") and xp.isdtype(y.dtype, "integral"):
+        classes = xp.astype(classes, y.dtype, copy=False)
+
+    if y_type == "binary":
+        if n_classes == 1:
+            return _binarize_single_class(
+                n_samples, int_dtype_, neg_label, sparse_output, xp
+            )
+        if n_classes >= 3:
+            y_type = "multiclass"
+
+    sorted_class = xp.sort(classes)
+    _validate_multilabel_classes(y, y_type, n_classes, classes)
+
+    Y = _build_binarized_output(
+        y,
+        y_type,
+        classes,
+        sorted_class,
+        n_samples,
+        n_classes,
+        int_dtype_,
+        pos_label,
+        sparse_output,
+        xp,
+        device_,
+    )
+
+    Y = _postprocess_binarized_output(
+        Y,
+        y_type,
+        classes,
+        sorted_class,
+        int_dtype_,
+        neg_label,
+        pos_label,
+        pos_switch,
+        sparse_output,
+        xp,
+    )
+
+    return _align_api_if_sparse(Y)
+
+
+def _validate_and_prepare_label_binarize(y, neg_label, pos_label, sparse_output):
+    """Validate inputs and prepare pos_label for label_binarize."""
     if not isinstance(y, list):
         # XXX Workaround that will be removed when list of list format is
         # dropped
         y = check_array(
             y, input_name="y", accept_sparse="csr", ensure_2d=False, dtype=None
         )
-    else:
-        if _num_samples(y) == 0:
-            raise ValueError("y has 0 samples: %r" % y)
+    elif _num_samples(y) == 0:
+        raise ValueError("y has 0 samples: %r" % y)
+
     if neg_label >= pos_label:
         raise ValueError(
             "neg_label={0} must be strictly less than pos_label={1}.".format(
@@ -561,124 +636,164 @@ def label_binarize(y, *, classes, neg_label=0, pos_label=1, sparse_output=False)
     if pos_switch:
         pos_label = -neg_label
 
-    y_type = type_of_target(y)
-    if "multioutput" in y_type:
-        raise ValueError(
-            "Multioutput target data is not supported with label binarization"
-        )
-    if y_type == "unknown":
-        raise ValueError("The type of target data is not known")
+    return y, pos_label, pos_switch
 
-    xp, is_array_api, device_ = get_namespace_and_device(y)
 
-    if is_array_api and sparse_output and not _is_numpy_namespace(xp):
-        raise ValueError(
-            "`sparse_output=True` is not supported for array API "
-            f"'namespace {xp.__name__}'. "
-            "Use `sparse_output=False` to return a dense array instead."
-        )
-
+def _prepare_classes_array(classes, xp, device_):
+    """Convert classes to an array in the given namespace."""
     try:
-        classes = xp.asarray(classes, device=device_)
+        return xp.asarray(classes, device=device_)
     except (ValueError, TypeError) as e:
-        # `classes` contains an unsupported dtype for this namespace.
-        # For example, attempting to create torch.tensor(["yes", "no"]) will fail.
         raise ValueError(
             f"`classes` contains unsupported dtype for array API namespace "
             f"'{xp.__name__}'."
         ) from e
 
-    n_samples = y.shape[0] if hasattr(y, "shape") else len(y)
-    n_classes = classes.shape[0]
 
-    y_has_dtype = hasattr(y, "dtype")
-    if y_has_dtype and xp.isdtype(y.dtype, "signed integer"):
-        int_dtype_ = y.dtype
-    else:
-        int_dtype_ = indexing_dtype(xp)
+def _resolve_int_dtype(y, xp):
+    """Determine the integer dtype for the binarized output."""
+    if hasattr(y, "dtype") and xp.isdtype(y.dtype, "signed integer"):
+        return y.dtype
+    return indexing_dtype(xp)
 
-    # Align `classes` dtype with integral `y` to ensure correct comparisons
-    # and avoid signed/unsigned dtype mismatches
-    if y_has_dtype and xp.isdtype(y.dtype, "integral"):
-        classes = xp.astype(classes, y.dtype, copy=False)
 
-    if y_type == "binary":
-        if n_classes == 1:
-            if sparse_output:
-                return _align_api_if_sparse(sp.csr_array((n_samples, 1), dtype=int))
-            else:
-                Y = xp.zeros((n_samples, 1), dtype=int_dtype_)
-                Y += neg_label
-                return Y
-        elif n_classes >= 3:
-            y_type = "multiclass"
+def _binarize_single_class(n_samples, int_dtype_, neg_label, sparse_output, xp):
+    """Handle the binary case with a single class."""
+    if sparse_output:
+        return _align_api_if_sparse(sp.csr_array((n_samples, 1), dtype=int))
+    Y = xp.zeros((n_samples, 1), dtype=int_dtype_)
+    Y += neg_label
+    return Y
 
-    sorted_class = xp.sort(classes)
-    if y_type == "multilabel-indicator":
-        y_n_classes = y.shape[1] if hasattr(y, "shape") else len(y[0])
-        if n_classes != y_n_classes:
-            raise ValueError(
-                "classes {0} mismatch with the labels {1} found in the data".format(
-                    classes, unique_labels(y)
-                )
-            )
 
-    if y_type in ("binary", "multiclass"):
-        y = column_or_1d(y)
-
-        # pick out the known labels from y
-        y_in_classes = _isin(y, classes, xp=xp)
-        y_seen = y[y_in_classes]
-        indices = xp.searchsorted(sorted_class, y_seen)
-        # cast `y_in_classes` to integer dtype for `xp.cumulative_sum`
-        y_in_classes = xp.astype(y_in_classes, int_dtype_)
-        indptr = xp.concat(
-            (
-                xp.asarray([0], device=device_),
-                xp.cumulative_sum(y_in_classes, axis=0),
-            )
-        )
-        data = xp.full_like(indices, pos_label)
-
-        # Use NumPy to construct the sparse matrix of one-hot labels
-        Y = sp.csr_array(
-            (
-                move_to(data, xp=np, device="cpu"),
-                move_to(indices, xp=np, device="cpu"),
-                move_to(indptr, xp=np, device="cpu"),
-            ),
-            shape=(n_samples, n_classes),
-        )
-
-        if not sparse_output:
-            Y = xp.asarray(Y.toarray(), device=device_)
-
-    elif y_type == "multilabel-indicator":
-        if sparse_output:
-            Y = sp.csr_array(y)
-            if pos_label != 1:
-                data = xp.full_like(Y.data, pos_label)
-                Y.data = data
-        else:
-            if sp.issparse(y):
-                y = y.toarray()
-
-            Y = xp.asarray(y, device=device_, copy=True)
-            if pos_label != 1:
-                Y[Y != 0] = pos_label
-
-    else:
+def _validate_multilabel_classes(y, y_type, n_classes, classes):
+    """Validate that multilabel-indicator class count matches the data."""
+    if y_type != "multilabel-indicator":
+        return
+    y_n_classes = y.shape[1] if hasattr(y, "shape") else len(y[0])
+    if n_classes != y_n_classes:
         raise ValueError(
-            "%s target data is not supported with label binarization" % y_type
+            "classes {0} mismatch with the labels {1} found in the data".format(
+                classes, unique_labels(y)
+            )
         )
 
+
+def _build_binarized_output(
+    y,
+    y_type,
+    classes,
+    sorted_class,
+    n_samples,
+    n_classes,
+    int_dtype_,
+    pos_label,
+    sparse_output,
+    xp,
+    device_,
+):
+    """Build the binarized output matrix for the given target type."""
+    if y_type in ("binary", "multiclass"):
+        return _binarize_binary_or_multiclass(
+            y,
+            classes,
+            sorted_class,
+            n_samples,
+            n_classes,
+            int_dtype_,
+            pos_label,
+            sparse_output,
+            xp,
+            device_,
+        )
+    if y_type == "multilabel-indicator":
+        return _binarize_multilabel_indicator(
+            y, pos_label, sparse_output, xp, device_
+        )
+    raise ValueError(
+        "%s target data is not supported with label binarization" % y_type
+    )
+
+
+def _binarize_binary_or_multiclass(
+    y,
+    classes,
+    sorted_class,
+    n_samples,
+    n_classes,
+    int_dtype_,
+    pos_label,
+    sparse_output,
+    xp,
+    device_,
+):
+    """Binarize binary or multiclass targets into a sparse/dense matrix."""
+    y = column_or_1d(y)
+
+    # pick out the known labels from y
+    y_in_classes = _isin(y, classes, xp=xp)
+    y_seen = y[y_in_classes]
+    indices = xp.searchsorted(sorted_class, y_seen)
+    # cast `y_in_classes` to integer dtype for `xp.cumulative_sum`
+    y_in_classes = xp.astype(y_in_classes, int_dtype_)
+    indptr = xp.concat(
+        (
+            xp.asarray([0], device=device_),
+            xp.cumulative_sum(y_in_classes, axis=0),
+        )
+    )
+    data = xp.full_like(indices, pos_label)
+
+    # Use NumPy to construct the sparse matrix of one-hot labels
+    Y = sp.csr_array(
+        (
+            move_to(data, xp=np, device="cpu"),
+            move_to(indices, xp=np, device="cpu"),
+            move_to(indptr, xp=np, device="cpu"),
+        ),
+        shape=(n_samples, n_classes),
+    )
+
+    if not sparse_output:
+        Y = xp.asarray(Y.toarray(), device=device_)
+
+    return Y
+
+
+def _binarize_multilabel_indicator(y, pos_label, sparse_output, xp, device_):
+    """Binarize multilabel-indicator targets."""
+    if sparse_output:
+        Y = sp.csr_array(y)
+        if pos_label != 1:
+            Y.data = xp.full_like(Y.data, pos_label)
+        return Y
+
+    if sp.issparse(y):
+        y = y.toarray()
+    Y = xp.asarray(y, device=device_, copy=True)
+    if pos_label != 1:
+        Y[Y != 0] = pos_label
+    return Y
+
+
+def _postprocess_binarized_output(
+    Y,
+    y_type,
+    classes,
+    sorted_class,
+    int_dtype_,
+    neg_label,
+    pos_label,
+    pos_switch,
+    sparse_output,
+    xp,
+):
+    """Apply neg_label, pos_switch, label ordering, and binary reshaping."""
     if not sparse_output:
         if neg_label != 0:
             Y[Y == 0] = neg_label
-
         if pos_switch:
             Y[Y == pos_label] = 0
-
         Y = xp.astype(Y, int_dtype_, copy=False)
     else:
         Y.data = Y.data.astype(int, copy=False)
@@ -694,7 +809,7 @@ def label_binarize(y, *, classes, neg_label=0, pos_label=1, sparse_output=False)
         else:
             Y = xp.reshape(Y[:, -1], (-1, 1))
 
-    return _align_api_if_sparse(Y)
+    return Y
 
 
 def _inverse_binarize_multiclass(y, classes, xp=None):
