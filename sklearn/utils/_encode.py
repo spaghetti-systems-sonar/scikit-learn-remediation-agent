@@ -237,6 +237,78 @@ def _encode(values, *, uniques, check_unknown=True):
         return xp.searchsorted(uniques, values)
 
 
+def _check_unknown_non_numeric(values, known_values, return_mask, xp):
+    """Check for unknowns in non-numeric values."""
+    values_set = set(values)
+    values_set, missing_in_values = _extract_missing(values_set)
+
+    uniques_set = set(known_values)
+    uniques_set, missing_in_uniques = _extract_missing(uniques_set)
+    diff = values_set - uniques_set
+
+    nan_in_diff = missing_in_values.nan and not missing_in_uniques.nan
+    none_in_diff = missing_in_values.none and not missing_in_uniques.none
+
+    def is_valid(value):
+        return (
+            value in uniques_set
+            or (missing_in_uniques.none and value is None)
+            or (missing_in_uniques.nan and is_scalar_nan(value))
+        )
+
+    valid_mask = None
+    if return_mask:
+        if diff or nan_in_diff or none_in_diff:
+            valid_mask = xp.array([is_valid(value) for value in values])
+        else:
+            valid_mask = xp.ones(len(values), dtype=xp.bool)
+
+    diff = list(diff)
+    if none_in_diff:
+        diff.append(None)
+    if nan_in_diff:
+        diff.append(np.nan)
+
+    return diff, valid_mask
+
+
+def _check_unknown_numeric(values, known_values, return_mask, xp):
+    """Check for unknowns in numeric values."""
+    unique_values = xp.unique_values(values)
+    diff = xpx.setdiff1d(unique_values, known_values, assume_unique=True, xp=xp)
+
+    valid_mask = None
+    if return_mask:
+        if diff.size:
+            valid_mask = _isin(values, known_values, xp)
+        else:
+            valid_mask = xp.ones(len(values), dtype=xp.bool)
+
+    diff, valid_mask = _reconcile_nan_diff(
+        values, known_values, diff, valid_mask, return_mask, xp
+    )
+
+    return list(diff), valid_mask
+
+
+def _reconcile_nan_diff(values, known_values, diff, valid_mask, return_mask, xp):
+    """Remove nans from diff when they are present in known_values."""
+    if not xp.any(xp.isnan(known_values)):
+        return diff, valid_mask
+
+    diff_is_nan = xp.isnan(diff)
+    if not xp.any(diff_is_nan):
+        return diff, valid_mask
+
+    # removes nan from valid_mask
+    if diff.size and return_mask:
+        is_nan = xp.isnan(values)
+        valid_mask[is_nan] = 1
+
+    # remove nan from diff
+    return diff[~diff_is_nan], valid_mask
+
+
 def _check_unknown(values, known_values, return_mask=False):
     """
     Helper function to check for unknowns in values to be encoded.
@@ -263,58 +335,15 @@ def _check_unknown(values, known_values, return_mask=False):
 
     """
     xp, _ = get_namespace(values, known_values)
-    valid_mask = None
 
     if not xp.isdtype(values.dtype, "numeric"):
-        values_set = set(values)
-        values_set, missing_in_values = _extract_missing(values_set)
-
-        uniques_set = set(known_values)
-        uniques_set, missing_in_uniques = _extract_missing(uniques_set)
-        diff = values_set - uniques_set
-
-        nan_in_diff = missing_in_values.nan and not missing_in_uniques.nan
-        none_in_diff = missing_in_values.none and not missing_in_uniques.none
-
-        def is_valid(value):
-            return (
-                value in uniques_set
-                or (missing_in_uniques.none and value is None)
-                or (missing_in_uniques.nan and is_scalar_nan(value))
-            )
-
-        if return_mask:
-            if diff or nan_in_diff or none_in_diff:
-                valid_mask = xp.array([is_valid(value) for value in values])
-            else:
-                valid_mask = xp.ones(len(values), dtype=xp.bool)
-
-        diff = list(diff)
-        if none_in_diff:
-            diff.append(None)
-        if nan_in_diff:
-            diff.append(np.nan)
+        diff, valid_mask = _check_unknown_non_numeric(
+            values, known_values, return_mask, xp
+        )
     else:
-        unique_values = xp.unique_values(values)
-        diff = xpx.setdiff1d(unique_values, known_values, assume_unique=True, xp=xp)
-        if return_mask:
-            if diff.size:
-                valid_mask = _isin(values, known_values, xp)
-            else:
-                valid_mask = xp.ones(len(values), dtype=xp.bool)
-
-        # check for nans in the known_values
-        if xp.any(xp.isnan(known_values)):
-            diff_is_nan = xp.isnan(diff)
-            if xp.any(diff_is_nan):
-                # removes nan from valid_mask
-                if diff.size and return_mask:
-                    is_nan = xp.isnan(values)
-                    valid_mask[is_nan] = 1
-
-                # remove nan from diff
-                diff = diff[~diff_is_nan]
-        diff = list(diff)
+        diff, valid_mask = _check_unknown_numeric(
+            values, known_values, return_mask, xp
+        )
 
     if return_mask:
         return diff, valid_mask
