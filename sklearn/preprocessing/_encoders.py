@@ -1043,6 +1043,51 @@ class OneHotEncoder(_BaseEncoder):
         self._n_features_outs = self._compute_n_features_outs()
         return self
 
+    def _validate_transform_output(self):
+        """Raise if sparse output is incompatible with the output config."""
+        transform_output = _get_output_config("transform", estimator=self)["dense"]
+        if transform_output == "default" or not self.sparse_output:
+            return
+        capitalize_transform_output = transform_output.capitalize()
+        raise ValueError(
+            f"{capitalize_transform_output} output does not support sparse data."
+            f" Set sparse_output=False to output {transform_output} dataframes or"
+            f" disable {capitalize_transform_output} output via"
+            '` ohe.set_output(transform="default").'
+        )
+
+    def _get_transform_unknown_config(self):
+        """Return ``(warn_on_unknown, handle_unknown)`` for :meth:`transform`."""
+        if self.handle_unknown == "warn":
+            return True, "infrequent_if_exist"
+        warn_on_unknown = self.drop is not None and self.handle_unknown in {
+            "ignore",
+            "infrequent_if_exist",
+        }
+        return warn_on_unknown, self.handle_unknown
+
+    def _apply_drop_idx(self, encoded, mask):
+        """Remove dropped categories from *encoded* and *mask* in-place.
+
+        Returns the updated *mask* array.
+        """
+        if self._drop_idx_after_grouping is None:
+            return mask
+        to_drop = self._drop_idx_after_grouping.copy()
+        # We remove all the dropped categories from mask, and decrement all
+        # categories that occur after them to avoid an empty column.
+        keep_cells = encoded != to_drop
+        for i, cats in enumerate(self.categories_):
+            # drop='if_binary' but feature isn't binary
+            if to_drop[i] is None:
+                # set to cardinality to not drop from encoded
+                to_drop[i] = len(cats)
+
+        to_drop = to_drop.reshape(1, -1)
+        encoded[encoded > to_drop] -= 1
+        mask &= keep_cells
+        return mask
+
     def transform(self, X):
         """
         Transform X using one-hot encoding.
@@ -1066,25 +1111,10 @@ class OneHotEncoder(_BaseEncoder):
             returned.
         """
         check_is_fitted(self)
-        transform_output = _get_output_config("transform", estimator=self)["dense"]
-        if transform_output != "default" and self.sparse_output:
-            capitalize_transform_output = transform_output.capitalize()
-            raise ValueError(
-                f"{capitalize_transform_output} output does not support sparse data."
-                f" Set sparse_output=False to output {transform_output} dataframes or"
-                f" disable {capitalize_transform_output} output via"
-                '` ohe.set_output(transform="default").'
-            )
+        self._validate_transform_output()
 
         # validation of X happens in _check_X called by _transform
-        if self.handle_unknown == "warn":
-            warn_on_unknown, handle_unknown = True, "infrequent_if_exist"
-        else:
-            warn_on_unknown = self.drop is not None and self.handle_unknown in {
-                "ignore",
-                "infrequent_if_exist",
-            }
-            handle_unknown = self.handle_unknown
+        warn_on_unknown, handle_unknown = self._get_transform_unknown_config()
         X_int, X_mask = self._transform(
             X,
             handle_unknown=handle_unknown,
@@ -1093,21 +1123,7 @@ class OneHotEncoder(_BaseEncoder):
         )
 
         n_samples, n_features = X_int.shape
-
-        if self._drop_idx_after_grouping is not None:
-            to_drop = self._drop_idx_after_grouping.copy()
-            # We remove all the dropped categories from mask, and decrement all
-            # categories that occur after them to avoid an empty column.
-            keep_cells = X_int != to_drop
-            for i, cats in enumerate(self.categories_):
-                # drop='if_binary' but feature isn't binary
-                if to_drop[i] is None:
-                    # set to cardinality to not drop from X_int
-                    to_drop[i] = len(cats)
-
-            to_drop = to_drop.reshape(1, -1)
-            X_int[X_int > to_drop] -= 1
-            X_mask &= keep_cells
+        X_mask = self._apply_drop_idx(X_int, X_mask)
 
         mask = X_mask.ravel()
         feature_indices = np.cumsum([0] + self._n_features_outs)
@@ -1127,8 +1143,7 @@ class OneHotEncoder(_BaseEncoder):
         if self.sparse_output:
             _ensure_sparse_index_int32(out)
             return _align_api_if_sparse(out)
-        else:
-            return out.toarray()
+        return out.toarray()
 
     def _is_unknown_ignored_for_feature(self, feature_idx, infrequent_indices):
         """Check whether unknown categories are silently ignored for a feature.
@@ -1198,6 +1213,53 @@ class OneHotEncoder(_BaseEncoder):
             result[mask, idx] = None
         return result
 
+    def _inverse_transform_feature(
+        self,
+        data,
+        feature_idx,
+        col_offset,
+        transformed_features,
+        result,
+        found_unknown,
+        infrequent_indices,
+    ):
+        """Inverse-transform a single feature and return the updated column offset."""
+        cats_wo_dropped = self._remove_dropped_categories(
+            transformed_features[feature_idx], feature_idx
+        )
+        n_categories = cats_wo_dropped.shape[0]
+
+        # Only happens if there was a column with a unique
+        # category. In this case we just fill the column with this
+        # unique category value.
+        if n_categories == 0:
+            result[:, feature_idx] = self.categories_[feature_idx][
+                self._drop_idx_after_grouping[feature_idx]
+            ]
+            return col_offset + n_categories
+
+        sub = data[:, col_offset : col_offset + n_categories]
+        # for sparse data argmax returns 2D matrix, ensure 1D array
+        labels = np.asarray(sub.argmax(axis=1)).flatten()
+        result[:, feature_idx] = cats_wo_dropped[labels]
+
+        if self._is_unknown_ignored_for_feature(feature_idx, infrequent_indices):
+            self._inverse_transform_handle_unknown(
+                sub, feature_idx, result, found_unknown
+            )
+        else:
+            self._inverse_transform_handle_dropped(
+                sub, feature_idx, result, transformed_features
+            )
+
+        return col_offset + n_categories
+
+    def _get_infrequent_indices(self):
+        """Return infrequent indices or a list of ``None`` values."""
+        if self._infrequent_enabled:
+            return self._infrequent_indices
+        return [None] * len(self.categories_)
+
     def inverse_transform(self, X):
         """
         Convert the data back to the original representation.
@@ -1247,40 +1309,18 @@ class OneHotEncoder(_BaseEncoder):
 
         j = 0
         found_unknown = {}
-
-        if self._infrequent_enabled:
-            infrequent_indices = self._infrequent_indices
-        else:
-            infrequent_indices = [None] * n_features
+        infrequent_indices = self._get_infrequent_indices()
 
         for i in range(n_features):
-            cats_wo_dropped = self._remove_dropped_categories(
-                transformed_features[i], i
+            j = self._inverse_transform_feature(
+                X,
+                i,
+                j,
+                transformed_features,
+                X_tr,
+                found_unknown,
+                infrequent_indices,
             )
-            n_categories = cats_wo_dropped.shape[0]
-
-            # Only happens if there was a column with a unique
-            # category. In this case we just fill the column with this
-            # unique category value.
-            if n_categories == 0:
-                X_tr[:, i] = self.categories_[i][self._drop_idx_after_grouping[i]]
-                j += n_categories
-                continue
-            sub = X[:, j : j + n_categories]
-            # for sparse X argmax returns 2D matrix, ensure 1D array
-            labels = np.asarray(sub.argmax(axis=1)).flatten()
-            X_tr[:, i] = cats_wo_dropped[labels]
-
-            if self._is_unknown_ignored_for_feature(i, infrequent_indices):
-                self._inverse_transform_handle_unknown(
-                    sub, i, X_tr, found_unknown
-                )
-            else:
-                self._inverse_transform_handle_dropped(
-                    sub, i, X_tr, transformed_features
-                )
-
-            j += n_categories
 
         return self._apply_inverse_unknown(X_tr, found_unknown)
 

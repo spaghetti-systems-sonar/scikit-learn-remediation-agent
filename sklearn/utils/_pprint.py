@@ -216,6 +216,35 @@ class _EstimatorPrettyPrinter(pprint.PrettyPrinter):
             items, stream, indent, allowance, context, level, is_dict=False
         )
 
+    def _format_compact_entry(
+        self, ent, is_dict, context, level, width, max_width, delim, delimnl, write
+    ):
+        """Format a single entry in compact mode.
+
+        Returns a tuple (wrote_entry, width, delim) where wrote_entry is True
+        if the entry was written inline and the caller should skip to the next
+        entry.
+        """
+        k, v = ent
+        krepr = self._repr(k, context, level)
+        vrepr = self._repr(v, context, level)
+        if not is_dict:
+            krepr = krepr.strip("'")
+        middle = ": " if is_dict else "="
+        rep = krepr + middle + vrepr
+        w = len(rep) + 2
+        if width < w:
+            width = max_width
+            if delim:
+                delim = delimnl
+        if width >= w:
+            width -= w
+            write(delim)
+            delim = ", "
+            write(rep)
+            return True, width, delim
+        return False, width, delim
+
     def _format_params_or_dict_items(
         self, object, stream, indent, allowance, context, level, is_dict
     ):
@@ -254,23 +283,11 @@ class _EstimatorPrettyPrinter(pprint.PrettyPrinter):
                 max_width -= allowance
                 width -= allowance
             if self._compact:
-                k, v = ent
-                krepr = self._repr(k, context, level)
-                vrepr = self._repr(v, context, level)
-                if not is_dict:
-                    krepr = krepr.strip("'")
-                middle = ": " if is_dict else "="
-                rep = krepr + middle + vrepr
-                w = len(rep) + 2
-                if width < w:
-                    width = max_width
-                    if delim:
-                        delim = delimnl
-                if width >= w:
-                    width -= w
-                    write(delim)
-                    delim = ", "
-                    write(rep)
+                wrote, width, delim = self._format_compact_entry(
+                    ent, is_dict, context, level,
+                    width, max_width, delim, delimnl, write,
+                )
+                if wrote:
                     continue
             write(delim)
             delim = delimnl

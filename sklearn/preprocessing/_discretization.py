@@ -417,7 +417,7 @@ class KBinsDiscretizer(TransformerMixin, BaseEstimator):
 
         bad_nbins_value = (n_bins < 2) | (n_bins != orig_bins)
 
-        violating_indices = np.where(bad_nbins_value)[0]
+        violating_indices = np.nonzero(bad_nbins_value)[0]
         if violating_indices.shape[0] > 0:
             indices = ", ".join(str(i) for i in violating_indices)
             raise ValueError(

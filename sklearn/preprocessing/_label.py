@@ -732,7 +732,8 @@ def _binarize_binary_or_multiclass(
 
     # pick out the known labels from y
     y_in_classes = _isin(y, classes, xp=xp)
-    y_seen = y[y_in_classes]
+    (y_in_classes_idx,) = xp.nonzero(y_in_classes)
+    y_seen = y[y_in_classes_idx]
     indices = xp.searchsorted(sorted_class, y_seen)
     # cast `y_in_classes` to integer dtype for `xp.cumulative_sum`
     y_in_classes = xp.astype(y_in_classes, int_dtype_)
@@ -841,7 +842,7 @@ def _inverse_binarize_multiclass(y, classes, xp=None):
         y_ind_ext = np.append(y.indices, [0])
         y_i_argmax = y_ind_ext[y_i_all_argmax[index_first_argmax]]
         # Handle rows of all 0
-        y_i_argmax[np.where(row_nnz == 0)[0]] = 0
+        y_i_argmax[np.nonzero(row_nnz == 0)[0]] = 0
 
         # Handles rows with max of 0 that contain negative numbers
         samples = np.arange(n_samples)[(row_nnz > 0) & (row_max.ravel() == 0)]
