@@ -37,6 +37,15 @@ from sklearn.utils.validation import check_is_fitted, check_non_negative, valida
 EPS = np.finfo(float).eps
 
 
+def _init_doc_topic_distr(random_state, n_samples, n_topics, dtype):
+    """Initialize document-topic distribution."""
+    if random_state:
+        return random_state.gamma(100.0, 0.01, (n_samples, n_topics)).astype(
+            dtype, copy=False
+        )
+    return np.ones((n_samples, n_topics), dtype=dtype)
+
+
 def _update_doc_distribution(
     X,
     exp_topic_word_distr,
@@ -90,12 +99,9 @@ def _update_doc_distribution(
     n_samples, n_features = X.shape
     n_topics = exp_topic_word_distr.shape[0]
 
-    if random_state:
-        doc_topic_distr = random_state.gamma(100.0, 0.01, (n_samples, n_topics)).astype(
-            X.dtype, copy=False
-        )
-    else:
-        doc_topic_distr = np.ones((n_samples, n_topics), dtype=X.dtype)
+    doc_topic_distr = _init_doc_topic_distr(
+        random_state, n_samples, n_topics, X.dtype
+    )
 
     # In the literature, this is `exp(E[log(theta)])`
     exp_doc_topic = np.exp(_dirichlet_expectation_2d(doc_topic_distr))
@@ -621,6 +627,39 @@ class LatentDirichletAllocation(
 
         return self
 
+    def _check_perplexity(
+        self, X, i, max_iter, evaluate_every, last_bound, parallel
+    ):
+        """Evaluate perplexity and check for convergence.
+
+        Returns
+        -------
+        last_bound : float or None
+            Updated perplexity bound.
+        should_break : bool
+            Whether the training loop should stop.
+        """
+        if evaluate_every > 0 and (i + 1) % evaluate_every == 0:
+            doc_topics_distr, _ = self._e_step(
+                X, cal_sstats=False, random_init=False, parallel=parallel
+            )
+            bound = self._perplexity_precomp_distr(
+                X, doc_topics_distr, sub_sampling=False
+            )
+            if self.verbose:
+                print(
+                    "iteration: %d of max_iter: %d, perplexity: %.4f"
+                    % (i + 1, max_iter, bound)
+                )
+
+            if last_bound and abs(last_bound - bound) < self.perp_tol:
+                return bound, True
+            return bound, False
+
+        elif self.verbose:
+            print("iteration: %d of max_iter: %d" % (i + 1, max_iter))
+        return last_bound, False
+
     @_fit_context(prefer_skip_nested_validation=True)
     def fit(self, X, y=None):
         """Learn model for the data X with variational Bayes method.
@@ -673,25 +712,11 @@ class LatentDirichletAllocation(
                     )
 
                 # check perplexity
-                if evaluate_every > 0 and (i + 1) % evaluate_every == 0:
-                    doc_topics_distr, _ = self._e_step(
-                        X, cal_sstats=False, random_init=False, parallel=parallel
-                    )
-                    bound = self._perplexity_precomp_distr(
-                        X, doc_topics_distr, sub_sampling=False
-                    )
-                    if self.verbose:
-                        print(
-                            "iteration: %d of max_iter: %d, perplexity: %.4f"
-                            % (i + 1, max_iter, bound)
-                        )
-
-                    if last_bound and abs(last_bound - bound) < self.perp_tol:
-                        break
-                    last_bound = bound
-
-                elif self.verbose:
-                    print("iteration: %d of max_iter: %d" % (i + 1, max_iter))
+                last_bound, should_break = self._check_perplexity(
+                    X, i, max_iter, evaluate_every, last_bound, parallel
+                )
+                if should_break:
+                    break
                 self.n_iter_ += 1
 
         # calculate final perplexity value on train set
