@@ -978,15 +978,33 @@ class ArffEncoder:
 
         return '%s %s %s'%(_TK_ATTRIBUTE, name, type_)
 
-    def encode(self, obj):
-        '''Encodes a given object to an ARFF file.
+    def _validate_attribute(self, attr, attribute_names):
+        '''Validate a single attribute declaration.
 
-        :param obj: the object containing the ARFF information.
-        :return: the ARFF file as an string.
+        :param attr: the attribute to validate.
+        :param attribute_names: set of already seen attribute names.
         '''
-        data = [row for row in self.iter_encode(obj)]
+        # Verify for bad object format
+        if not isinstance(attr, (tuple, list)) or \
+           len(attr) != 2 or \
+           not isinstance(attr[0], str):
+            raise BadObject('Invalid attribute declaration "%s"'%str(attr))
 
-        return '\n'.join(data)
+        if isinstance(attr[1], str):
+            # Verify for invalid types
+            if attr[1] not in _SIMPLE_TYPES:
+                raise BadObject('Invalid attribute type "%s"'%str(attr))
+
+        # Verify for bad object format
+        elif not isinstance(attr[1], (tuple, list)):
+            raise BadObject('Invalid attribute type "%s"'%str(attr))
+
+        # Verify attribute name is not used twice
+        if attr[0] in attribute_names:
+            raise BadObject('Trying to use attribute name "%s" for the '
+                            'second time.' % str(attr[0]))
+        else:
+            attribute_names.add(attr[0])
 
     def iter_encode(self, obj):
         '''The iterative version of `arff.ArffEncoder.encode`.
@@ -1015,28 +1033,7 @@ class ArffEncoder:
 
         attribute_names = set()
         for attr in obj['attributes']:
-            # Verify for bad object format
-            if not isinstance(attr, (tuple, list)) or \
-               len(attr) != 2 or \
-               not isinstance(attr[0], str):
-                raise BadObject('Invalid attribute declaration "%s"'%str(attr))
-
-            if isinstance(attr[1], str):
-                # Verify for invalid types
-                if attr[1] not in _SIMPLE_TYPES:
-                    raise BadObject('Invalid attribute type "%s"'%str(attr))
-
-            # Verify for bad object format
-            elif not isinstance(attr[1], (tuple, list)):
-                raise BadObject('Invalid attribute type "%s"'%str(attr))
-
-            # Verify attribute name is not used twice
-            if attr[0] in attribute_names:
-                raise BadObject('Trying to use attribute name "%s" for the '
-                                'second time.' % str(attr[0]))
-            else:
-                attribute_names.add(attr[0])
-
+            self._validate_attribute(attr, attribute_names)
             yield self._encode_attribute(attr[0], attr[1])
         yield ''
         attributes = obj['attributes']
@@ -1048,6 +1045,16 @@ class ArffEncoder:
             yield from data.encode_data(obj.get('data'), attributes)
 
         yield ''
+
+    def encode(self, obj):
+        '''Encodes a given object to an ARFF file.
+
+        :param obj: the object containing the ARFF information.
+        :return: the ARFF file as an string.
+        '''
+        data = [row for row in self.iter_encode(obj)]
+
+        return '\n'.join(data)
 
 # =============================================================================
 

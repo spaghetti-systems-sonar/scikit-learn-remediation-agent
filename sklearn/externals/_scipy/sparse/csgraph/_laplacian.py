@@ -421,25 +421,21 @@ def _laplacian_sparse_flo(graph, normed, axis, copy, form, dtype, symmetrized):
             md = _laplace_normed_sym(graph, graph_sum, 1.0 / w)
         else:
             md = _laplace_normed(graph, graph_sum, 1.0 / w)
-        if form == "function":
-            return md, w.astype(dtype, copy=False)
-        elif form == "lo":
-            m = _linearoperator(md, shape=graph.shape, dtype=dtype)
-            return m, w.astype(dtype, copy=False)
-        else:
-            raise ValueError(f"Invalid form: {form!r}")
+        diag_out = w.astype(dtype, copy=False)
     else:
         if symmetrized:
             md = _laplace_sym(graph, graph_sum)
         else:
             md = _laplace(graph, graph_sum)
-        if form == "function":
-            return md, diag.astype(dtype, copy=False)
-        elif form == "lo":
-            m = _linearoperator(md, shape=graph.shape, dtype=dtype)
-            return m, diag.astype(dtype, copy=False)
-        else:
-            raise ValueError(f"Invalid form: {form!r}")
+        diag_out = diag.astype(dtype, copy=False)
+
+    if form == "function":
+        return md, diag_out
+    elif form == "lo":
+        m = _linearoperator(md, shape=graph.shape, dtype=dtype)
+        return m, diag_out
+    else:
+        raise ValueError(f"Invalid form: {form!r}")
 
 
 def _laplacian_sparse(graph, normed, axis, copy, form, dtype, symmetrized):

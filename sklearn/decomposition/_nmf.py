@@ -2208,6 +2208,27 @@ class MiniBatchNMF(_BaseNMF):
 
         return batch_cost
 
+    def _check_no_improvement(self, step, n_steps):
+        """Check early stopping based on lack of improvement on smoothed cost."""
+        if self._ewa_cost_min is None or self._ewa_cost < self._ewa_cost_min:
+            self._no_improvement = 0
+            self._ewa_cost_min = self._ewa_cost
+        else:
+            self._no_improvement += 1
+
+        if (
+            self.max_no_improvement is not None
+            and self._no_improvement >= self.max_no_improvement
+        ):
+            if self.verbose:
+                print(
+                    "Converged (lack of improvement in objective function) "
+                    f"at step {step}/{n_steps}"
+                )
+            return True
+
+        return False
+
     def _minibatch_convergence(
         self, X, batch_cost, H, H_buffer, n_samples, step, n_steps
     ):
@@ -2249,21 +2270,7 @@ class MiniBatchNMF(_BaseNMF):
 
         # Early stopping heuristic due to lack of improvement on smoothed
         # cost function
-        if self._ewa_cost_min is None or self._ewa_cost < self._ewa_cost_min:
-            self._no_improvement = 0
-            self._ewa_cost_min = self._ewa_cost
-        else:
-            self._no_improvement += 1
-
-        if (
-            self.max_no_improvement is not None
-            and self._no_improvement >= self.max_no_improvement
-        ):
-            if self.verbose:
-                print(
-                    "Converged (lack of improvement in objective function) "
-                    f"at step {step}/{n_steps}"
-                )
+        if self._check_no_improvement(step, n_steps):
             return True
 
         return False
