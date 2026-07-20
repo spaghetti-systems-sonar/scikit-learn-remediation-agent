@@ -26,6 +26,32 @@ from sklearn.utils.parallel import Parallel, delayed
 from sklearn.utils.validation import validate_data
 
 
+def _smacof_single_init(init, n_samples, n_components, random_state):
+    """Initialize the embedding for SMACOF."""
+    if init is None:
+        X = random_state.uniform(size=n_samples * n_components)
+        X = X.reshape((n_samples, n_components))
+    else:
+        n_components = init.shape[1]
+        if n_samples != init.shape[0]:
+            raise ValueError(
+                "init matrix should be of shape (%d, %d)" % (n_samples, n_components)
+            )
+        X = init
+    return X, n_components
+
+
+def _check_convergence(old_stress, stress, distances, eps, verbose, iteration):
+    """Check whether the SMACOF algorithm has converged."""
+    if old_stress is not None:
+        sum_squared_distances = (distances.ravel() ** 2).sum()
+        if ((old_stress - stress) / (sum_squared_distances / 2)) < eps:
+            if verbose:  # pragma: no cover
+                print(f"Convergence criterion reached (iteration {iteration}).")
+            return True
+    return False
+
+
 def _smacof_single(
     dissimilarities,
     metric=True,
@@ -120,18 +146,9 @@ def _smacof_single(
 
     dissimilarities_flat = ((1 - np.tri(n_samples)) * dissimilarities).ravel()
     dissimilarities_flat_w = dissimilarities_flat[dissimilarities_flat != 0]
-    if init is None:
-        # Randomly choose initial configuration
-        X = random_state.uniform(size=n_samples * n_components)
-        X = X.reshape((n_samples, n_components))
-    else:
-        # overrides the parameter p
-        n_components = init.shape[1]
-        if n_samples != init.shape[0]:
-            raise ValueError(
-                "init matrix should be of shape (%d, %d)" % (n_samples, n_components)
-            )
-        X = init
+    X, n_components = _smacof_single_init(
+        init, n_samples, n_components, random_state
+    )
     distances = euclidean_distances(X)
 
     # Out of bounds condition cannot happen because we are transforming
@@ -180,12 +197,8 @@ def _smacof_single(
 
         if verbose >= 2:  # pragma: no cover
             print(f"Iteration {it}, stress {stress:.4f}")
-        if old_stress is not None:
-            sum_squared_distances = (distances.ravel() ** 2).sum()
-            if ((old_stress - stress) / (sum_squared_distances / 2)) < eps:
-                if verbose:  # pragma: no cover
-                    print(f"Convergence criterion reached (iteration {it}).")
-                break
+        if _check_convergence(old_stress, stress, distances, eps, verbose, it):
+            break
         old_stress = stress
 
     if normalized_stress:
@@ -705,6 +718,64 @@ class MDS(BaseEstimator):
         self.fit_transform(X, init=init)
         return self
 
+    def _resolve_init(self):
+        """Resolve the `init` parameter, handling deprecation warnings."""
+        if self.init == "warn":
+            warnings.warn(
+                "The default value of `init` will change from 'random' to "
+                "'classical_mds' in 1.10. To suppress this warning, provide "
+                "some value of `init`.",
+                FutureWarning,
+            )
+            self._init = "random"
+        else:
+            self._init = self.init
+
+    def _resolve_metric_params(self):
+        """Resolve `metric`, `dissimilarity`, and `metric_mds` parameters."""
+        if self.dissimilarity != "deprecated":
+            if not isinstance(self.metric, bool) and self.metric != "euclidean":
+                raise ValueError(
+                    "You provided both `dissimilarity` and `metric`. Please use "
+                    "only `metric`."
+                )
+            else:
+                warnings.warn(
+                    "The `dissimilarity` parameter is deprecated and will be "
+                    "removed in 1.10. Use `metric` instead.",
+                    FutureWarning,
+                )
+                self._metric = self.dissimilarity
+
+        if isinstance(self.metric, bool):
+            warnings.warn(
+                f"Use metric_mds={self.metric} instead of"
+                f" metric={self.metric}. The "
+                "support for metric={True/False} will be dropped in 1.10.",
+                FutureWarning,
+            )
+            if self.dissimilarity == "deprecated":
+                self._metric = "euclidean"
+            self._metric_mds = self.metric
+        else:
+            if self.dissimilarity == "deprecated":
+                self._metric = self.metric
+            self._metric_mds = self.metric_mds
+
+    def _compute_dissimilarity_matrix(self, X):
+        """Compute the dissimilarity matrix from input data."""
+        if self._metric == "precomputed":
+            self.dissimilarity_matrix_ = X
+            self.dissimilarity_matrix_ = check_symmetric(
+                self.dissimilarity_matrix_, raise_exception=True
+            )
+        else:
+            self.dissimilarity_matrix_ = pairwise_distances(
+                X,
+                metric=self._metric,
+                **(self.metric_params if self.metric_params is not None else {}),
+            )
+
     @_fit_context(prefer_skip_nested_validation=True)
     def fit_transform(self, X, y=None, init=None):
         """
@@ -730,45 +801,8 @@ class MDS(BaseEstimator):
         X_new : ndarray of shape (n_samples, n_components)
             X transformed in the new space.
         """
-
-        if self.init == "warn":
-            warnings.warn(
-                "The default value of `init` will change from 'random' to "
-                "'classical_mds' in 1.10. To suppress this warning, provide "
-                "some value of `init`.",
-                FutureWarning,
-            )
-            self._init = "random"
-        else:
-            self._init = self.init
-
-        if self.dissimilarity != "deprecated":
-            if not isinstance(self.metric, bool) and self.metric != "euclidean":
-                raise ValueError(
-                    "You provided both `dissimilarity` and `metric`. Please use "
-                    "only `metric`."
-                )
-            else:
-                warnings.warn(
-                    "The `dissimilarity` parameter is deprecated and will be "
-                    "removed in 1.10. Use `metric` instead.",
-                    FutureWarning,
-                )
-                self._metric = self.dissimilarity
-
-        if isinstance(self.metric, bool):
-            warnings.warn(
-                f"Use metric_mds={self.metric} instead of metric={self.metric}. The "
-                "support for metric={True/False} will be dropped in 1.10.",
-                FutureWarning,
-            )
-            if self.dissimilarity == "deprecated":
-                self._metric = "euclidean"
-            self._metric_mds = self.metric
-        else:
-            if self.dissimilarity == "deprecated":
-                self._metric = self.metric
-            self._metric_mds = self.metric_mds
+        self._resolve_init()
+        self._resolve_metric_params()
 
         X = validate_data(self, X)
         if X.shape[0] == X.shape[1] and self._metric != "precomputed":
@@ -779,17 +813,7 @@ class MDS(BaseEstimator):
                 "set ``metric='precomputed'``."
             )
 
-        if self._metric == "precomputed":
-            self.dissimilarity_matrix_ = X
-            self.dissimilarity_matrix_ = check_symmetric(
-                self.dissimilarity_matrix_, raise_exception=True
-            )
-        else:
-            self.dissimilarity_matrix_ = pairwise_distances(
-                X,
-                metric=self._metric,
-                **(self.metric_params if self.metric_params is not None else {}),
-            )
+        self._compute_dissimilarity_matrix(X)
 
         if init is not None:
             init_array = init
