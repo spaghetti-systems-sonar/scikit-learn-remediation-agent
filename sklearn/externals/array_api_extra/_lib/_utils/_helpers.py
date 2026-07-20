@@ -62,6 +62,26 @@ __all__ = [
 _COMPLEX_FLOATING = "complex floating"
 
 
+def _in1d_small_x2(
+    x1: Array,
+    x2: Array,
+    *,
+    invert: bool,
+    x1_shape: tuple[int, ...],
+    xp: ModuleType,
+) -> Array:
+    """Fast path for `in1d` when x2 is small relative to x1."""
+    if invert:
+        mask = xp.ones(x1_shape[0], dtype=xp.bool, device=_compat.device(x1))
+        for a in x2:
+            mask &= x1 != a
+    else:
+        mask = xp.zeros(x1_shape[0], dtype=xp.bool, device=_compat.device(x1))
+        for a in x2:
+            mask |= x1 == a
+    return mask
+
+
 def in1d(
     x1: Array,
     x2: Array,
@@ -89,15 +109,7 @@ def in1d(
 
     # This code is run to make the code significantly faster
     if x2_shape[0] < 10 * x1_shape[0] ** 0.145 and isinstance(x2, Iterable):
-        if invert:
-            mask = xp.ones(x1_shape[0], dtype=xp.bool, device=_compat.device(x1))
-            for a in x2:
-                mask &= x1 != a
-        else:
-            mask = xp.zeros(x1_shape[0], dtype=xp.bool, device=_compat.device(x1))
-            for a in x2:
-                mask |= x1 == a
-        return mask
+        return _in1d_small_x2(x1, x2, invert=invert, x1_shape=x1_shape, xp=xp)
 
     rev_idx = xp.empty(0)  # placeholder
     if not assume_unique:

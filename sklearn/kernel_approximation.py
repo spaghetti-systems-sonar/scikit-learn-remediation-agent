@@ -218,23 +218,7 @@ class PolynomialCountSketch(
                 " match that of training samples."
             )
 
-        count_sketches = np.zeros((X_gamma.shape[0], self.degree, self.n_components))
-
-        if sp.issparse(X_gamma):
-            for j in range(X_gamma.shape[1]):
-                for d in range(self.degree):
-                    iHashIndex = self.indexHash_[d, j]
-                    iHashBit = self.bitHash_[d, j]
-                    count_sketches[:, d, iHashIndex] += (
-                        (iHashBit * X_gamma[:, [j]]).toarray().ravel()
-                    )
-
-        else:
-            for j in range(X_gamma.shape[1]):
-                for d in range(self.degree):
-                    iHashIndex = self.indexHash_[d, j]
-                    iHashBit = self.bitHash_[d, j]
-                    count_sketches[:, d, iHashIndex] += iHashBit * X_gamma[:, j]
+        count_sketches = self._compute_count_sketches(X_gamma)
 
         # For each same, compute a count sketch of phi(x) using the polynomial
         # multiplication (via FFT) of p count sketches of x.
@@ -243,6 +227,31 @@ class PolynomialCountSketch(
         data_sketch = np.real(ifft(count_sketches_fft_prod, overwrite_x=True))
 
         return data_sketch
+
+    def _compute_count_sketches(self, x_gamma):
+        """Compute count sketches for the given data matrix."""
+        count_sketches = np.zeros(
+            (x_gamma.shape[0], self.degree, self.n_components)
+        )
+
+        if sp.issparse(x_gamma):
+            for j in range(x_gamma.shape[1]):
+                for d in range(self.degree):
+                    iHashIndex = self.indexHash_[d, j]
+                    iHashBit = self.bitHash_[d, j]
+                    count_sketches[:, d, iHashIndex] += (
+                        (iHashBit * x_gamma[:, [j]]).toarray().ravel()
+                    )
+        else:
+            for j in range(x_gamma.shape[1]):
+                for d in range(self.degree):
+                    iHashIndex = self.indexHash_[d, j]
+                    iHashBit = self.bitHash_[d, j]
+                    count_sketches[:, d, iHashIndex] += (
+                        iHashBit * x_gamma[:, j]
+                    )
+
+        return count_sketches
 
     def __sklearn_tags__(self):
         tags = super().__sklearn_tags__()
