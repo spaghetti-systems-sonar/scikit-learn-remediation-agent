@@ -100,7 +100,7 @@ class GroupsConsumerMixin(_MetadataRequester):
     .. versionadded:: 1.3
     """
 
-    __metadata_request__split = {"groups": True}
+    _metadata_request__split = {"groups": True}
 
 
 class BaseCrossValidator(_MetadataRequester, metaclass=ABCMeta):
@@ -113,7 +113,7 @@ class BaseCrossValidator(_MetadataRequester, metaclass=ABCMeta):
     # unless indicated by inheriting from ``GroupsConsumerMixin``.
     # This also prevents ``set_split_request`` to be generated for splitters
     # which don't support ``groups``.
-    __metadata_request__split = {"groups": metadata_routing.UNUSED}
+    _metadata_request__split = {"groups": metadata_routing.UNUSED}
 
     def split(self, X, y=None, groups=None):
         """Generate indices to split data into training and test set.
@@ -1605,7 +1605,9 @@ class _RepeatedSplits(_MetadataRequester, metaclass=ABCMeta):
     # unless indicated by inheriting from ``GroupsConsumerMixin``.
     # This also prevents ``set_split_request`` to be generated for splitters
     # which don't support ``groups``.
-    __metadata_request__split = {"groups": metadata_routing.UNUSED}
+    # Note: using a single leading underscore to avoid name mangling; the
+    # attribute is read via substring matching in _MetadataRequester.
+    _metadata_request__split = {"groups": metadata_routing.UNUSED}
 
     def __init__(self, cv, *, n_repeats=10, random_state=None, **cvargs):
         if not isinstance(n_repeats, numbers.Integral):
@@ -1892,7 +1894,7 @@ class BaseShuffleSplit(_MetadataRequester, metaclass=ABCMeta):
     # unless indicated by inheriting from ``GroupsConsumerMixin``.
     # This also prevents ``set_split_request`` to be generated for splitters
     # which don't support ``groups``.
-    __metadata_request__split = {"groups": metadata_routing.UNUSED}
+    _metadata_request__split = {"groups": metadata_routing.UNUSED}
 
     def __init__(
         self, n_splits=10, *, test_size=None, train_size=None, random_state=None
