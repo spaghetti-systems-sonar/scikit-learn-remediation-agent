@@ -842,47 +842,56 @@ class RadiusNeighborsClassifier(RadiusNeighborsMixin, ClassifierMixin, Neighbors
         probabilities = []
         # iterate over multi-output, measure probabilities of the k-th output.
         for k, classes_k in enumerate(classes_):
-            pred_labels = np.zeros(len(neigh_ind), dtype=object)
-            pred_labels[:] = [_y[ind, k] for ind in neigh_ind]
-
-            proba_k = np.zeros((n_queries, classes_k.size))
-            proba_inl = np.zeros((len(inliers), classes_k.size))
-
-            # samples have different size of neighbors within the same radius
-            if weights is None:
-                for i, idx in enumerate(pred_labels[inliers]):
-                    proba_inl[i, :] = np.bincount(idx, minlength=classes_k.size)
-            else:
-                for i, idx in enumerate(pred_labels[inliers]):
-                    proba_inl[i, :] = np.bincount(
-                        idx, weights[i], minlength=classes_k.size
-                    )
-            proba_k[inliers, :] = proba_inl
-
-            if outliers.size > 0:
-                _outlier_label = self.outlier_label_[k]
-                label_index = np.flatnonzero(classes_k == _outlier_label)
-                if label_index.size == 1:
-                    proba_k[outliers, label_index[0]] = 1.0
-                else:
-                    warnings.warn(
-                        "Outlier label {} is not in training "
-                        "classes. All class probabilities of "
-                        "outliers will be assigned with 0."
-                        "".format(self.outlier_label_[k])
-                    )
-
-            # normalize 'votes' into real [0,1] probabilities
-            normalizer = proba_k.sum(axis=1)[:, np.newaxis]
-            normalizer[normalizer == 0.0] = 1.0
-            proba_k /= normalizer
-
+            proba_k = self._compute_proba_for_output(
+                k, classes_k, _y, neigh_ind, n_queries, inliers, outliers, weights
+            )
             probabilities.append(proba_k)
 
         if not self.outputs_2d_:
             probabilities = probabilities[0]
 
         return probabilities
+
+    def _compute_proba_for_output(
+        self, k, classes_k, _y, neigh_ind, n_queries, inliers, outliers, weights
+    ):
+        """Compute class probabilities for a single output."""
+        pred_labels = np.zeros(len(neigh_ind), dtype=object)
+        pred_labels[:] = [_y[ind, k] for ind in neigh_ind]
+
+        proba_k = np.zeros((n_queries, classes_k.size))
+        proba_inl = np.zeros((len(inliers), classes_k.size))
+
+        # samples have different size of neighbors within the same radius
+        if weights is None:
+            for i, idx in enumerate(pred_labels[inliers]):
+                proba_inl[i, :] = np.bincount(idx, minlength=classes_k.size)
+        else:
+            for i, idx in enumerate(pred_labels[inliers]):
+                proba_inl[i, :] = np.bincount(
+                    idx, weights[i], minlength=classes_k.size
+                )
+        proba_k[inliers, :] = proba_inl
+
+        if outliers.size > 0:
+            _outlier_label = self.outlier_label_[k]
+            label_index = np.flatnonzero(classes_k == _outlier_label)
+            if label_index.size == 1:
+                proba_k[outliers, label_index[0]] = 1.0
+            else:
+                warnings.warn(
+                    "Outlier label {} is not in training "
+                    "classes. All class probabilities of "
+                    "outliers will be assigned with 0."
+                    "".format(self.outlier_label_[k])
+                )
+
+        # normalize 'votes' into real [0,1] probabilities
+        normalizer = proba_k.sum(axis=1)[:, np.newaxis]
+        normalizer[normalizer == 0.0] = 1.0
+        proba_k /= normalizer
+
+        return proba_k
 
     # This function is defined here only to modify the parent docstring
     # and add information about X=None

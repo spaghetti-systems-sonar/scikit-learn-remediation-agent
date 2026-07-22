@@ -465,7 +465,39 @@ class NeighborsBase(MultiOutputMixin, BaseEstimator, metaclass=ABCMeta):
                 )
 
     def _fit(self, X, y=None):
-        ensure_all_finite = "allow-nan" if get_tags(self).input_tags.allow_nan else True
+        X, y = self._validate_and_prepare_data(X, y)
+        self._check_algorithm_metric()
+        self._set_effective_metric()
+
+        if isinstance(X, (NeighborsBase, BallTree, KDTree)):
+            return self._fit_from_precomputed_input(X)
+
+        X = self._check_precomputed_data(X)
+
+        n_samples = X.shape[0]
+        if n_samples == 0:
+            raise ValueError("n_samples must be greater than 0")
+
+        if issparse(X):
+            return self._fit_sparse(X)
+
+        self._fit_method = self.algorithm
+        self._fit_X = X
+        self.n_samples_fit_ = X.shape[0]
+
+        if self._fit_method == "auto":
+            self._resolve_auto_algorithm()
+
+        self._validate_minkowski_semi_metric()
+        self._build_tree(X)
+
+        return self
+
+    def _validate_and_prepare_data(self, X, y):
+        """Validate input data and prepare classification targets."""
+        ensure_all_finite = (
+            "allow-nan" if get_tags(self).input_tags.allow_nan else True
+        )
         if self.__sklearn_tags__().target_tags.required:
             if not isinstance(X, (KDTree, BallTree, NeighborsBase)):
                 X, y = validate_data(
@@ -479,38 +511,7 @@ class NeighborsBase(MultiOutputMixin, BaseEstimator, metaclass=ABCMeta):
                 )
 
             if is_classifier(self):
-                # Classification targets require a specific format
-                if y.ndim == 1 or (y.ndim == 2 and y.shape[1] == 1):
-                    if y.ndim != 1:
-                        warnings.warn(
-                            (
-                                "A column-vector y was passed when a "
-                                "1d array was expected. Please change "
-                                "the shape of y to (n_samples,), for "
-                                "example using ravel()."
-                            ),
-                            DataConversionWarning,
-                            stacklevel=2,
-                        )
-
-                    self.outputs_2d_ = False
-                    y = y.reshape((-1, 1))
-                else:
-                    self.outputs_2d_ = True
-
-                check_classification_targets(y)
-                self.classes_ = []
-                # Using `dtype=np.intp` is necessary since `np.bincount`
-                # (called in _classification.py) fails when dealing
-                # with a float64 array on 32bit systems.
-                self._y = np.empty(y.shape, dtype=np.intp)
-                for k in range(self._y.shape[1]):
-                    classes, self._y[:, k] = np.unique(y[:, k], return_inverse=True)
-                    self.classes_.append(classes)
-
-                if not self.outputs_2d_:
-                    self.classes_ = self.classes_[0]
-                    self._y = self._y.ravel()
+                y = self._process_classification_targets(y)
             else:
                 self._y = y
 
@@ -524,7 +525,48 @@ class NeighborsBase(MultiOutputMixin, BaseEstimator, metaclass=ABCMeta):
                     order="C",
                 )
 
-        self._check_algorithm_metric()
+        return X, y
+
+    def _process_classification_targets(self, y):
+        """Format classification targets and set class attributes."""
+        if y.ndim == 1 or (y.ndim == 2 and y.shape[1] == 1):
+            if y.ndim != 1:
+                warnings.warn(
+                    (
+                        "A column-vector y was passed when a "
+                        "1d array was expected. Please change "
+                        "the shape of y to (n_samples,), for "
+                        "example using ravel()."
+                    ),
+                    DataConversionWarning,
+                    stacklevel=2,
+                )
+
+            self.outputs_2d_ = False
+            y = y.reshape((-1, 1))
+        else:
+            self.outputs_2d_ = True
+
+        check_classification_targets(y)
+        self.classes_ = []
+        # Using `dtype=np.intp` is necessary since `np.bincount`
+        # (called in _classification.py) fails when dealing
+        # with a float64 array on 32bit systems.
+        self._y = np.empty(y.shape, dtype=np.intp)
+        for k in range(self._y.shape[1]):
+            classes, self._y[:, k] = np.unique(
+                y[:, k], return_inverse=True
+            )
+            self.classes_.append(classes)
+
+        if not self.outputs_2d_:
+            self.classes_ = self.classes_[0]
+            self._y = self._y.ravel()
+
+        return y
+
+    def _set_effective_metric(self):
+        """Set effective metric and metric parameters."""
         if self.metric_params is None:
             self.effective_metric_params_ = {}
         else:
@@ -537,138 +579,152 @@ class NeighborsBase(MultiOutputMixin, BaseEstimator, metaclass=ABCMeta):
         self.effective_metric_ = self.metric
         # For minkowski distance, use more efficient methods where available
         if self.metric == "minkowski":
-            p = self.effective_metric_params_.pop("p", 2)
-            w = self.effective_metric_params_.pop("w", None)
+            self._optimize_minkowski_metric()
 
-            if p == 1 and w is None:
-                self.effective_metric_ = "manhattan"
-            elif p == 2 and w is None:
-                self.effective_metric_ = "euclidean"
-            elif p == np.inf and w is None:
-                self.effective_metric_ = "chebyshev"
-            else:
-                # Use the generic minkowski metric, possibly weighted.
-                self.effective_metric_params_["p"] = p
-                self.effective_metric_params_["w"] = w
+    def _optimize_minkowski_metric(self):
+        """Replace minkowski with a more efficient metric when possible."""
+        p = self.effective_metric_params_.pop("p", 2)
+        w = self.effective_metric_params_.pop("w", None)
 
+        if p == 1 and w is None:
+            self.effective_metric_ = "manhattan"
+        elif p == 2 and w is None:
+            self.effective_metric_ = "euclidean"
+        elif p == np.inf and w is None:
+            self.effective_metric_ = "chebyshev"
+        else:
+            # Use the generic minkowski metric, possibly weighted.
+            self.effective_metric_params_["p"] = p
+            self.effective_metric_params_["w"] = w
+
+    def _fit_from_precomputed_input(self, X):
+        """Fit from a pre-built NeighborsBase, BallTree, or KDTree."""
         if isinstance(X, NeighborsBase):
             self._fit_X = X._fit_X
             self._tree = X._tree
             self._fit_method = X._fit_method
             self.n_samples_fit_ = X.n_samples_fit_
-            return self
-
         elif isinstance(X, BallTree):
             self._fit_X = X.data
             self._tree = X
             self._fit_method = "ball_tree"
             self.n_samples_fit_ = X.data.shape[0]
-            return self
-
         elif isinstance(X, KDTree):
             self._fit_X = X.data
             self._tree = X
             self._fit_method = "kd_tree"
             self.n_samples_fit_ = X.data.shape[0]
-            return self
+        return self
 
-        if self.metric == "precomputed":
-            X = _check_precomputed(X)
-            # Precomputed matrix X must be squared
-            if X.shape[0] != X.shape[1]:
-                raise ValueError(
-                    "Precomputed matrix must be square."
-                    " Input is a {}x{} matrix.".format(X.shape[0], X.shape[1])
+    def _check_precomputed_data(self, X):
+        """Validate precomputed distance matrix."""
+        if self.metric != "precomputed":
+            return X
+
+        X = _check_precomputed(X)
+        # Precomputed matrix X must be squared
+        if X.shape[0] != X.shape[1]:
+            raise ValueError(
+                "Precomputed matrix must be square."
+                " Input is a {}x{} matrix.".format(
+                    X.shape[0], X.shape[1]
                 )
-            self.n_features_in_ = X.shape[1]
+            )
+        self.n_features_in_ = X.shape[1]
+        return X
 
-        n_samples = X.shape[0]
-        if n_samples == 0:
-            raise ValueError("n_samples must be greater than 0")
+    def _fit_sparse(self, X):
+        """Handle fitting with sparse input data."""
+        if self.algorithm not in ("auto", "brute"):
+            warnings.warn(
+                "cannot use tree with sparse input: using brute force"
+            )
 
-        if issparse(X):
-            if self.algorithm not in ("auto", "brute"):
-                warnings.warn("cannot use tree with sparse input: using brute force")
-
-            if (
-                self.effective_metric_ not in VALID_METRICS_SPARSE["brute"]
-                and not callable(self.effective_metric_)
-                and not isinstance(self.effective_metric_, DistanceMetric)
-            ):
-                raise ValueError(
-                    "Metric '%s' not valid for sparse input. "
-                    "Use sorted(sklearn.neighbors."
-                    "VALID_METRICS_SPARSE['brute']) "
-                    "to get valid options. "
-                    "Metric can also be a callable function." % (self.effective_metric_)
-                )
-            self._fit_X = X.copy()
-            self._tree = None
-            self._fit_method = "brute"
-            self.n_samples_fit_ = X.shape[0]
-            return self
-
-        self._fit_method = self.algorithm
-        self._fit_X = X
+        if (
+            self.effective_metric_ not in VALID_METRICS_SPARSE["brute"]
+            and not callable(self.effective_metric_)
+            and not isinstance(self.effective_metric_, DistanceMetric)
+        ):
+            raise ValueError(
+                "Metric '%s' not valid for sparse input. "
+                "Use sorted(sklearn.neighbors."
+                "VALID_METRICS_SPARSE['brute']) "
+                "to get valid options. "
+                "Metric can also be a callable function."
+                % (self.effective_metric_)
+            )
+        self._fit_X = X.copy()
+        self._tree = None
+        self._fit_method = "brute"
         self.n_samples_fit_ = X.shape[0]
+        return self
 
-        if self._fit_method == "auto":
-            # A tree approach is better for small number of neighbors or small
-            # number of features, with KDTree generally faster when available
-            if (
-                self.metric == "precomputed"
-                or self._fit_X.shape[1] > 15
-                or (
-                    self.n_neighbors is not None
-                    and self.n_neighbors >= self._fit_X.shape[0] // 2
-                )
-            ):
-                self._fit_method = "brute"
-            else:
-                if (
-                    self.effective_metric_ == "minkowski"
-                    and self.effective_metric_params_["p"] < 1
-                ):
-                    self._fit_method = "brute"
-                elif (
-                    self.effective_metric_ == "minkowski"
-                    and self.effective_metric_params_.get("w") is not None
-                ):
-                    # 'minkowski' with weights is not supported by KDTree but is
-                    # supported byBallTree.
-                    self._fit_method = "ball_tree"
-                elif self.effective_metric_ in VALID_METRICS["kd_tree"]:
-                    self._fit_method = "kd_tree"
-                elif (
-                    callable(self.effective_metric_)
-                    or self.effective_metric_ in VALID_METRICS["ball_tree"]
-                ):
-                    self._fit_method = "ball_tree"
-                else:
-                    self._fit_method = "brute"
+    def _resolve_auto_algorithm(self):
+        """Determine the best algorithm when algorithm='auto'."""
+        # A tree approach is better for small number of neighbors or small
+        # number of features, with KDTree generally faster when available
+        if (
+            self.metric == "precomputed"
+            or self._fit_X.shape[1] > 15
+            or (
+                self.n_neighbors is not None
+                and self.n_neighbors >= self._fit_X.shape[0] // 2
+            )
+        ):
+            self._fit_method = "brute"
+            return
 
         if (
             self.effective_metric_ == "minkowski"
             and self.effective_metric_params_["p"] < 1
         ):
-            # For 0 < p < 1 Minkowski distances aren't valid distance
-            # metric as they do not satisfy triangular inequality:
-            # they are semi-metrics.
-            # algorithm="kd_tree" and algorithm="ball_tree" can't be used because
-            # KDTree and BallTree require a proper distance metric to work properly.
-            # However, the brute-force algorithm supports semi-metrics.
-            if self._fit_method == "brute":
-                warnings.warn(
-                    "Mind that for 0 < p < 1, Minkowski metrics are not distance"
-                    " metrics. Continuing the execution with `algorithm='brute'`."
-                )
-            else:  # self._fit_method in ("kd_tree", "ball_tree")
-                raise ValueError(
-                    f'algorithm="{self._fit_method}" does not support 0 < p < 1 for '
-                    "the Minkowski metric. To resolve this problem either "
-                    'set p >= 1 or algorithm="brute".'
-                )
+            self._fit_method = "brute"
+        elif (
+            self.effective_metric_ == "minkowski"
+            and self.effective_metric_params_.get("w") is not None
+        ):
+            # 'minkowski' with weights is not supported by KDTree but is
+            # supported byBallTree.
+            self._fit_method = "ball_tree"
+        elif self.effective_metric_ in VALID_METRICS["kd_tree"]:
+            self._fit_method = "kd_tree"
+        elif (
+            callable(self.effective_metric_)
+            or self.effective_metric_ in VALID_METRICS["ball_tree"]
+        ):
+            self._fit_method = "ball_tree"
+        else:
+            self._fit_method = "brute"
 
+    def _validate_minkowski_semi_metric(self):
+        """Validate Minkowski metric with p < 1 (semi-metric)."""
+        is_minkowski_semi_metric = (
+            self.effective_metric_ == "minkowski"
+            and self.effective_metric_params_["p"] < 1
+        )
+        if not is_minkowski_semi_metric:
+            return
+
+        # For 0 < p < 1 Minkowski distances aren't valid distance
+        # metric as they do not satisfy triangular inequality:
+        # they are semi-metrics.
+        # algorithm="kd_tree" and algorithm="ball_tree" can't be used because
+        # KDTree and BallTree require a proper distance metric to work
+        # properly. However, the brute-force algorithm supports semi-metrics.
+        if self._fit_method == "brute":
+            warnings.warn(
+                "Mind that for 0 < p < 1, Minkowski metrics are not distance"
+                " metrics. Continuing the execution with `algorithm='brute'`."
+            )
+        else:  # self._fit_method in ("kd_tree", "ball_tree")
+            raise ValueError(
+                f'algorithm="{self._fit_method}" does not support 0 < p < 1'
+                " for the Minkowski metric. To resolve this problem either "
+                'set p >= 1 or algorithm="brute".'
+            )
+
+    def _build_tree(self, X):
+        """Build the tree structure for the chosen algorithm."""
         if self._fit_method == "ball_tree":
             self._tree = BallTree(
                 X,
@@ -695,8 +751,6 @@ class NeighborsBase(MultiOutputMixin, BaseEstimator, metaclass=ABCMeta):
             )
         elif self._fit_method == "brute":
             self._tree = None
-
-        return self
 
     def __sklearn_tags__(self):
         tags = super().__sklearn_tags__()
@@ -850,12 +904,27 @@ class KNeighborsMixin:
                 f"n_samples = {X.shape[0]}"  # include n_samples for common tests
             )
 
+        results = self._compute_kneighbors_results(
+            X, n_neighbors, return_distance
+        )
+
+        if not query_is_train:
+            return results
+
+        return self._filter_self_neighbors(
+            results, X, n_neighbors, return_distance
+        )
+
+    def _compute_kneighbors_results(self, X, n_neighbors, return_distance):
+        """Dispatch kneighbors computation to the appropriate algorithm."""
         n_jobs = effective_n_jobs(self.n_jobs)
         chunked_results = None
         use_pairwise_distances_reductions = (
             self._fit_method == "brute"
             and ArgKmin.is_usable_for(
-                X if X is not None else self._fit_X, self._fit_X, self.effective_metric_
+                X if X is not None else self._fit_X,
+                self._fit_X,
+                self.effective_metric_,
             )
         )
         if use_pairwise_distances_reductions:
@@ -870,7 +939,9 @@ class KNeighborsMixin:
             )
 
         elif (
-            self._fit_method == "brute" and self.metric == "precomputed" and issparse(X)
+            self._fit_method == "brute"
+            and self.metric == "precomputed"
+            and issparse(X)
         ):
             results = _kneighbors_from_graph(
                 X, n_neighbors=n_neighbors, return_distance=return_distance
@@ -921,41 +992,45 @@ class KNeighborsMixin:
             raise ValueError("internal: _fit_method not recognized")
 
         if chunked_results is not None:
-            if return_distance:
-                neigh_dist, neigh_ind = zip(*chunked_results)
-                results = np.vstack(neigh_dist), np.vstack(neigh_ind)
-            else:
-                results = np.vstack(chunked_results)
+            return self._aggregate_chunked_results(
+                chunked_results, return_distance
+            )
+        return results
 
-        if not query_is_train:
-            return results
+    @staticmethod
+    def _aggregate_chunked_results(chunked_results, return_distance):
+        """Aggregate chunked results from parallel kneighbors computation."""
+        if return_distance:
+            neigh_dist, neigh_ind = zip(*chunked_results)
+            return np.vstack(neigh_dist), np.vstack(neigh_ind)
+        return np.vstack(chunked_results)
+
+    @staticmethod
+    def _filter_self_neighbors(results, X, n_neighbors, return_distance):
+        """Remove self from neighbors when query data is the training data."""
+        if return_distance:
+            neigh_dist, neigh_ind = results
         else:
-            # If the query data is the same as the indexed data, we would like
-            # to ignore the first nearest neighbor of every sample, i.e
-            # the sample itself.
-            if return_distance:
-                neigh_dist, neigh_ind = results
-            else:
-                neigh_ind = results
+            neigh_ind = results
 
-            n_queries, _ = X.shape
-            sample_range = np.arange(n_queries)[:, None]
-            sample_mask = neigh_ind != sample_range
+        n_queries, _ = X.shape
+        sample_range = np.arange(n_queries)[:, None]
+        sample_mask = neigh_ind != sample_range
 
-            # Corner case: When the number of duplicates are more
-            # than the number of neighbors, the first NN will not
-            # be the sample, but a duplicate.
-            # In that case mask the first duplicate.
-            dup_gr_nbrs = np.all(sample_mask, axis=1)
-            sample_mask[:, 0][dup_gr_nbrs] = False
-            neigh_ind = np.reshape(neigh_ind[sample_mask], (n_queries, n_neighbors - 1))
+        # Corner case: When the number of duplicates are more
+        # than the number of neighbors, the first NN will not
+        # be the sample, but a duplicate.
+        # In that case mask the first duplicate.
+        dup_gr_nbrs = np.all(sample_mask, axis=1)
+        sample_mask[:, 0][dup_gr_nbrs] = False
+        neigh_ind = np.reshape(neigh_ind[sample_mask], (n_queries, n_neighbors - 1))
 
-            if return_distance:
-                neigh_dist = np.reshape(
-                    neigh_dist[sample_mask], (n_queries, n_neighbors - 1)
-                )
-                return neigh_dist, neigh_ind
-            return neigh_ind
+        if return_distance:
+            neigh_dist = np.reshape(
+                neigh_dist[sample_mask], (n_queries, n_neighbors - 1)
+            )
+            return neigh_dist, neigh_ind
+        return neigh_ind
 
     def kneighbors_graph(self, X=None, n_neighbors=None, mode="connectivity"):
         """Compute the (weighted) graph of k-Neighbors for points in X.
@@ -1083,6 +1158,108 @@ class RadiusNeighborsMixin:
             results = neigh_ind
         return results
 
+    def _radius_neighbors_preprocess_data(self, X):
+        """Validate and preprocess input data for radius_neighbors."""
+        ensure_all_finite = (
+            "allow-nan" if get_tags(self).input_tags.allow_nan else True
+        )
+        query_is_train = X is None
+        if query_is_train:
+            X = self._fit_X
+        elif self.metric == "precomputed":
+            X = _check_precomputed(X)
+        else:
+            X = validate_data(
+                self,
+                X,
+                ensure_all_finite=ensure_all_finite,
+                accept_sparse="csr",
+                reset=False,
+                order="C",
+            )
+        return X, query_is_train
+
+    def _radius_neighbors_brute_force(
+        self, X, radius, return_distance, sort_results
+    ):
+        """Compute radius neighbors using brute force with joblib backend."""
+        # for efficiency, use squared euclidean distances
+        if self.effective_metric_ == "euclidean":
+            radius *= radius
+            kwds = {"squared": True}
+        else:
+            kwds = self.effective_metric_params_
+
+        reduce_func = partial(
+            self._radius_neighbors_reduce_func,
+            radius=radius,
+            return_distance=return_distance,
+        )
+
+        chunked_results = pairwise_distances_chunked(
+            X,
+            self._fit_X,
+            reduce_func=reduce_func,
+            metric=self.effective_metric_,
+            n_jobs=self.n_jobs,
+            **kwds,
+        )
+        if return_distance:
+            neigh_dist_chunks, neigh_ind_chunks = zip(*chunked_results)
+            neigh_dist_list = list(itertools.chain.from_iterable(neigh_dist_chunks))
+            neigh_ind_list = list(itertools.chain.from_iterable(neigh_ind_chunks))
+            neigh_dist = _to_object_array(neigh_dist_list)
+            neigh_ind = _to_object_array(neigh_ind_list)
+            results = neigh_dist, neigh_ind
+        else:
+            neigh_ind_list = list(itertools.chain.from_iterable(chunked_results))
+            results = _to_object_array(neigh_ind_list)
+
+        if sort_results:
+            for ii in range(len(neigh_dist)):
+                order = np.argsort(neigh_dist[ii], kind="mergesort")
+                neigh_ind[ii] = neigh_ind[ii][order]
+                neigh_dist[ii] = neigh_dist[ii][order]
+            results = neigh_dist, neigh_ind
+
+        return results
+
+    def _radius_neighbors_tree(self, X, radius, return_distance, sort_results):
+        """Compute radius neighbors using ball_tree or kd_tree."""
+        if issparse(X):
+            raise ValueError(
+                "%s does not work with sparse matrices. Densify the data, "
+                "or set algorithm='brute'" % self._fit_method
+            )
+
+        n_jobs = effective_n_jobs(self.n_jobs)
+        delayed_query = delayed(self._tree.query_radius)
+        chunked_results = Parallel(n_jobs, prefer="threads")(
+            delayed_query(X[s], radius, return_distance, sort_results=sort_results)
+            for s in gen_even_slices(X.shape[0], n_jobs)
+        )
+        if return_distance:
+            neigh_ind, neigh_dist = tuple(zip(*chunked_results))
+            return np.hstack(neigh_dist), np.hstack(neigh_ind)
+        return np.hstack(chunked_results)
+
+    def _radius_neighbors_exclude_self(self, results, return_distance):
+        """Remove self-matches when query data is the training data."""
+        if return_distance:
+            neigh_dist, neigh_ind = results
+        else:
+            neigh_ind = results
+
+        for ind, ind_neighbor in enumerate(neigh_ind):
+            mask = ind_neighbor != ind
+            neigh_ind[ind] = ind_neighbor[mask]
+            if return_distance:
+                neigh_dist[ind] = neigh_dist[ind][mask]
+
+        if return_distance:
+            return neigh_dist, neigh_ind
+        return neigh_ind
+
     def radius_neighbors(
         self, X=None, radius=None, return_distance=True, sort_results=False
     ):
@@ -1164,22 +1341,7 @@ class RadiusNeighborsMixin:
         if sort_results and not return_distance:
             raise ValueError("return_distance must be True if sort_results is True.")
 
-        ensure_all_finite = "allow-nan" if get_tags(self).input_tags.allow_nan else True
-        query_is_train = X is None
-        if query_is_train:
-            X = self._fit_X
-        else:
-            if self.metric == "precomputed":
-                X = _check_precomputed(X)
-            else:
-                X = validate_data(
-                    self,
-                    X,
-                    ensure_all_finite=ensure_all_finite,
-                    accept_sparse="csr",
-                    reset=False,
-                    order="C",
-                )
+        X, query_is_train = self._radius_neighbors_preprocess_data(X)
 
         if radius is None:
             radius = self.radius
@@ -1187,7 +1349,9 @@ class RadiusNeighborsMixin:
         use_pairwise_distances_reductions = (
             self._fit_method == "brute"
             and RadiusNeighbors.is_usable_for(
-                X if X is not None else self._fit_X, self._fit_X, self.effective_metric_
+                X if X is not None else self._fit_X,
+                self._fit_X,
+                self.effective_metric_,
             )
         )
 
@@ -1202,104 +1366,26 @@ class RadiusNeighborsMixin:
                 return_distance=return_distance,
                 sort_results=sort_results,
             )
-
         elif (
             self._fit_method == "brute" and self.metric == "precomputed" and issparse(X)
         ):
             results = _radius_neighbors_from_graph(
                 X, radius=radius, return_distance=return_distance
             )
-
         elif self._fit_method == "brute":
-            # Joblib-based backend, which is used when user-defined callable
-            # are passed for metric.
-
-            # This won't be used in the future once PairwiseDistancesReductions
-            # support:
-            #   - DistanceMetrics which work on supposedly binary data
-            #   - CSR-dense and dense-CSR case if 'euclidean' in metric.
-
-            # for efficiency, use squared euclidean distances
-            if self.effective_metric_ == "euclidean":
-                radius *= radius
-                kwds = {"squared": True}
-            else:
-                kwds = self.effective_metric_params_
-
-            reduce_func = partial(
-                self._radius_neighbors_reduce_func,
-                radius=radius,
-                return_distance=return_distance,
+            results = self._radius_neighbors_brute_force(
+                X, radius, return_distance, sort_results
             )
-
-            chunked_results = pairwise_distances_chunked(
-                X,
-                self._fit_X,
-                reduce_func=reduce_func,
-                metric=self.effective_metric_,
-                n_jobs=self.n_jobs,
-                **kwds,
-            )
-            if return_distance:
-                neigh_dist_chunks, neigh_ind_chunks = zip(*chunked_results)
-                neigh_dist_list = list(itertools.chain.from_iterable(neigh_dist_chunks))
-                neigh_ind_list = list(itertools.chain.from_iterable(neigh_ind_chunks))
-                neigh_dist = _to_object_array(neigh_dist_list)
-                neigh_ind = _to_object_array(neigh_ind_list)
-                results = neigh_dist, neigh_ind
-            else:
-                neigh_ind_list = list(itertools.chain.from_iterable(chunked_results))
-                results = _to_object_array(neigh_ind_list)
-
-            if sort_results:
-                for ii in range(len(neigh_dist)):
-                    order = np.argsort(neigh_dist[ii], kind="mergesort")
-                    neigh_ind[ii] = neigh_ind[ii][order]
-                    neigh_dist[ii] = neigh_dist[ii][order]
-                results = neigh_dist, neigh_ind
-
         elif self._fit_method in ["ball_tree", "kd_tree"]:
-            if issparse(X):
-                raise ValueError(
-                    "%s does not work with sparse matrices. Densify the data, "
-                    "or set algorithm='brute'" % self._fit_method
-                )
-
-            n_jobs = effective_n_jobs(self.n_jobs)
-            delayed_query = delayed(self._tree.query_radius)
-            chunked_results = Parallel(n_jobs, prefer="threads")(
-                delayed_query(X[s], radius, return_distance, sort_results=sort_results)
-                for s in gen_even_slices(X.shape[0], n_jobs)
+            results = self._radius_neighbors_tree(
+                X, radius, return_distance, sort_results
             )
-            if return_distance:
-                neigh_ind, neigh_dist = tuple(zip(*chunked_results))
-                results = np.hstack(neigh_dist), np.hstack(neigh_ind)
-            else:
-                results = np.hstack(chunked_results)
         else:
             raise ValueError("internal: _fit_method not recognized")
 
         if not query_is_train:
             return results
-        else:
-            # If the query data is the same as the indexed data, we would like
-            # to ignore the first nearest neighbor of every sample, i.e
-            # the sample itself.
-            if return_distance:
-                neigh_dist, neigh_ind = results
-            else:
-                neigh_ind = results
-
-            for ind, ind_neighbor in enumerate(neigh_ind):
-                mask = ind_neighbor != ind
-
-                neigh_ind[ind] = ind_neighbor[mask]
-                if return_distance:
-                    neigh_dist[ind] = neigh_dist[ind][mask]
-
-            if return_distance:
-                return neigh_dist, neigh_ind
-            return neigh_ind
+        return self._radius_neighbors_exclude_self(results, return_distance)
 
     def radius_neighbors_graph(
         self, X=None, radius=None, mode="connectivity", sort_results=False
