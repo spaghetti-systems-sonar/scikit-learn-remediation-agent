@@ -57,6 +57,9 @@ try:
 except ImportError:
     basemap = False
 
+DD_LONG = "dd long"
+DD_LAT = "dd lat"
+
 
 def construct_grids(batch):
     """Construct the map grid from the batch object
@@ -101,8 +104,8 @@ def create_species_bunch(species_name, train, test, coverages, xgrid, ygrid):
         bunch["pts_%s" % label] = pts
 
         # determine coverage values for each of the training & testing points
-        ix = np.searchsorted(xgrid, pts["dd long"])
-        iy = np.searchsorted(ygrid, pts["dd lat"])
+        ix = np.searchsorted(xgrid, pts[DD_LONG])
+        iy = np.searchsorted(ygrid, pts[DD_LAT])
         bunch["cov_%s" % label] = coverages[:, -iy, ix].T
 
     return bunch
@@ -210,16 +213,16 @@ def plot_species_distribution(
 
         # scatter training/testing points
         plt.scatter(
-            species.pts_train["dd long"],
-            species.pts_train["dd lat"],
+            species.pts_train[DD_LONG],
+            species.pts_train[DD_LAT],
             s=2**2,
             c="black",
             marker="^",
             label="train",
         )
         plt.scatter(
-            species.pts_test["dd long"],
-            species.pts_test["dd lat"],
+            species.pts_test[DD_LONG],
+            species.pts_test[DD_LAT],
             s=2**2,
             c="black",
             marker="x",
