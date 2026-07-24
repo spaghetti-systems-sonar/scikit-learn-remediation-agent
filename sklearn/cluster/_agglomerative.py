@@ -182,6 +182,65 @@ def _single_linkage_tree(
 # Hierarchical tree building functions
 
 
+def _ward_tree_no_connectivity(X, n_clusters):
+    """Compute unstructured Ward clustering using scipy."""
+    from scipy.cluster import hierarchy  # imports PIL
+
+    if n_clusters is not None:
+        warnings.warn(
+            (
+                "Partial build of the tree is implemented "
+                "only for structured clustering (i.e. with "
+                "explicit connectivity). The algorithm "
+                "will build the full tree and only "
+                "retain the lower branches required "
+                "for the specified number of clusters"
+            ),
+            stacklevel=3,
+        )
+    X = np.require(X, requirements="W")
+    out = hierarchy.ward(X)
+    children_ = out[:, :2].astype(np.intp)
+    distances = out[:, 2]
+    return children_, distances
+
+
+def _compute_n_nodes(n_clusters, n_samples):
+    """Compute the number of nodes, validating n_clusters."""
+    if n_clusters is None:
+        return 2 * n_samples - 1
+    if n_clusters > n_samples:
+        raise ValueError(
+            "Cannot provide more clusters than samples. "
+            "%i n_clusters was asked, and there are %i "
+            "samples." % (n_clusters, n_samples)
+        )
+    return 2 * n_samples - n_clusters
+
+
+def _build_connectivity_matrix(connectivity):
+    """Build the upper-triangular connectivity structure for Ward clustering."""
+    coord_row = []
+    coord_col = []
+    A = []
+    for ind, row in enumerate(connectivity.rows):
+        A.append(row)
+        # We keep only the upper triangular for the moments
+        # Generator expressions are faster than arrays on the following
+        row = [i for i in row if i < ind]
+        coord_row.extend(
+            len(row)
+            * [
+                ind,
+            ]
+        )
+        coord_col.extend(row)
+
+    coord_row = np.array(coord_row, dtype=np.intp, order="C")
+    coord_col = np.array(coord_col, dtype=np.intp, order="C")
+    return coord_row, coord_col, A
+
+
 @validate_params(
     {
         "X": ["array-like"],
@@ -297,63 +356,18 @@ def ward_tree(X, *, connectivity=None, n_clusters=None, return_distance=False):
     n_samples, n_features = X.shape
 
     if connectivity is None:
-        from scipy.cluster import hierarchy  # imports PIL
-
-        if n_clusters is not None:
-            warnings.warn(
-                (
-                    "Partial build of the tree is implemented "
-                    "only for structured clustering (i.e. with "
-                    "explicit connectivity). The algorithm "
-                    "will build the full tree and only "
-                    "retain the lower branches required "
-                    "for the specified number of clusters"
-                ),
-                stacklevel=2,
-            )
-        X = np.require(X, requirements="W")
-        out = hierarchy.ward(X)
-        children_ = out[:, :2].astype(np.intp)
-
+        children_, distances = _ward_tree_no_connectivity(X, n_clusters)
         if return_distance:
-            distances = out[:, 2]
             return children_, 1, n_samples, None, distances
-        else:
-            return children_, 1, n_samples, None
+        return children_, 1, n_samples, None
 
     connectivity, n_connected_components = _fix_connectivity(
         X, connectivity, affinity="euclidean"
     )
-    if n_clusters is None:
-        n_nodes = 2 * n_samples - 1
-    else:
-        if n_clusters > n_samples:
-            raise ValueError(
-                "Cannot provide more clusters than samples. "
-                "%i n_clusters was asked, and there are %i "
-                "samples." % (n_clusters, n_samples)
-            )
-        n_nodes = 2 * n_samples - n_clusters
+    n_nodes = _compute_n_nodes(n_clusters, n_samples)
 
     # create inertia matrix
-    coord_row = []
-    coord_col = []
-    A = []
-    for ind, row in enumerate(connectivity.rows):
-        A.append(row)
-        # We keep only the upper triangular for the moments
-        # Generator expressions are faster than arrays on the following
-        row = [i for i in row if i < ind]
-        coord_row.extend(
-            len(row)
-            * [
-                ind,
-            ]
-        )
-        coord_col.extend(row)
-
-    coord_row = np.array(coord_row, dtype=np.intp, order="C")
-    coord_col = np.array(coord_col, dtype=np.intp, order="C")
+    coord_row, coord_col, A = _build_connectivity_matrix(connectivity)
 
     # build moments as a list
     moments_1 = np.zeros(n_nodes, order="C")
@@ -421,8 +435,166 @@ def ward_tree(X, *, connectivity=None, n_clusters=None, return_distance=False):
         # 2 is scaling factor to compare w/ unstructured version
         distances = np.sqrt(2.0 * distances)
         return children, n_connected_components, n_leaves, parent, distances
+    return children, n_connected_components, n_leaves, parent
+
+
+def _linkage_tree_no_connectivity(X, n_clusters, linkage, affinity):
+    """Handle linkage_tree when no connectivity matrix is provided.
+
+    Returns
+    -------
+    children_ : ndarray of shape (n_nodes-1, 2)
+        The children of each non-leaf node.
+
+    distances : ndarray of shape (n_nodes-1,)
+        The distances between merged clusters.
+    """
+    from scipy.cluster import hierarchy  # imports PIL
+
+    if n_clusters is not None:
+        warnings.warn(
+            (
+                "Partial build of the tree is implemented "
+                "only for structured clustering (i.e. with "
+                "explicit connectivity). The algorithm "
+                "will build the full tree and only "
+                "retain the lower branches required "
+                "for the specified number of clusters"
+            ),
+            stacklevel=3,
+        )
+
+    if affinity == "precomputed":
+        # for the linkage function of hierarchy to work on precomputed
+        # data, provide as first argument an ndarray of the shape returned
+        # by sklearn.metrics.pairwise_distances.
+        if X.shape[0] != X.shape[1]:
+            raise ValueError(
+                f"Distance matrix should be square, got matrix of shape {X.shape}"
+            )
+        i, j = np.triu_indices(X.shape[0], k=1)
+        X = X[i, j]
+    elif affinity == "l2":
+        # Translate to something understood by scipy
+        affinity = "euclidean"
+    elif affinity in ("l1", "manhattan"):
+        affinity = "cityblock"
+    elif callable(affinity):
+        X = affinity(X)
+        i, j = np.triu_indices(X.shape[0], k=1)
+        X = X[i, j]
+    if (
+        linkage == "single"
+        and affinity != "precomputed"
+        and not callable(affinity)
+        and affinity in METRIC_MAPPING64
+    ):
+        # We need the fast cythonized metric from neighbors
+        dist_metric = DistanceMetric.get_metric(affinity)
+
+        # The Cython routines used require contiguous arrays
+        X = np.ascontiguousarray(X, dtype=np.double)
+
+        mst = _hierarchical.mst_linkage_core(X, dist_metric)
+        # Sort edges of the min_spanning_tree by weight
+        mst = mst[np.argsort(mst.T[2], kind="mergesort"), :]
+
+        # Convert edge list into standard hierarchical clustering format
+        out = _hierarchical.single_linkage_label(mst)
     else:
-        return children, n_connected_components, n_leaves, parent
+        out = hierarchy.linkage(X, method=linkage, metric=affinity)
+    children_ = out[:, :2].astype(int, copy=False)
+
+    return children_, out[:, 2]
+
+
+def _linkage_tree_structured_merge(connectivity, n_samples, n_nodes, join_func):
+    """Perform the structured merge loop for linkage_tree.
+
+    Returns
+    -------
+    children : ndarray of shape (n_nodes - n_samples, 2)
+        The children of each non-leaf node.
+
+    parent : ndarray of shape (n_nodes,)
+        The parent of each node.
+
+    distances : ndarray of shape (n_nodes - n_samples,)
+        The distances between merged clusters.
+
+    n_leaves : int
+        The number of leaves in the tree.
+    """
+    # create inertia heap and connection matrix
+    node_data = np.empty(n_nodes, dtype=object)
+    inertia = []
+
+    # LIL seems to the best format to access the rows quickly,
+    # without the numpy overhead of slicing CSR indices and data.
+    connectivity = connectivity.tolil()
+    # We are storing the graph in a list of IntFloatDict
+    for ind, (data, row) in enumerate(zip(connectivity.data, connectivity.rows)):
+        node_data[ind] = IntFloatDict(
+            np.asarray(row, dtype=np.intp), np.asarray(data, dtype=np.float64)
+        )
+        # We keep only the upper triangular for the heap
+        # Generator expressions are faster than arrays on the following
+        inertia.extend(
+            _hierarchical.WeightedEdge(d, ind, r)
+            for r, d in zip(row, data)
+            if r < ind
+        )
+    del connectivity
+
+    heapify(inertia)
+
+    distances = np.empty(n_nodes - n_samples)
+    # prepare the main fields
+    parent = np.arange(n_nodes, dtype=np.intp)
+    used_node = np.ones(n_nodes, dtype=np.intp)
+    children = []
+
+    # recursive merge loop
+    for k in range(n_samples, n_nodes):
+        # identify the merge
+        while True:
+            edge = heappop(inertia)
+            if used_node[edge.a] and used_node[edge.b]:
+                break
+        i = edge.a
+        j = edge.b
+
+        # store distances
+        distances[k - n_samples] = edge.weight
+
+        parent[i] = parent[j] = k
+        children.append((i, j))
+        # Keep track of the number of elements per cluster
+        n_i = used_node[i]
+        n_j = used_node[j]
+        used_node[k] = n_i + n_j
+        used_node[i] = used_node[j] = False
+
+        # update the structure matrix node_data and the inertia matrix
+        # a clever 'min', or 'max' operation between node_data[i] and
+        # node_data[j]
+        coord_col = join_func(node_data[i], node_data[j], used_node, n_i, n_j)
+        for col, d in coord_col:
+            node_data[col].append(k, d)
+            # Here we use the information from coord_col (containing the
+            # distances) to update the heap
+            heappush(inertia, _hierarchical.WeightedEdge(d, k, col))
+        node_data[k] = coord_col
+        # Clear node_data[i] and node_data[j] to save memory
+        node_data[i] = node_data[j] = 0
+
+    # Separate leaves in children (empty lists up to now)
+    n_leaves = n_samples
+
+    # return numpy array for efficient caching
+    children = np.array(children)[:, ::-1]
+
+    return children, parent, distances, n_leaves
 
 
 # single average and complete linkage
@@ -531,64 +703,10 @@ def linkage_tree(
         raise ValueError("Cosine affinity cannot be used when X contains zero vectors")
 
     if connectivity is None:
-        from scipy.cluster import hierarchy  # imports PIL
-
-        if n_clusters is not None:
-            warnings.warn(
-                (
-                    "Partial build of the tree is implemented "
-                    "only for structured clustering (i.e. with "
-                    "explicit connectivity). The algorithm "
-                    "will build the full tree and only "
-                    "retain the lower branches required "
-                    "for the specified number of clusters"
-                ),
-                stacklevel=2,
-            )
-
-        if affinity == "precomputed":
-            # for the linkage function of hierarchy to work on precomputed
-            # data, provide as first argument an ndarray of the shape returned
-            # by sklearn.metrics.pairwise_distances.
-            if X.shape[0] != X.shape[1]:
-                raise ValueError(
-                    f"Distance matrix should be square, got matrix of shape {X.shape}"
-                )
-            i, j = np.triu_indices(X.shape[0], k=1)
-            X = X[i, j]
-        elif affinity == "l2":
-            # Translate to something understood by scipy
-            affinity = "euclidean"
-        elif affinity in ("l1", "manhattan"):
-            affinity = "cityblock"
-        elif callable(affinity):
-            X = affinity(X)
-            i, j = np.triu_indices(X.shape[0], k=1)
-            X = X[i, j]
-        if (
-            linkage == "single"
-            and affinity != "precomputed"
-            and not callable(affinity)
-            and affinity in METRIC_MAPPING64
-        ):
-            # We need the fast cythonized metric from neighbors
-            dist_metric = DistanceMetric.get_metric(affinity)
-
-            # The Cython routines used require contiguous arrays
-            X = np.ascontiguousarray(X, dtype=np.double)
-
-            mst = _hierarchical.mst_linkage_core(X, dist_metric)
-            # Sort edges of the min_spanning_tree by weight
-            mst = mst[np.argsort(mst.T[2], kind="mergesort"), :]
-
-            # Convert edge list into standard hierarchical clustering format
-            out = _hierarchical.single_linkage_label(mst)
-        else:
-            out = hierarchy.linkage(X, method=linkage, metric=affinity)
-        children_ = out[:, :2].astype(int, copy=False)
-
+        children_, distances = _linkage_tree_no_connectivity(
+            X, n_clusters, linkage, affinity
+        )
         if return_distance:
-            distances = out[:, 2]
             return children_, 1, n_samples, None, distances
         return children_, 1, n_samples, None
 
@@ -629,73 +747,9 @@ def linkage_tree(
             return_distance,
         )
 
-    if return_distance:
-        distances = np.empty(n_nodes - n_samples)
-    # create inertia heap and connection matrix
-    A = np.empty(n_nodes, dtype=object)
-    inertia = list()
-
-    # LIL seems to the best format to access the rows quickly,
-    # without the numpy overhead of slicing CSR indices and data.
-    connectivity = connectivity.tolil()
-    # We are storing the graph in a list of IntFloatDict
-    for ind, (data, row) in enumerate(zip(connectivity.data, connectivity.rows)):
-        A[ind] = IntFloatDict(
-            np.asarray(row, dtype=np.intp), np.asarray(data, dtype=np.float64)
-        )
-        # We keep only the upper triangular for the heap
-        # Generator expressions are faster than arrays on the following
-        inertia.extend(
-            _hierarchical.WeightedEdge(d, ind, r) for r, d in zip(row, data) if r < ind
-        )
-    del connectivity
-
-    heapify(inertia)
-
-    # prepare the main fields
-    parent = np.arange(n_nodes, dtype=np.intp)
-    used_node = np.ones(n_nodes, dtype=np.intp)
-    children = []
-
-    # recursive merge loop
-    for k in range(n_samples, n_nodes):
-        # identify the merge
-        while True:
-            edge = heappop(inertia)
-            if used_node[edge.a] and used_node[edge.b]:
-                break
-        i = edge.a
-        j = edge.b
-
-        if return_distance:
-            # store distances
-            distances[k - n_samples] = edge.weight
-
-        parent[i] = parent[j] = k
-        children.append((i, j))
-        # Keep track of the number of elements per cluster
-        n_i = used_node[i]
-        n_j = used_node[j]
-        used_node[k] = n_i + n_j
-        used_node[i] = used_node[j] = False
-
-        # update the structure matrix A and the inertia matrix
-        # a clever 'min', or 'max' operation between A[i] and A[j]
-        coord_col = join_func(A[i], A[j], used_node, n_i, n_j)
-        for col, d in coord_col:
-            A[col].append(k, d)
-            # Here we use the information from coord_col (containing the
-            # distances) to update the heap
-            heappush(inertia, _hierarchical.WeightedEdge(d, k, col))
-        A[k] = coord_col
-        # Clear A[i] and A[j] to save memory
-        A[i] = A[j] = 0
-
-    # Separate leaves in children (empty lists up to now)
-    n_leaves = n_samples
-
-    # # return numpy array for efficient caching
-    children = np.array(children)[:, ::-1]
+    children, parent, distances, n_leaves = _linkage_tree_structured_merge(
+        connectivity, n_samples, n_nodes, join_func
+    )
 
     if return_distance:
         return children, n_connected_components, n_leaves, parent, distances
@@ -993,6 +1047,24 @@ class AgglomerativeClustering(ClusterMixin, BaseEstimator):
         X = validate_data(self, X, ensure_min_samples=2)
         return self._fit(X)
 
+    def _resolve_compute_full_tree(self, n_samples):
+        """Resolve compute_full_tree and n_clusters for tree building."""
+        compute_full_tree = self.compute_full_tree
+        if self.connectivity is None:
+            compute_full_tree = True
+        if compute_full_tree == "auto":
+            if self.distance_threshold is not None:
+                compute_full_tree = True
+            else:
+                # Early stopping is likely to give a speed up only for
+                # a large number of clusters. The actual threshold
+                # implemented here is heuristic
+                compute_full_tree = self.n_clusters < max(100, 0.02 * n_samples)
+        n_clusters = self.n_clusters
+        if compute_full_tree:
+            n_clusters = None
+        return compute_full_tree, n_clusters
+
     def _fit(self, X):
         """Fit without validation
 
@@ -1038,20 +1110,7 @@ class AgglomerativeClustering(ClusterMixin, BaseEstimator):
             )
 
         n_samples = len(X)
-        compute_full_tree = self.compute_full_tree
-        if self.connectivity is None:
-            compute_full_tree = True
-        if compute_full_tree == "auto":
-            if self.distance_threshold is not None:
-                compute_full_tree = True
-            else:
-                # Early stopping is likely to give a speed up only for
-                # a large number of clusters. The actual threshold
-                # implemented here is heuristic
-                compute_full_tree = self.n_clusters < max(100, 0.02 * n_samples)
-        n_clusters = self.n_clusters
-        if compute_full_tree:
-            n_clusters = None
+        compute_full_tree, n_clusters = self._resolve_compute_full_tree(n_samples)
 
         # Construct the tree
         kwargs = {}
