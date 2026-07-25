@@ -264,32 +264,7 @@ class NeighborhoodComponentsAnalysis(
                 f"previously learned transformation ({self.components_.shape[1]})."
             )
         # Check how the linear transformation should be initialized
-        init = self.init
-        if isinstance(init, np.ndarray):
-            init = check_array(init)
-            # Assert that init.shape[1] = X.shape[1]
-            if init.shape[1] != X.shape[1]:
-                raise ValueError(
-                    f"The input dimensionality ({init.shape[1]}) of the given "
-                    "linear transformation `init` must match the "
-                    f"dimensionality of the given inputs `X` ({X.shape[1]})."
-                )
-            # Assert that init.shape[0] <= init.shape[1]
-            if init.shape[0] > init.shape[1]:
-                raise ValueError(
-                    f"The output dimensionality ({init.shape[0]}) of the given "
-                    "linear transformation `init` cannot be "
-                    f"greater than its input dimensionality ({init.shape[1]})."
-                )
-            # Assert that self.n_components = init.shape[0]
-            if self.n_components is not None and self.n_components != init.shape[0]:
-                raise ValueError(
-                    "The preferred dimensionality of the "
-                    f"projected space `n_components` ({self.n_components}) does"
-                    " not match the output dimensionality of "
-                    "the given linear transformation "
-                    f"`init` ({init.shape[0]})!"
-                )
+        init = self._validate_init(self.init, X.shape[1])
 
         # Initialize the random generator
         self.random_state_ = check_random_state(self.random_state)
@@ -368,6 +343,36 @@ class NeighborhoodComponentsAnalysis(
         X = validate_data(self, X, reset=False)
 
         return np.dot(X, self.components_.T)
+
+    def _validate_init(self, init, n_features):
+        """Validate the init parameter when it is an ndarray."""
+        if not isinstance(init, np.ndarray):
+            return init
+        init = check_array(init)
+        # Assert that init.shape[1] = n_features
+        if init.shape[1] != n_features:
+            raise ValueError(
+                f"The input dimensionality ({init.shape[1]}) of the given "
+                "linear transformation `init` must match the "
+                f"dimensionality of the given inputs `X` ({n_features})."
+            )
+        # Assert that init.shape[0] <= init.shape[1]
+        if init.shape[0] > init.shape[1]:
+            raise ValueError(
+                f"The output dimensionality ({init.shape[0]}) of the given "
+                "linear transformation `init` cannot be "
+                f"greater than its input dimensionality ({init.shape[1]})."
+            )
+        # Assert that self.n_components = init.shape[0]
+        if self.n_components is not None and self.n_components != init.shape[0]:
+            raise ValueError(
+                "The preferred dimensionality of the "
+                f"projected space `n_components` ({self.n_components}) does"
+                " not match the output dimensionality of "
+                "the given linear transformation "
+                f"`init` ({init.shape[0]})!"
+            )
+        return init
 
     def _initialize(self, X, y, init):
         """Initialize the transformation.

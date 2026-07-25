@@ -242,6 +242,23 @@ class KNeighborsClassifier(KNeighborsMixin, ClassifierMixin, NeighborsBase):
         """
         return self._fit(X, y)
 
+    def _predict_using_argkmin_class_mode(self, X):
+        """Predict using ArgKminClassMode when applicable, return None otherwise."""
+        if self._fit_method == "brute" and ArgKminClassMode.is_usable_for(
+            X, self._fit_X, self.metric
+        ):
+            probabilities = self.predict_proba(X)
+            if self.outputs_2d_:
+                return np.stack(
+                    [
+                        self.classes_[idx][np.argmax(probas, axis=1)]
+                        for idx, probas in enumerate(probabilities)
+                    ],
+                    axis=1,
+                )
+            return self.classes_[np.argmax(probabilities, axis=1)]
+        return None
+
     def predict(self, X):
         """Predict the class labels for the provided data.
 
@@ -260,19 +277,9 @@ class KNeighborsClassifier(KNeighborsMixin, ClassifierMixin, NeighborsBase):
         """
         check_is_fitted(self, "_fit_method")
         if self.weights == "uniform":
-            if self._fit_method == "brute" and ArgKminClassMode.is_usable_for(
-                X, self._fit_X, self.metric
-            ):
-                probabilities = self.predict_proba(X)
-                if self.outputs_2d_:
-                    return np.stack(
-                        [
-                            self.classes_[idx][np.argmax(probas, axis=1)]
-                            for idx, probas in enumerate(probabilities)
-                        ],
-                        axis=1,
-                    )
-                return self.classes_[np.argmax(probabilities, axis=1)]
+            result = self._predict_using_argkmin_class_mode(X)
+            if result is not None:
+                return result
             # In that case, we do not need the distances to perform
             # the weighting so we do not compute them.
             neigh_ind = self.kneighbors(X, return_distance=False)
@@ -395,10 +402,18 @@ class KNeighborsClassifier(KNeighborsMixin, ClassifierMixin, NeighborsBase):
                 "using a user-defined function."
             )
 
+        return self._compute_proba_from_neighbors(
+            _y, classes_, neigh_ind, weights, n_queries
+        )
+
+    def _compute_proba_from_neighbors(
+        self, y_labels, classes_, neigh_ind, weights, n_queries
+    ):
+        """Compute class probabilities from neighbor indices and weights."""
         all_rows = np.arange(n_queries)
         probabilities = []
         for k, classes_k in enumerate(classes_):
-            pred_labels = _y[:, k][neigh_ind]
+            pred_labels = y_labels[:, k][neigh_ind]
             proba_k = np.zeros((n_queries, classes_k.size))
 
             # a simple ':' index doesn't work right
@@ -687,38 +702,44 @@ class RadiusNeighborsClassifier(RadiusNeighborsMixin, ClassifierMixin, Neighbors
                 outlier_label_.append(classes_k[label_count.argmax()])
 
         else:
-            if _is_arraylike(self.outlier_label) and not isinstance(
-                self.outlier_label, str
-            ):
-                if len(self.outlier_label) != len(classes_):
-                    raise ValueError(
-                        "The length of outlier_label: {} is "
-                        "inconsistent with the output "
-                        "length: {}".format(self.outlier_label, len(classes_))
-                    )
-                outlier_label_ = self.outlier_label
-            else:
-                outlier_label_ = [self.outlier_label] * len(classes_)
-
-            for classes, label in zip(classes_, outlier_label_):
-                if _is_arraylike(label) and not isinstance(label, str):
-                    # ensure the outlier label for each output is a scalar.
-                    raise TypeError(
-                        "The outlier_label of classes {} is "
-                        "supposed to be a scalar, got "
-                        "{}.".format(classes, label)
-                    )
-                if np.append(classes, label).dtype != classes.dtype:
-                    # ensure the dtype of outlier label is consistent with y.
-                    raise TypeError(
-                        "The dtype of outlier_label {} is "
-                        "inconsistent with classes {} in "
-                        "y.".format(label, classes)
-                    )
+            outlier_label_ = self._resolve_custom_outlier_label(classes_)
 
         self.outlier_label_ = outlier_label_
 
         return self
+
+    def _resolve_custom_outlier_label(self, classes_):
+        """Resolve and validate a custom outlier_label value."""
+        if _is_arraylike(self.outlier_label) and not isinstance(
+            self.outlier_label, str
+        ):
+            if len(self.outlier_label) != len(classes_):
+                raise ValueError(
+                    "The length of outlier_label: {} is "
+                    "inconsistent with the output "
+                    "length: {}".format(self.outlier_label, len(classes_))
+                )
+            outlier_label_ = self.outlier_label
+        else:
+            outlier_label_ = [self.outlier_label] * len(classes_)
+
+        for classes, label in zip(classes_, outlier_label_):
+            if _is_arraylike(label) and not isinstance(label, str):
+                # ensure the outlier label for each output is a scalar.
+                raise TypeError(
+                    "The outlier_label of classes {} is "
+                    "supposed to be a scalar, got "
+                    "{}.".format(classes, label)
+                )
+            if np.append(classes, label).dtype != classes.dtype:
+                # ensure the dtype of outlier label is consistent with y.
+                raise TypeError(
+                    "The dtype of outlier_label {} is "
+                    "inconsistent with classes {} in "
+                    "y.".format(label, classes)
+                )
+
+        return outlier_label_
 
     def predict(self, X):
         """Predict the class labels for the provided data.

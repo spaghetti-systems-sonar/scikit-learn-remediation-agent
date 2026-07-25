@@ -452,17 +452,20 @@ class NeighborsBase(MultiOutputMixin, BaseEstimator, metaclass=ABCMeta):
                 "Metric can also be a callable function." % (self.metric, alg_check)
             )
 
-        if self.metric_params is not None and "p" in self.metric_params:
-            if self.p is not None:
-                warnings.warn(
-                    (
-                        "Parameter p is found in metric_params. "
-                        "The corresponding parameter from __init__ "
-                        "is ignored."
-                    ),
-                    SyntaxWarning,
-                    stacklevel=3,
-                )
+        if (
+            self.metric_params is not None
+            and "p" in self.metric_params
+            and self.p is not None
+        ):
+            warnings.warn(
+                (
+                    "Parameter p is found in metric_params. "
+                    "The corresponding parameter from __init__ "
+                    "is ignored."
+                ),
+                SyntaxWarning,
+                stacklevel=3,
+            )
 
     def _fit(self, X, y=None):
         X, y = self._validate_and_prepare_data(X, y)
