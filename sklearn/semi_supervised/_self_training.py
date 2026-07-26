@@ -185,6 +185,17 @@ class SelfTrainingClassifier(ClassifierMixin, MetaEstimatorMixin, BaseEstimator)
         """
         return clone(self.estimator)
 
+    def _select_new_labels(self, max_proba):
+        """Select new labeled samples based on the criterion."""
+        if self.criterion == "threshold":
+            return max_proba > self.threshold
+
+        n_to_select = min(self.k_best, max_proba.shape[0])
+        if n_to_select == max_proba.shape[0]:
+            return np.ones_like(max_proba, dtype=bool)
+        # NB these are indices, not a mask
+        return np.argpartition(-max_proba, n_to_select)[:n_to_select]
+
     @_fit_context(
         # SelfTrainingClassifier.estimator is not validated yet
         prefer_skip_nested_validation=False
@@ -282,15 +293,7 @@ class SelfTrainingClassifier(ClassifierMixin, MetaEstimatorMixin, BaseEstimator)
             max_proba = np.max(prob, axis=1)
 
             # Select new labeled samples
-            if self.criterion == "threshold":
-                selected = max_proba > self.threshold
-            else:
-                n_to_select = min(self.k_best, max_proba.shape[0])
-                if n_to_select == max_proba.shape[0]:
-                    selected = np.ones_like(max_proba, dtype=bool)
-                else:
-                    # NB these are indices, not a mask
-                    selected = np.argpartition(-max_proba, n_to_select)[:n_to_select]
+            selected = self._select_new_labels(max_proba)
 
             # Map selected indices into original array
             selected_full = np.nonzero(~has_label)[0][selected]

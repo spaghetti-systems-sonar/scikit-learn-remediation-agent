@@ -264,23 +264,9 @@ class ScoringMonitor:
 
         for run_id, log in logs.items():
             if include_lineage:
-                extra_rows = []
-                for row in log["data"]:
-                    for i in range(len(row["parent_task_info_path"])):
-                        task_info_path = row["parent_task_info_path"][: i + 1]
-                        task_id_path = tuple(
-                            task_info["task_id"] for task_info in task_info_path
-                        )
-                        if task_id_path not in run_to_task_id_path[run_id]:
-                            extra_rows.append(
-                                {
-                                    "task_id_path": task_id_path,
-                                    "parent_task_id_path": task_id_path[:-1],
-                                    "parent_task_info_path": task_info_path[:-1],
-                                    **task_info_path[-1],
-                                }
-                            )
-                            run_to_task_id_path[run_id].add(task_id_path)
+                extra_rows = self._get_lineage_extra_rows(
+                    log["data"], run_to_task_id_path[run_id]
+                )
                 log["data"] += extra_rows
 
             # sort rows by recursive task ids so that tasks of a same parent are grouped
@@ -298,3 +284,24 @@ class ScoringMonitor:
             return logs[-1]
 
         return logs
+
+    def _get_lineage_extra_rows(self, log_data, seen_task_id_paths):
+        """Compute extra rows for ancestor tasks to include lineage information."""
+        extra_rows = []
+        for row in log_data:
+            for i in range(len(row["parent_task_info_path"])):
+                task_info_path = row["parent_task_info_path"][: i + 1]
+                task_id_path = tuple(
+                    task_info["task_id"] for task_info in task_info_path
+                )
+                if task_id_path not in seen_task_id_paths:
+                    extra_rows.append(
+                        {
+                            "task_id_path": task_id_path,
+                            "parent_task_id_path": task_id_path[:-1],
+                            "parent_task_info_path": task_info_path[:-1],
+                            **task_info_path[-1],
+                        }
+                    )
+                    seen_task_id_paths.add(task_id_path)
+        return extra_rows
