@@ -24,6 +24,20 @@ from sklearn.cluster import DBSCAN, HDBSCAN
 from sklearn.datasets import make_blobs
 
 
+def _plot_cluster_points(ax, X, k, col, class_index, proba_map):
+    """Plot points belonging to a single cluster label."""
+    marker = "x" if k == -1 else "o"
+    for ci in class_index:
+        ax.plot(
+            X[ci, 0],
+            X[ci, 1],
+            marker,
+            markerfacecolor=tuple(col),
+            markeredgecolor="k",
+            markersize=4 if k == -1 else 1 + 5 * proba_map[ci],
+        )
+
+
 def plot(X, labels, probabilities=None, parameters=None, ground_truth=False, ax=None):
     if ax is None:
         _, ax = plt.subplots(figsize=(10, 4))
@@ -41,15 +55,7 @@ def plot(X, labels, probabilities=None, parameters=None, ground_truth=False, ax=
             col = [0, 0, 0, 1]
 
         class_index = (labels == k).nonzero()[0]
-        for ci in class_index:
-            ax.plot(
-                X[ci, 0],
-                X[ci, 1],
-                "x" if k == -1 else "o",
-                markerfacecolor=tuple(col),
-                markeredgecolor="k",
-                markersize=4 if k == -1 else 1 + 5 * proba_map[ci],
-            )
+        _plot_cluster_points(ax, X, k, col, class_index, proba_map)
     n_clusters_ = len(set(labels)) - (1 if -1 in labels else 0)
     preamble = "True" if ground_truth else "Estimated"
     title = f"{preamble} number of clusters: {n_clusters_}"

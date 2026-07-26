@@ -158,6 +158,34 @@ class DummyClassifier(MultiOutputMixin, ClassifierMixin, BaseEstimator):
         self.random_state = random_state
         self.constant = constant
 
+    def _validate_constant(self):
+        """Validate and return the reshaped constant for the constant strategy."""
+        if self.constant is None:
+            raise ValueError(
+                "Constant target value has to be specified "
+                "when the constant strategy is used."
+            )
+        constant = np.reshape(np.atleast_1d(self.constant), (-1, 1))
+        if constant.shape[0] != self.n_outputs_:
+            raise ValueError(
+                "Constant target value should have shape (%d, 1)."
+                % self.n_outputs_
+            )
+        return constant
+
+    def _check_constant_in_classes(self, constant):
+        """Check that constant target values are present in training data."""
+        for k in range(self.n_outputs_):
+            if not any(constant[k][0] == c for c in self.classes_[k]):
+                err_msg = (
+                    "The constant target value must be present in "
+                    "the training data. You provided constant={}. "
+                    "Possible values are: {}.".format(
+                        self.constant, self.classes_[k].tolist()
+                    )
+                )
+                raise ValueError(err_msg)
+
     @_fit_context(prefer_skip_nested_validation=True)
     def fit(self, X, y, sample_weight=None):
         """Fit the baseline classifier.
@@ -211,36 +239,14 @@ class DummyClassifier(MultiOutputMixin, ClassifierMixin, BaseEstimator):
             sample_weight = _check_sample_weight(sample_weight, X)
 
         if self._strategy == "constant":
-            if self.constant is None:
-                raise ValueError(
-                    "Constant target value has to be specified "
-                    "when the constant strategy is used."
-                )
-            else:
-                constant = np.reshape(np.atleast_1d(self.constant), (-1, 1))
-                if constant.shape[0] != self.n_outputs_:
-                    raise ValueError(
-                        "Constant target value should have shape (%d, 1)."
-                        % self.n_outputs_
-                    )
+            constant = self._validate_constant()
 
         (self.classes_, self.n_classes_, self.class_prior_) = class_distribution(
             y, sample_weight
         )
 
         if self._strategy == "constant":
-            for k in range(self.n_outputs_):
-                if not any(constant[k][0] == c for c in self.classes_[k]):
-                    # Checking in case of constant strategy if the constant
-                    # provided by the user is in y.
-                    err_msg = (
-                        "The constant target value must be present in "
-                        "the training data. You provided constant={}. "
-                        "Possible values are: {}.".format(
-                            self.constant, self.classes_[k].tolist()
-                        )
-                    )
-                    raise ValueError(err_msg)
+            self._check_constant_in_classes(constant)
 
         if self.n_outputs_ == 1:
             self.n_classes_ = self.n_classes_[0]
@@ -280,59 +286,72 @@ class DummyClassifier(MultiOutputMixin, ClassifierMixin, BaseEstimator):
             class_prior_ = [class_prior_]
             constant = [constant]
         # Compute probability only once
+        proba = None
         if self._strategy == "stratified":
             proba = self.predict_proba(X)
             if self.n_outputs_ == 1:
                 proba = [proba]
 
         if self.sparse_output_:
-            class_prob = None
-            if self._strategy in ("most_frequent", "prior"):
-                classes_ = [np.array([cp.argmax()]) for cp in class_prior_]
-
-            elif self._strategy == "stratified":
-                class_prob = class_prior_
-
-            elif self._strategy == "uniform":
-                raise ValueError(
-                    "Sparse target prediction is not "
-                    "supported with the uniform strategy"
-                )
-
-            elif self._strategy == "constant":
-                classes_ = [np.array([c]) for c in constant]
-
-            y = _random_choice_csc(n_samples, classes_, class_prob, self.random_state)
+            y = self._predict_sparse(
+                n_samples, classes_, class_prior_, constant
+            )
         else:
-            if self._strategy in ("most_frequent", "prior"):
-                y = np.tile(
-                    [
-                        classes_[k][class_prior_[k].argmax()]
-                        for k in range(self.n_outputs_)
-                    ],
-                    [n_samples, 1],
-                )
+            y = self._predict_dense(
+                n_samples, classes_, class_prior_, n_classes_, rs, proba
+            )
 
-            elif self._strategy == "stratified":
-                y = np.vstack(
-                    [
-                        classes_[k][proba[k].argmax(axis=1)]
-                        for k in range(self.n_outputs_)
-                    ]
-                ).T
+        return y
 
-            elif self._strategy == "uniform":
-                ret = [
-                    classes_[k][rs.randint(n_classes_[k], size=n_samples)]
+    def _predict_sparse(self, n_samples, classes_, class_prior_, constant):
+        """Predict for sparse output."""
+        class_prob = None
+        if self._strategy in ("most_frequent", "prior"):
+            classes_ = [np.array([cp.argmax()]) for cp in class_prior_]
+        elif self._strategy == "stratified":
+            class_prob = class_prior_
+        elif self._strategy == "uniform":
+            raise ValueError(
+                "Sparse target prediction is not "
+                "supported with the uniform strategy"
+            )
+        elif self._strategy == "constant":
+            classes_ = [np.array([c]) for c in constant]
+
+        return _random_choice_csc(
+            n_samples, classes_, class_prob, self.random_state
+        )
+
+    def _predict_dense(
+        self, n_samples, classes_, class_prior_, n_classes_, rs, proba
+    ):
+        """Predict for dense output."""
+        if self._strategy in ("most_frequent", "prior"):
+            y = np.tile(
+                [
+                    classes_[k][class_prior_[k].argmax()]
+                    for k in range(self.n_outputs_)
+                ],
+                [n_samples, 1],
+            )
+        elif self._strategy == "stratified":
+            y = np.vstack(
+                [
+                    classes_[k][proba[k].argmax(axis=1)]
                     for k in range(self.n_outputs_)
                 ]
-                y = np.vstack(ret).T
+            ).T
+        elif self._strategy == "uniform":
+            ret = [
+                classes_[k][rs.randint(n_classes_[k], size=n_samples)]
+                for k in range(self.n_outputs_)
+            ]
+            y = np.vstack(ret).T
+        elif self._strategy == "constant":
+            y = np.tile(self.constant, (n_samples, 1))
 
-            elif self._strategy == "constant":
-                y = np.tile(self.constant, (n_samples, 1))
-
-            if self.n_outputs_ == 1:
-                y = np.ravel(y)
+        if self.n_outputs_ == 1:
+            y = np.ravel(y)
 
         return y
 
