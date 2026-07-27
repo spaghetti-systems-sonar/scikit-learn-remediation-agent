@@ -107,6 +107,34 @@ class _MultiOutputEstimator(MetaEstimatorMixin, BaseEstimator, metaclass=ABCMeta
         self.estimator = estimator
         self.n_jobs = n_jobs
 
+    def _resolve_partial_fit_params(
+        self, sample_weight, partial_fit_params
+    ):
+        """Resolve routed parameters for partial_fit."""
+        if _routing_enabled():
+            if sample_weight is not None:
+                partial_fit_params["sample_weight"] = sample_weight
+            return process_routing(
+                self,
+                "partial_fit",
+                **partial_fit_params,
+            )
+
+        if sample_weight is not None and not has_fit_parameter(
+            self.estimator, "sample_weight"
+        ):
+            raise ValueError(
+                "Underlying estimator does not support sample weights."
+            )
+
+        if sample_weight is not None:
+            return Bunch(
+                estimator=Bunch(
+                    partial_fit=Bunch(sample_weight=sample_weight)
+                )
+            )
+        return Bunch(estimator=Bunch(partial_fit=Bunch()))
+
     @_available_if_estimator_has("partial_fit")
     @_fit_context(
         # MultiOutput*.estimator is not validated yet
@@ -163,28 +191,9 @@ class _MultiOutputEstimator(MetaEstimatorMixin, BaseEstimator, metaclass=ABCMeta
                 "multi-output regression but has only one."
             )
 
-        if _routing_enabled():
-            if sample_weight is not None:
-                partial_fit_params["sample_weight"] = sample_weight
-            routed_params = process_routing(
-                self,
-                "partial_fit",
-                **partial_fit_params,
-            )
-        else:
-            if sample_weight is not None and not has_fit_parameter(
-                self.estimator, "sample_weight"
-            ):
-                raise ValueError(
-                    "Underlying estimator does not support sample weights."
-                )
-
-            if sample_weight is not None:
-                routed_params = Bunch(
-                    estimator=Bunch(partial_fit=Bunch(sample_weight=sample_weight))
-                )
-            else:
-                routed_params = Bunch(estimator=Bunch(partial_fit=Bunch()))
+        routed_params = self._resolve_partial_fit_params(
+            sample_weight, partial_fit_params
+        )
 
         self.estimators_ = Parallel(n_jobs=self.n_jobs)(
             delayed(_partial_fit_estimator)(

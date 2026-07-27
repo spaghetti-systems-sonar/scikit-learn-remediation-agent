@@ -108,20 +108,18 @@ def _clone_parametrized(estimator, *, safe=True):
     elif not hasattr(estimator, "get_params") or isinstance(estimator, type):
         if not safe:
             return copy.deepcopy(estimator)
-        else:
-            if isinstance(estimator, type):
-                raise TypeError(
-                    "Cannot clone object. "
-                    "You should provide an instance of "
-                    "scikit-learn estimator instead of a class."
-                )
-            else:
-                raise TypeError(
-                    "Cannot clone object '%s' (type %s): "
-                    "it does not seem to be a scikit-learn "
-                    "estimator as it does not implement a "
-                    "'get_params' method." % (repr(estimator), type(estimator))
-                )
+        if isinstance(estimator, type):
+            raise TypeError(
+                "Cannot clone object. "
+                "You should provide an instance of "
+                "scikit-learn estimator instead of a class."
+            )
+        raise TypeError(
+            "Cannot clone object '%s' (type %s): "
+            "it does not seem to be a scikit-learn "
+            "estimator as it does not implement a "
+            "'get_params' method." % (repr(estimator), type(estimator))
+        )
 
     klass = estimator.__class__
     new_object_params = estimator.get_params(deep=False)
@@ -160,6 +158,34 @@ def _clone_parametrized(estimator, *, safe=True):
             estimator._sklearn_output_config
         )
     return new_object
+
+
+def _is_non_default(param_name, param_value, init_default_params):
+    """Check whether a parameter value differs from its default."""
+    if param_name not in init_default_params:
+        # happens if k is part of a **kwargs
+        return True
+    if init_default_params[param_name] == inspect._empty:
+        # k has no default value
+        return True
+    # avoid calling repr on nested estimators
+    if isinstance(param_value, BaseEstimator) and type(param_value) is not type(
+        init_default_params[param_name]
+    ):
+        return True
+    if is_pandas_na(param_value) and not is_pandas_na(
+        init_default_params[param_name]
+    ):
+        return True
+    if not np.array_equal(
+        param_value, init_default_params[param_name]
+    ) and not (
+        is_scalar_nan(init_default_params[param_name])
+        and is_scalar_nan(param_value)
+    ):
+        return True
+
+    return False
 
 
 class BaseEstimator(ReprHTMLMixin, _HTMLDocumentationLinkMixin, _MetadataRequester):
@@ -298,33 +324,6 @@ class BaseEstimator(ReprHTMLMixin, _HTMLDocumentationLinkMixin, _MetadataRequest
             name: param.default for name, param in init_default_params.items()
         }
 
-        def is_non_default(param_name, param_value):
-            """Finds the parameters that have been set by the user."""
-            if param_name not in init_default_params:
-                # happens if k is part of a **kwargs
-                return True
-            if init_default_params[param_name] == inspect._empty:
-                # k has no default value
-                return True
-            # avoid calling repr on nested estimators
-            if isinstance(param_value, BaseEstimator) and type(param_value) is not type(
-                init_default_params[param_name]
-            ):
-                return True
-            if is_pandas_na(param_value) and not is_pandas_na(
-                init_default_params[param_name]
-            ):
-                return True
-            if not np.array_equal(
-                param_value, init_default_params[param_name]
-            ) and not (
-                is_scalar_nan(init_default_params[param_name])
-                and is_scalar_nan(param_value)
-            ):
-                return True
-
-            return False
-
         # Sort parameters so non-default parameters are shown first
         unordered_params = {
             name: out[name] for name in init_default_params if name in out
@@ -339,7 +338,7 @@ class BaseEstimator(ReprHTMLMixin, _HTMLDocumentationLinkMixin, _MetadataRequest
 
         non_default_params, default_params = [], []
         for name, value in unordered_params.items():
-            if is_non_default(name, value):
+            if _is_non_default(name, value, init_default_params):
                 non_default_params.append(name)
             else:
                 default_params.append(name)
