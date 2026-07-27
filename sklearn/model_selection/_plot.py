@@ -8,6 +8,15 @@ from sklearn.utils._optional_dependencies import check_matplotlib_support
 from sklearn.utils._plotting import _interval_max_min_ratio, _validate_score_name
 
 
+def _determine_xscale(x_data):
+    """Choose an appropriate x-axis scale based on the data spacing."""
+    # A ratio, smaller or bigger than 5, between the largest and smallest gap
+    # of the x values is a good indicator to choose between linear and log scale.
+    if _interval_max_min_ratio(x_data) > 5:
+        return "symlog" if x_data.min() <= 0 else "log"
+    return "linear"
+
+
 class _BaseCurveDisplay:
     def _plot_curve(
         self,
@@ -46,18 +55,44 @@ class _BaseCurveDisplay:
                 "'train', or 'both'."
             )
 
-        if score_type == "train":
-            scores = {"Train": train_scores}
-        elif score_type == "test":
-            scores = {"Test": test_scores}
-        else:  # score_type == "both"
-            scores = {"Train": train_scores, "Test": test_scores}
+        scores = self._resolve_scores(score_type, train_scores, test_scores)
+        self._plot_std_display(
+            ax, x_data, scores, std_display_style, line_kw, fill_between_kw, errorbar_kw
+        )
 
+        score_name = self.score_name if score_name is None else score_name
+
+        ax.legend()
+        ax.set_xscale(_determine_xscale(x_data))
+        ax.set_ylabel(f"{score_name}")
+
+        self.ax_ = ax
+        self.figure_ = ax.figure
+
+    @staticmethod
+    def _resolve_scores(score_type, train_scores, test_scores):
+        """Build a dict of scores to plot based on the requested score_type."""
+        if score_type == "train":
+            return {"Train": train_scores}
+        if score_type == "test":
+            return {"Test": test_scores}
+        # score_type == "both"
+        return {"Train": train_scores, "Test": test_scores}
+
+    def _plot_std_display(
+        self,
+        ax,
+        x_data,
+        scores,
+        std_display_style,
+        line_kw,
+        fill_between_kw,
+        errorbar_kw,
+    ):
+        """Render scores on *ax* according to *std_display_style*."""
         if std_display_style in ("fill_between", None):
-            # plot the mean score
             if line_kw is None:
                 line_kw = {}
-
             self.lines_ = []
             for line_label, score in scores.items():
                 self.lines_.append(
@@ -74,7 +109,6 @@ class _BaseCurveDisplay:
         if std_display_style == "errorbar":
             if errorbar_kw is None:
                 errorbar_kw = {}
-
             self.errorbar_ = []
             for line_label, score in scores.items():
                 self.errorbar_.append(
@@ -92,7 +126,6 @@ class _BaseCurveDisplay:
                 fill_between_kw = {}
             default_fill_between_kw = {"alpha": 0.5}
             fill_between_kw = {**default_fill_between_kw, **fill_between_kw}
-
             self.fill_between_ = []
             for line_label, score in scores.items():
                 self.fill_between_.append(
@@ -103,24 +136,6 @@ class _BaseCurveDisplay:
                         **fill_between_kw,
                     )
                 )
-
-        score_name = self.score_name if score_name is None else score_name
-
-        ax.legend()
-
-        # We found that a ratio, smaller or bigger than 5, between the largest and
-        # smallest gap of the x values is a good indicator to choose between linear
-        # and log scale.
-        if _interval_max_min_ratio(x_data) > 5:
-            xscale = "symlog" if x_data.min() <= 0 else "log"
-        else:
-            xscale = "linear"
-
-        ax.set_xscale(xscale)
-        ax.set_ylabel(f"{score_name}")
-
-        self.ax_ = ax
-        self.figure_ = ax.figure
 
 
 class LearningCurveDisplay(_BaseCurveDisplay):

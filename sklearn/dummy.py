@@ -477,6 +477,90 @@ class DummyClassifier(MultiOutputMixin, ClassifierMixin, BaseEstimator):
         return super().score(X, y, sample_weight)
 
 
+def _regressor_fit_median(y, sample_weight):
+    """Compute the median of the training targets."""
+    if sample_weight is None:
+        return np.median(y, axis=0)
+    return _weighted_percentile(y, sample_weight, percentile_rank=50.0)
+
+
+def _regressor_fit_quantile(y, sample_weight, quantile):
+    """Compute a quantile of the training targets."""
+    if quantile is None:
+        raise ValueError(
+            "When using `strategy='quantile', you have to specify the desired "
+            "quantile in the range [0, 1]."
+        )
+    percentile_rank = quantile * 100.0
+    if sample_weight is None:
+        return np.percentile(y, axis=0, q=percentile_rank)
+    return _weighted_percentile(
+        y, sample_weight, percentile_rank=percentile_rank
+    )
+
+
+def _regressor_fit_constant(constant, n_outputs, y):
+    """Validate and set the constant target value."""
+    if constant is None:
+        raise TypeError(
+            "Constant target value has to be specified "
+            "when the constant strategy is used."
+        )
+
+    constant_ = check_array(
+        constant,
+        accept_sparse=["csr", "csc", "coo"],
+        ensure_2d=False,
+        ensure_min_samples=0,
+    )
+
+    if n_outputs != 1 and constant_.shape[0] != y.shape[1]:
+        raise ValueError(
+            "Constant target value should have shape (%d, 1)." % y.shape[1]
+        )
+
+    return constant_
+
+
+def _validate_regressor_y(y):
+    """Validate and reshape the target array for DummyRegressor."""
+    y = check_array(y, ensure_2d=False, input_name="y")
+    if len(y) == 0:
+        raise ValueError("y must not be empty.")
+    if y.ndim == 1:
+        y = np.reshape(y, (-1, 1))
+    return y
+
+
+def _compute_regressor_constant(
+    strategy, y, sample_weight, quantile, constant, n_outputs
+):
+    """Compute the constant prediction value based on the strategy."""
+    if strategy == "mean":
+        return np.average(y, axis=0, weights=sample_weight)
+    if strategy == "median":
+        return _regressor_fit_median(y, sample_weight)
+    if strategy == "quantile":
+        return _regressor_fit_quantile(y, sample_weight, quantile)
+    return _regressor_fit_constant(constant, n_outputs, y)
+
+
+def _build_regressor_predictions(n_samples, n_outputs, constant):
+    """Build prediction arrays for the given number of samples."""
+    y = np.full(
+        (n_samples, n_outputs),
+        constant,
+        dtype=np.array(constant).dtype,
+    )
+    y_std = np.zeros((n_samples, n_outputs))
+
+    if n_outputs == 1:
+        y = np.ravel(y)
+        y_std = np.ravel(y_std)
+
+    return y, y_std
+
+
 class DummyRegressor(MultiOutputMixin, RegressorMixin, BaseEstimator):
     """Regressor that makes predictions using simple rules.
 
@@ -580,12 +664,7 @@ class DummyRegressor(MultiOutputMixin, RegressorMixin, BaseEstimator):
         """
         validate_data(self, X, skip_check_array=True)
 
-        y = check_array(y, ensure_2d=False, input_name="y")
-        if len(y) == 0:
-            raise ValueError("y must not be empty.")
-
-        if y.ndim == 1:
-            y = np.reshape(y, (-1, 1))
+        y = _validate_regressor_y(y)
         self.n_outputs_ = y.shape[1]
 
         check_consistent_length(X, y, sample_weight)
@@ -593,50 +672,10 @@ class DummyRegressor(MultiOutputMixin, RegressorMixin, BaseEstimator):
         if sample_weight is not None:
             sample_weight = _check_sample_weight(sample_weight, X)
 
-        if self.strategy == "mean":
-            self.constant_ = np.average(y, axis=0, weights=sample_weight)
-
-        elif self.strategy == "median":
-            if sample_weight is None:
-                self.constant_ = np.median(y, axis=0)
-            else:
-                self.constant_ = _weighted_percentile(
-                    y, sample_weight, percentile_rank=50.0
-                )
-
-        elif self.strategy == "quantile":
-            if self.quantile is None:
-                raise ValueError(
-                    "When using `strategy='quantile', you have to specify the desired "
-                    "quantile in the range [0, 1]."
-                )
-            percentile_rank = self.quantile * 100.0
-            if sample_weight is None:
-                self.constant_ = np.percentile(y, axis=0, q=percentile_rank)
-            else:
-                self.constant_ = _weighted_percentile(
-                    y, sample_weight, percentile_rank=percentile_rank
-                )
-
-        elif self.strategy == "constant":
-            if self.constant is None:
-                raise TypeError(
-                    "Constant target value has to be specified "
-                    "when the constant strategy is used."
-                )
-
-            self.constant_ = check_array(
-                self.constant,
-                accept_sparse=["csr", "csc", "coo"],
-                ensure_2d=False,
-                ensure_min_samples=0,
-            )
-
-            if self.n_outputs_ != 1 and self.constant_.shape[0] != y.shape[1]:
-                raise ValueError(
-                    "Constant target value should have shape (%d, 1)." % y.shape[1]
-                )
-
+        self.constant_ = _compute_regressor_constant(
+            self.strategy, y, sample_weight, self.quantile,
+            self.constant, self.n_outputs_,
+        )
         self.constant_ = np.reshape(self.constant_, (1, -1))
         return self
 
@@ -663,19 +702,9 @@ class DummyRegressor(MultiOutputMixin, RegressorMixin, BaseEstimator):
             Standard deviation of predictive distribution of query points.
         """
         check_is_fitted(self)
-        n_samples = _num_samples(X)
-
-        y = np.full(
-            (n_samples, self.n_outputs_),
-            self.constant_,
-            dtype=np.array(self.constant_).dtype,
+        y, y_std = _build_regressor_predictions(
+            _num_samples(X), self.n_outputs_, self.constant_
         )
-        y_std = np.zeros((n_samples, self.n_outputs_))
-
-        if self.n_outputs_ == 1:
-            y = np.ravel(y)
-            y_std = np.ravel(y_std)
-
         return (y, y_std) if return_std else y
 
     def __sklearn_tags__(self):
