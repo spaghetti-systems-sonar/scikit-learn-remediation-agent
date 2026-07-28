@@ -125,6 +125,8 @@ import matplotlib.pyplot as plt
 
 from sklearn.metrics import RocCurveDisplay
 
+TRUE_POSITIVE_RATE = "True Positive Rate"
+
 display = RocCurveDisplay.from_predictions(
     y_onehot_test[:, class_id],
     y_score[:, class_id],
@@ -135,7 +137,7 @@ display = RocCurveDisplay.from_predictions(
 )
 _ = display.ax_.set(
     xlabel="False Positive Rate",
-    ylabel="True Positive Rate",
+    ylabel=TRUE_POSITIVE_RATE,
     title="One-vs-Rest ROC curves:\nVirginica vs (Setosa & Versicolor)",
 )
 
@@ -171,7 +173,7 @@ display = RocCurveDisplay.from_predictions(
 )
 _ = display.ax_.set(
     xlabel="False Positive Rate",
-    ylabel="True Positive Rate",
+    ylabel=TRUE_POSITIVE_RATE,
     title="Micro-averaged One-vs-Rest\nReceiver Operating Characteristic",
 )
 
@@ -298,7 +300,7 @@ for class_id, color in zip(range(n_classes), colors):
 
 _ = ax.set(
     xlabel="False Positive Rate",
-    ylabel="True Positive Rate",
+    ylabel=TRUE_POSITIVE_RATE,
     title="Extension of Receiver Operating Characteristic\nto One-vs-Rest multiclass",
 )
 
@@ -379,7 +381,7 @@ for ix, (label_a, label_b) in enumerate(pair_list):
     )
     ax.set(
         xlabel="False Positive Rate",
-        ylabel="True Positive Rate",
+        ylabel=TRUE_POSITIVE_RATE,
         title=f"{target_names[idx_a]} vs {label_b} ROC curves",
     )
 
@@ -426,7 +428,7 @@ ax.plot(
 ax.plot([0, 1], [0, 1], "k--", label="Chance level (AUC = 0.5)")
 _ = ax.set(
     xlabel="False Positive Rate",
-    ylabel="True Positive Rate",
+    ylabel=TRUE_POSITIVE_RATE,
     title="Extension of Receiver Operating Characteristic\nto One-vs-One multiclass",
     aspect="equal",
     xlim=(-0.01, 1.01),
