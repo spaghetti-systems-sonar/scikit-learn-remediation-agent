@@ -66,6 +66,30 @@ from sklearn.utils.validation import _check_method_params, check_is_fitted, inde
 __all__ = ["GridSearchCV", "ParameterGrid", "ParameterSampler", "RandomizedSearchCV"]
 
 
+def _validate_grid_values(grid):
+    """Check that all values in a parameter grid dict are valid."""
+    for key, value in grid.items():
+        if isinstance(value, np.ndarray) and value.ndim > 1:
+            raise ValueError(
+                f"Parameter array for {key!r} should be one-dimensional, got:"
+                f" {value!r} with shape {value.shape}"
+            )
+        if isinstance(value, str) or not isinstance(
+            value, (np.ndarray, Sequence)
+        ):
+            raise TypeError(
+                f"Parameter grid for parameter {key!r} needs to be a list or a"
+                f" numpy array, but got {value!r} (of type "
+                f"{type(value).__name__}) instead. Single values "
+                "need to be wrapped in a list with one element."
+            )
+        if len(value) == 0:
+            raise ValueError(
+                f"Parameter grid for parameter {key!r} need "
+                f"to be a non-empty sequence, got: {value!r}"
+            )
+
+
 class ParameterGrid:
     """Grid of parameters with a discrete number of values for each.
 
@@ -126,26 +150,7 @@ class ParameterGrid:
         for grid in param_grid:
             if not isinstance(grid, dict):
                 raise TypeError(f"Parameter grid is not a dict ({grid!r})")
-            for key, value in grid.items():
-                if isinstance(value, np.ndarray) and value.ndim > 1:
-                    raise ValueError(
-                        f"Parameter array for {key!r} should be one-dimensional, got:"
-                        f" {value!r} with shape {value.shape}"
-                    )
-                if isinstance(value, str) or not isinstance(
-                    value, (np.ndarray, Sequence)
-                ):
-                    raise TypeError(
-                        f"Parameter grid for parameter {key!r} needs to be a list or a"
-                        f" numpy array, but got {value!r} (of type "
-                        f"{type(value).__name__}) instead. Single values "
-                        "need to be wrapped in a list with one element."
-                    )
-                if len(value) == 0:
-                    raise ValueError(
-                        f"Parameter grid for parameter {key!r} need "
-                        f"to be a non-empty sequence, got: {value!r}"
-                    )
+            _validate_grid_values(grid)
 
         self.param_grid = param_grid
 
@@ -311,6 +316,18 @@ class ParameterSampler:
             for dist in self.param_distributions
         )
 
+    def _sample_params(self, dist, rng):
+        """Sample parameters from a single distribution dictionary."""
+        # Always sort the keys of a dictionary, for reproducibility
+        items = sorted(dist.items())
+        params = {}
+        for k, v in items:
+            if hasattr(v, "rvs"):
+                params[k] = v.rvs(random_state=rng)
+            else:
+                params[k] = v[rng.randint(len(v))]
+        return params
+
     def __iter__(self):
         rng = check_random_state(self.random_state)
 
@@ -336,15 +353,7 @@ class ParameterSampler:
         else:
             for _ in range(self.n_iter):
                 dist = rng.choice(self.param_distributions)
-                # Always sort the keys of a dictionary, for reproducibility
-                items = sorted(dist.items())
-                params = dict()
-                for k, v in items:
-                    if hasattr(v, "rvs"):
-                        params[k] = v.rvs(random_state=rng)
-                    else:
-                        params[k] = v[rng.randint(len(v))]
-                yield params
+                yield self._sample_params(dist, rng)
 
     def __len__(self):
         """Number of points that will be sampled."""
@@ -926,7 +935,11 @@ class BaseSearchCV(
         return accept
 
     def _check_input_parameters(self, X, y, split_params):
-        pass
+        """Validate input parameters before fitting.
+
+        This is a hook for subclasses to override. By default, no additional
+        checks are performed.
+        """
 
     def _get_routed_params_for_fit(self, params):
         """Get the parameters to be used for routing.
