@@ -1052,6 +1052,44 @@ class QuadraticDiscriminantAnalysis(
 
         return scaling, rotation, cov
 
+    def _validate_solver(self):
+        """Validate solver parameters and return the solver method."""
+        if self.solver == "svd":
+            if self.shrinkage is not None:
+                # Support for `shrinkage` could be implemented as in
+                # https://github.com/scikit-learn/scikit-learn/issues/32590
+                raise NotImplementedError("shrinkage not supported with 'svd' solver.")
+            if self.covariance_estimator is not None:
+                raise ValueError(
+                    "covariance_estimator is not supported with solver='svd'. "
+                    "Try solver='eigen' instead."
+                )
+            return self._solve_svd
+        elif self.solver == "eigen":
+            return self._solve_eigen
+
+    def _check_rank(self, scaling, n_features, x_class, class_label):
+        """Check that the covariance matrix is full rank."""
+        rank = np.sum(scaling > self.tol)
+        if rank >= n_features:
+            return
+        n_samples_class = x_class.shape[0]
+        if self.solver == "svd" and n_samples_class <= n_features:
+            raise linalg.LinAlgError(
+                f"The covariance matrix of class {class_label} is not full "
+                f"rank. When using `solver='svd'` the number of samples in "
+                f"each class should be more than the number of features, but "
+                f"class {class_label} has {n_samples_class} samples and "
+                f"{n_features} features. Try using `solver='eigen'` and "
+                f"setting the parameter `shrinkage` for regularization."
+            )
+        msg_param = "shrinkage" if self.solver == "eigen" else "reg_param"
+        raise linalg.LinAlgError(
+            f"The covariance matrix of class {class_label} is not full "
+            f"rank. Increase the value of `{msg_param}` to reduce the "
+            f"collinearity.",
+        )
+
     @_fit_context(prefer_skip_nested_validation=True)
     def fit(self, X, y):
         """Fit the model according to the given training data and parameters.
@@ -1093,19 +1131,7 @@ class QuadraticDiscriminantAnalysis(
         else:
             self.priors_ = np.array(self.priors)
 
-        if self.solver == "svd":
-            if self.shrinkage is not None:
-                # Support for `shrinkage` could be implemented as in
-                # https://github.com/scikit-learn/scikit-learn/issues/32590
-                raise NotImplementedError("shrinkage not supported with 'svd' solver.")
-            if self.covariance_estimator is not None:
-                raise ValueError(
-                    "covariance_estimator is not supported with solver='svd'. "
-                    "Try solver='eigen' instead."
-                )
-            specific_solver = self._solve_svd
-        elif self.solver == "eigen":
-            specific_solver = self._solve_eigen
+        specific_solver = self._validate_solver()
 
         means = []
         cov = []
@@ -1124,25 +1150,7 @@ class QuadraticDiscriminantAnalysis(
 
             scaling_class, rotation_class, cov_class = specific_solver(X_class)
 
-            rank = np.sum(scaling_class > self.tol)
-            if rank < n_features:
-                n_samples_class = X_class.shape[0]
-                if self.solver == "svd" and n_samples_class <= n_features:
-                    raise linalg.LinAlgError(
-                        f"The covariance matrix of class {class_label} is not full "
-                        f"rank. When using `solver='svd'` the number of samples in "
-                        f"each class should be more than the number of features, but "
-                        f"class {class_label} has {n_samples_class} samples and "
-                        f"{n_features} features. Try using `solver='eigen'` and "
-                        f"setting the parameter `shrinkage` for regularization."
-                    )
-                else:
-                    msg_param = "shrinkage" if self.solver == "eigen" else "reg_param"
-                    raise linalg.LinAlgError(
-                        f"The covariance matrix of class {class_label} is not full "
-                        f"rank. Increase the value of `{msg_param}` to reduce the "
-                        f"collinearity.",
-                    )
+            self._check_rank(scaling_class, n_features, X_class, class_label)
 
             cov.append(cov_class)
             scalings.append(scaling_class)

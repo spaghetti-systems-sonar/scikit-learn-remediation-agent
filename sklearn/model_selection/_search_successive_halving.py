@@ -155,18 +155,7 @@ class BaseSuccessiveHalving(BaseSearchCV):
 
         self.min_resources_ = self.min_resources
         if self.min_resources_ in ("smallest", "exhaust"):
-            if self.resource == "n_samples":
-                n_splits = self._checked_cv_orig.get_n_splits(X, y, **split_params)
-                # please see https://gph.is/1KjihQe for a justification
-                magic_factor = 2
-                self.min_resources_ = n_splits * magic_factor
-                if is_classifier(self.estimator):
-                    y = validate_data(self, X="no_validation", y=y)
-                    check_classification_targets(y)
-                    n_classes = np.unique(y).shape[0]
-                    self.min_resources_ *= n_classes
-            else:
-                self.min_resources_ = 1
+            self.min_resources_ = self._compute_min_resources(X, y, split_params)
             # if 'exhaust', min_resources_ might be set to a higher value later
             # in _run_search
 
@@ -189,6 +178,21 @@ class BaseSuccessiveHalving(BaseSearchCV):
                 f"min_resources_={self.min_resources_}: you might have passed "
                 "an empty dataset X."
             )
+
+    def _compute_min_resources(self, X, y, split_params):
+        """Compute the minimum resources for 'smallest' or 'exhaust' strategies."""
+        if self.resource == "n_samples":
+            n_splits = self._checked_cv_orig.get_n_splits(X, y, **split_params)
+            # please see https://gph.is/1KjihQe for a justification
+            magic_factor = 2
+            min_resources = n_splits * magic_factor
+            if is_classifier(self.estimator):
+                y = validate_data(self, X="no_validation", y=y)
+                check_classification_targets(y)
+                n_classes = np.unique(y).shape[0]
+                min_resources *= n_classes
+            return min_resources
+        return 1
 
     @staticmethod
     def _select_best_index(refit, refit_metric, results):
@@ -247,6 +251,25 @@ class BaseSuccessiveHalving(BaseSearchCV):
         self.best_score_ = self.cv_results_["mean_test_score"][self.best_index_]
 
         return self
+
+    def _get_cv_and_candidates(self, candidate_params, n_resources):
+        """Return the CV splitter and updated candidate params for an iteration."""
+        if self.resource == "n_samples":
+            # subsampling will be done in cv.split()
+            cv = _SubsampleMetaSplitter(
+                base_cv=self._checked_cv_orig,
+                fraction=n_resources / self._n_samples_orig,
+                subsample_test=True,
+                random_state=self.random_state,
+            )
+        else:
+            # Need copy so that the n_resources of next iteration does
+            # not overwrite
+            candidate_params = [c.copy() for c in candidate_params]
+            for candidate in candidate_params:
+                candidate[self.resource] = n_resources
+            cv = self._checked_cv_orig
+        return cv, candidate_params
 
     def _run_search(self, evaluate_candidates, *, callback_ctx):
         candidate_params = self._generate_candidate_params()
@@ -335,22 +358,9 @@ class BaseSuccessiveHalving(BaseSearchCV):
                 print(f"n_candidates: {n_candidates}")
                 print(f"n_resources: {n_resources}")
 
-            if self.resource == "n_samples":
-                # subsampling will be done in cv.split()
-                cv = _SubsampleMetaSplitter(
-                    base_cv=self._checked_cv_orig,
-                    fraction=n_resources / self._n_samples_orig,
-                    subsample_test=True,
-                    random_state=self.random_state,
-                )
-
-            else:
-                # Need copy so that the n_resources of next iteration does
-                # not overwrite
-                candidate_params = [c.copy() for c in candidate_params]
-                for candidate in candidate_params:
-                    candidate[self.resource] = n_resources
-                cv = self._checked_cv_orig
+            cv, candidate_params = self._get_cv_and_candidates(
+                candidate_params, n_resources
+            )
 
             more_results = {
                 "iter": [itr] * n_candidates,

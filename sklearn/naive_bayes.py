@@ -404,6 +404,25 @@ class GaussianNB(_BaseNB):
             X, y, classes, _refit=False, sample_weight=sample_weight
         )
 
+    def _init_class_prior(self, n_classes, float_dtype, device_, xp):
+        """Initialize class prior based on provided priors or zeros."""
+        if self.priors is not None:
+            priors = xp.asarray(self.priors, dtype=float_dtype, device=device_)
+            # Check that the provided prior matches the number of classes
+            if priors.shape[0] != n_classes:
+                raise ValueError("Number of priors must match number of classes.")
+            # Check that the sum is 1
+            if not xpx.isclose(xp.sum(priors), 1.0):
+                raise ValueError("The sum of the priors should be 1.")
+            # Check that the priors are non-negative
+            if xp.any(priors < 0):
+                raise ValueError("Priors must be non-negative.")
+            return priors
+        # Initialize the priors to zeros for each class
+        return xp.zeros(
+            self.classes_.shape[0], dtype=float_dtype, device=device_
+        )
+
     def _partial_fit(self, X, y, classes=None, _refit=False, sample_weight=None):
         """Actual implementation of Gaussian NB fitting.
 
@@ -466,23 +485,9 @@ class GaussianNB(_BaseNB):
 
             # Initialise the class prior
             # Take into account the priors
-            if self.priors is not None:
-                priors = xp.asarray(self.priors, dtype=float_dtype, device=device_)
-                # Check that the provided prior matches the number of classes
-                if priors.shape[0] != n_classes:
-                    raise ValueError("Number of priors must match number of classes.")
-                # Check that the sum is 1
-                if not xpx.isclose(xp.sum(priors), 1.0):
-                    raise ValueError("The sum of the priors should be 1.")
-                # Check that the priors are non-negative
-                if xp.any(priors < 0):
-                    raise ValueError("Priors must be non-negative.")
-                self.class_prior_ = priors
-            else:
-                # Initialize the priors to zeros for each class
-                self.class_prior_ = xp.zeros(
-                    self.classes_.shape[0], dtype=float_dtype, device=device_
-                )
+            self.class_prior_ = self._init_class_prior(
+                n_classes, float_dtype, device_, xp
+            )
         else:
             if X.shape[1] != self.theta_.shape[1]:
                 msg = "Number of features %d does not match previous data %d."
