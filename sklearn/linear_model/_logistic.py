@@ -717,6 +717,30 @@ def _logistic_regression_path(
     return xp.stack(coefs), xp.asarray(Cs, device=device_), n_iter
 
 
+def _adjust_scorer_with_labels(scoring, classes, is_binary):
+    """Adjust scorer to pass class labels if supported by the score function."""
+    if hasattr(scoring, "_score_func"):
+        sig = inspect.signature(scoring._score_func).parameters
+    else:
+        sig = []
+
+    if "labels" not in sig:
+        return scoring
+
+    pos_label_kwarg = {}
+    if is_binary and "pos_label" in sig:
+        # see _logistic_regression_path
+        pos_label_kwarg["pos_label"] = classes[-1]
+    return make_scorer(
+        scoring._score_func,
+        greater_is_better=scoring._sign == 1,
+        response_method=scoring._response_method,
+        labels=classes,
+        **pos_label_kwarg,
+        **getattr(scoring, "_kwargs", {}),
+    )
+
+
 # helper function for LogisticCV
 def _log_reg_scoring_path(
     X,
@@ -935,24 +959,7 @@ def _log_reg_scoring_path(
         # 2. We reconstruct the scorer and pass labels as kwargs explicitly.
         # We implement the 2nd option even if it seems a bit hacky because it works
         # with and without metadata routing.
-        if hasattr(scoring, "_score_func"):
-            sig = inspect.signature(scoring._score_func).parameters
-        else:
-            sig = []
-
-        if "labels" in sig:
-            pos_label_kwarg = {}
-            if is_binary and "pos_label" in sig:
-                # see _logistic_regression_path
-                pos_label_kwarg["pos_label"] = classes[-1]
-            scoring = make_scorer(
-                scoring._score_func,
-                greater_is_better=True if scoring._sign == 1 else False,
-                response_method=scoring._response_method,
-                labels=classes,
-                **pos_label_kwarg,
-                **getattr(scoring, "_kwargs", {}),
-            )
+        scoring = _adjust_scorer_with_labels(scoring, classes, is_binary)
 
         def calc_score(log_reg):
             return scoring(log_reg, X_test, y_test, **score_params)
@@ -1993,7 +2000,7 @@ class LogisticRegressionCV(LogisticRegression, LinearClassifierMixin, BaseEstima
 
     # TODO(1.11): remove this when sample_weight as positional arg is removed
     # from the `score` signature
-    __metadata_request__score = {"sample_weight": metadata_routing.UNUSED}
+    _metadata_request__score = {"sample_weight": metadata_routing.UNUSED}
     _parameter_constraints: dict = {**LogisticRegression._parameter_constraints}
 
     for param in ["C", "warm_start", "l1_ratio"]:

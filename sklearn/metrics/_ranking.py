@@ -2067,6 +2067,78 @@ def ndcg_score(y_true, y_score, *, k=None, sample_weight=None, ignore_ties=False
     return float(np.average(gain, weights=sample_weight))
 
 
+def _validate_top_k_y_score(y_type, y_score):
+    """Validate and reshape y_score based on y_type for top-k accuracy."""
+    y_score = check_array(y_score, ensure_2d=False)
+    if y_type == "binary":
+        if y_score.ndim == 2 and y_score.shape[1] != 1:
+            raise ValueError(
+                "`y_true` is binary while y_score is 2d with"
+                f" {y_score.shape[1]} classes. If `y_true` does not contain all the"
+                " labels, `labels` must be provided."
+            )
+        y_score = column_or_1d(y_score)
+    elif y_score.ndim != 2:
+        raise ValueError(
+            "`y_score` needs to be of shape `(n_samples, n_classes)`, since "
+            "`y_true` contains multiple classes. Got "
+            f"`y_score.shape={y_score.shape}`."
+        )
+    return y_score
+
+
+def _resolve_top_k_classes(y_true, labels, y_score_n_classes):
+    """Resolve classes and n_classes from labels or y_true."""
+    if labels is None:
+        classes = _unique(y_true)
+        n_classes = len(classes)
+        if n_classes != y_score_n_classes:
+            raise ValueError(
+                f"Number of classes in 'y_true' ({n_classes}) not equal "
+                f"to the number of classes in 'y_score' ({y_score_n_classes})."
+                "You can provide a list of all known classes by assigning it "
+                "to the `labels` parameter."
+            )
+        return classes, n_classes
+
+    labels = column_or_1d(labels)
+    classes = _unique(labels)
+    n_labels = len(labels)
+    n_classes = len(classes)
+
+    if n_classes != n_labels:
+        raise ValueError("Parameter 'labels' must be unique.")
+
+    if not np.array_equal(classes, labels):
+        raise ValueError("Parameter 'labels' must be ordered.")
+
+    if n_classes != y_score_n_classes:
+        raise ValueError(
+            f"Number of given labels ({n_classes}) not equal to the "
+            f"number of classes in 'y_score' ({y_score_n_classes})."
+        )
+
+    if len(np.setdiff1d(y_true, classes)):
+        raise ValueError("'y_true' contains labels not in parameter 'labels'.")
+
+    return classes, n_classes
+
+
+def _compute_top_k_hits(y_type, y_score, y_true_encoded, k):
+    """Compute hit array for top-k accuracy."""
+    if y_type == "binary":
+        if k == 1:
+            threshold = (
+                0.5 if y_score.min() >= 0 and y_score.max() <= 1 else 0
+            )
+            y_pred = (y_score > threshold).astype(np.int64)
+            return y_pred == y_true_encoded
+        return np.ones_like(y_score, dtype=np.bool_)
+
+    sorted_pred = np.argsort(y_score, axis=1, kind="mergesort")[:, ::-1]
+    return (y_true_encoded == sorted_pred[:, :k].T).any(axis=0)
+
+
 @validate_params(
     {
         "y_true": ["array-like"],
@@ -2166,57 +2238,14 @@ def top_k_accuracy_score(
         raise ValueError(
             f"y type must be 'binary' or 'multiclass', got '{y_type}' instead."
         )
-    y_score = check_array(y_score, ensure_2d=False)
-    if y_type == "binary":
-        if y_score.ndim == 2 and y_score.shape[1] != 1:
-            raise ValueError(
-                "`y_true` is binary while y_score is 2d with"
-                f" {y_score.shape[1]} classes. If `y_true` does not contain all the"
-                " labels, `labels` must be provided."
-            )
-        y_score = column_or_1d(y_score)
-    else:
-        if not y_score.ndim == 2:
-            raise ValueError(
-                "`y_score` needs to be of shape `(n_samples, n_classes)`, since "
-                "`y_true` contains multiple classes. Got "
-                f"`y_score.shape={y_score.shape}`."
-            )
 
+    y_score = _validate_top_k_y_score(y_type, y_score)
     check_consistent_length(y_true, y_score, sample_weight)
     y_score_n_classes = y_score.shape[1] if y_score.ndim == 2 else 2
 
-    if labels is None:
-        classes = _unique(y_true)
-        n_classes = len(classes)
-
-        if n_classes != y_score_n_classes:
-            raise ValueError(
-                f"Number of classes in 'y_true' ({n_classes}) not equal "
-                f"to the number of classes in 'y_score' ({y_score_n_classes})."
-                "You can provide a list of all known classes by assigning it "
-                "to the `labels` parameter."
-            )
-    else:
-        labels = column_or_1d(labels)
-        classes = _unique(labels)
-        n_labels = len(labels)
-        n_classes = len(classes)
-
-        if n_classes != n_labels:
-            raise ValueError("Parameter 'labels' must be unique.")
-
-        if not np.array_equal(classes, labels):
-            raise ValueError("Parameter 'labels' must be ordered.")
-
-        if n_classes != y_score_n_classes:
-            raise ValueError(
-                f"Number of given labels ({n_classes}) not equal to the "
-                f"number of classes in 'y_score' ({y_score_n_classes})."
-            )
-
-        if len(np.setdiff1d(y_true, classes)):
-            raise ValueError("'y_true' contains labels not in parameter 'labels'.")
+    classes, n_classes = _resolve_top_k_classes(
+        y_true, labels, y_score_n_classes
+    )
 
     if k >= n_classes:
         warnings.warn(
@@ -2228,17 +2257,7 @@ def top_k_accuracy_score(
         )
 
     y_true_encoded = _encode(y_true, uniques=classes)
-
-    if y_type == "binary":
-        if k == 1:
-            threshold = 0.5 if y_score.min() >= 0 and y_score.max() <= 1 else 0
-            y_pred = (y_score > threshold).astype(np.int64)
-            hits = y_pred == y_true_encoded
-        else:
-            hits = np.ones_like(y_score, dtype=np.bool_)
-    elif y_type == "multiclass":
-        sorted_pred = np.argsort(y_score, axis=1, kind="mergesort")[:, ::-1]
-        hits = (y_true_encoded == sorted_pred[:, :k].T).any(axis=0)
+    hits = _compute_top_k_hits(y_type, y_score, y_true_encoded, k)
 
     if normalize:
         return float(np.average(hits, weights=sample_weight))
