@@ -623,6 +623,107 @@ def confusion_matrix(
     return xp.asarray(cm, device=device_)
 
 
+def _mcm_1d_counts(y_true, y_pred, sample_weight, labels, n_labels, xp):
+    """Compute tp_sum, pred_sum, true_sum for the 1D (binary/multiclass) case."""
+    le = LabelEncoder()
+    le.fit(labels)
+    y_true = le.transform(y_true)
+    y_pred = le.transform(y_pred)
+    sorted_labels = le.classes_
+
+    # labels are now from 0 to len(labels) - 1 -> use bincount
+    tp = y_true == y_pred
+    tp_bins = y_true[tp]
+    if sample_weight is not None:
+        tp_bins_weights = sample_weight[tp]
+    else:
+        tp_bins_weights = None
+
+    if tp_bins.shape[0]:
+        tp_sum = _bincount(
+            tp_bins, weights=tp_bins_weights, minlength=labels.shape[0], xp=xp
+        )
+    else:
+        # Pathological case
+        true_sum = pred_sum = tp_sum = xp.zeros(labels.shape[0])
+    if y_pred.shape[0]:
+        pred_sum = _bincount(
+            y_pred, weights=sample_weight, minlength=labels.shape[0], xp=xp
+        )
+    if y_true.shape[0]:
+        true_sum = _bincount(
+            y_true, weights=sample_weight, minlength=labels.shape[0], xp=xp
+        )
+
+    # Retain only selected labels
+    indices = xp.searchsorted(sorted_labels, labels[:n_labels])
+    tp_sum = xp.take(tp_sum, indices, axis=0)
+    true_sum = xp.take(true_sum, indices, axis=0)
+    pred_sum = xp.take(pred_sum, indices, axis=0)
+
+    return tp_sum, pred_sum, true_sum
+
+
+def _mcm_multilabel_counts(
+    y_true, y_pred, sample_weight, labels, present_labels, n_labels, samplewise, xp,
+    device_,
+):
+    """Compute tp_sum, pred_sum, true_sum for the multilabel-indicator case."""
+    sum_axis = 1 if samplewise else 0
+
+    # All labels are index integers for multilabel.
+    # Select labels:
+    if labels.shape != present_labels.shape or xp.any(
+        xp.not_equal(labels, present_labels)
+    ):
+        if xp.max(labels) > xp.max(present_labels):
+            raise ValueError(
+                "All labels must be in [0, n labels) for "
+                "multilabel targets. "
+                "Got %d > %d" % (xp.max(labels), xp.max(present_labels))
+            )
+        if xp.min(labels) < 0:
+            raise ValueError(
+                "All labels must be in [0, n labels) for "
+                "multilabel targets. "
+                "Got %d < 0" % xp.min(labels)
+            )
+
+    if n_labels is not None:
+        y_true = y_true[:, labels[:n_labels]]
+        y_pred = y_pred[:, labels[:n_labels]]
+
+    if issparse(y_true) or issparse(y_pred):
+        true_and_pred = y_true.multiply(y_pred)
+    else:
+        true_and_pred = xp.multiply(y_true, y_pred)
+
+    # calculate weighted counts
+    tp_sum = _count_nonzero(
+        true_and_pred,
+        axis=sum_axis,
+        sample_weight=sample_weight,
+        xp=xp,
+        device=device_,
+    )
+    pred_sum = _count_nonzero(
+        y_pred,
+        axis=sum_axis,
+        sample_weight=sample_weight,
+        xp=xp,
+        device=device_,
+    )
+    true_sum = _count_nonzero(
+        y_true,
+        axis=sum_axis,
+        sample_weight=sample_weight,
+        xp=xp,
+        device=device_,
+    )
+
+    return tp_sum, pred_sum, true_sum, y_true
+
+
 @validate_params(
     {
         "y_true": ["array-like", "sparse matrix"],
@@ -764,93 +865,21 @@ def multilabel_confusion_matrix(
                 "multilabel classification."
             )
 
-        le = LabelEncoder()
-        le.fit(labels)
-        y_true = le.transform(y_true)
-        y_pred = le.transform(y_pred)
-        sorted_labels = le.classes_
-
-        # labels are now from 0 to len(labels) - 1 -> use bincount
-        tp = y_true == y_pred
-        tp_bins = y_true[tp]
-        if sample_weight is not None:
-            tp_bins_weights = sample_weight[tp]
-        else:
-            tp_bins_weights = None
-
-        if tp_bins.shape[0]:
-            tp_sum = _bincount(
-                tp_bins, weights=tp_bins_weights, minlength=labels.shape[0], xp=xp
-            )
-        else:
-            # Pathological case
-            true_sum = pred_sum = tp_sum = xp.zeros(labels.shape[0])
-        if y_pred.shape[0]:
-            pred_sum = _bincount(
-                y_pred, weights=sample_weight, minlength=labels.shape[0], xp=xp
-            )
-        if y_true.shape[0]:
-            true_sum = _bincount(
-                y_true, weights=sample_weight, minlength=labels.shape[0], xp=xp
-            )
-
-        # Retain only selected labels
-        indices = xp.searchsorted(sorted_labels, labels[:n_labels])
-        tp_sum = xp.take(tp_sum, indices, axis=0)
-        true_sum = xp.take(true_sum, indices, axis=0)
-        pred_sum = xp.take(pred_sum, indices, axis=0)
+        tp_sum, pred_sum, true_sum = _mcm_1d_counts(
+            y_true, y_pred, sample_weight, labels, n_labels, xp
+        )
 
     else:
-        sum_axis = 1 if samplewise else 0
-
-        # All labels are index integers for multilabel.
-        # Select labels:
-        if labels.shape != present_labels.shape or xp.any(
-            xp.not_equal(labels, present_labels)
-        ):
-            if xp.max(labels) > xp.max(present_labels):
-                raise ValueError(
-                    "All labels must be in [0, n labels) for "
-                    "multilabel targets. "
-                    "Got %d > %d" % (xp.max(labels), xp.max(present_labels))
-                )
-            if xp.min(labels) < 0:
-                raise ValueError(
-                    "All labels must be in [0, n labels) for "
-                    "multilabel targets. "
-                    "Got %d < 0" % xp.min(labels)
-                )
-
-        if n_labels is not None:
-            y_true = y_true[:, labels[:n_labels]]
-            y_pred = y_pred[:, labels[:n_labels]]
-
-        if issparse(y_true) or issparse(y_pred):
-            true_and_pred = y_true.multiply(y_pred)
-        else:
-            true_and_pred = xp.multiply(y_true, y_pred)
-
-        # calculate weighted counts
-        tp_sum = _count_nonzero(
-            true_and_pred,
-            axis=sum_axis,
-            sample_weight=sample_weight,
-            xp=xp,
-            device=device_,
-        )
-        pred_sum = _count_nonzero(
-            y_pred,
-            axis=sum_axis,
-            sample_weight=sample_weight,
-            xp=xp,
-            device=device_,
-        )
-        true_sum = _count_nonzero(
+        tp_sum, pred_sum, true_sum, y_true = _mcm_multilabel_counts(
             y_true,
-            axis=sum_axis,
-            sample_weight=sample_weight,
-            xp=xp,
-            device=device_,
+            y_pred,
+            sample_weight,
+            labels,
+            present_labels,
+            n_labels,
+            samplewise,
+            xp,
+            device_,
         )
 
     fp = pred_sum - tp_sum
@@ -2947,6 +2976,123 @@ def balanced_accuracy_score(y_true, y_pred, *, sample_weight=None, adjusted=Fals
     return float(score)
 
 
+def _check_target_names(labels, target_names, labels_given):
+    """Validate and return target_names for classification_report."""
+    if target_names is not None and len(labels) != len(target_names):
+        if labels_given:
+            warnings.warn(
+                "labels size, {0}, does not match size of target_names, {1}".format(
+                    len(labels), len(target_names)
+                )
+            )
+        else:
+            raise ValueError(
+                "Number of classes, {0}, does not match size of "
+                "target_names, {1}. Try specifying the labels "
+                "parameter".format(len(labels), len(target_names))
+            )
+    if target_names is None:
+        target_names = ["%s" % l for l in labels]
+    return target_names
+
+
+def _build_classification_report_dict(
+    rows,
+    headers,
+    average_options,
+    y_true,
+    y_pred,
+    labels,
+    sample_weight,
+    zero_division,
+    support_sum,
+    micro_is_accuracy,
+):
+    """Build and return the dict output for classification_report."""
+    report_dict = {label[0]: label[1:] for label in rows}
+    for label, scores in report_dict.items():
+        report_dict[label] = dict(zip(headers, [float(i) for i in scores]))
+
+    for average in average_options:
+        if average.startswith("micro") and micro_is_accuracy:
+            line_heading = "accuracy"
+        else:
+            line_heading = average + " avg"
+
+        avg_p, avg_r, avg_f1, _ = precision_recall_fscore_support(
+            y_true,
+            y_pred,
+            labels=labels,
+            average=average,
+            sample_weight=sample_weight,
+            zero_division=zero_division,
+        )
+        avg = [avg_p, avg_r, avg_f1, np.sum(support_sum)]
+        report_dict[line_heading] = dict(zip(headers, [float(i) for i in avg]))
+
+    if "accuracy" in report_dict:
+        report_dict["accuracy"] = report_dict["accuracy"]["precision"]
+    return report_dict
+
+
+def _build_classification_report_text(
+    rows,
+    headers,
+    target_names,
+    digits,
+    average_options,
+    y_true,
+    y_pred,
+    labels,
+    sample_weight,
+    zero_division,
+    support_sum,
+    micro_is_accuracy,
+):
+    """Build and return the text output for classification_report."""
+    longest_last_line_heading = "weighted avg"
+    name_width = max(len(cn) for cn in target_names)
+    width = max(name_width, len(longest_last_line_heading), digits)
+    head_fmt = "{:>{width}s} " + " {:>9}" * len(headers)
+    report = head_fmt.format("", *headers, width=width)
+    report += "\n\n"
+    row_fmt = "{:>{width}s} " + " {:>9.{digits}f}" * 3 + " {:>9}\n"
+    for row in rows:
+        report += row_fmt.format(*row, width=width, digits=digits)
+    report += "\n"
+
+    for average in average_options:
+        if average.startswith("micro") and micro_is_accuracy:
+            line_heading = "accuracy"
+        else:
+            line_heading = average + " avg"
+
+        avg_p, avg_r, avg_f1, _ = precision_recall_fscore_support(
+            y_true,
+            y_pred,
+            labels=labels,
+            average=average,
+            sample_weight=sample_weight,
+            zero_division=zero_division,
+        )
+        avg = [avg_p, avg_r, avg_f1, np.sum(support_sum)]
+
+        if line_heading == "accuracy":
+            row_fmt_accuracy = (
+                "{:>{width}s} "
+                + " {:>9.{digits}}" * 2
+                + " {:>9.{digits}f}"
+                + " {:>9}\n"
+            )
+            report += row_fmt_accuracy.format(
+                line_heading, "", "", *avg[2:], width=width, digits=digits
+            )
+        else:
+            report += row_fmt.format(line_heading, *avg, width=width, digits=digits)
+
+    return report
+
+
 @validate_params(
     {
         "y_true": ["array-like", "sparse matrix"],
@@ -3097,25 +3243,13 @@ def classification_report(
         labels_given = True
 
     # labelled micro average
-    micro_is_accuracy = (y_type == "multiclass" or y_type == "binary") and (
-        not labels_given or (set(labels) >= set(unique_labels(y_true, y_pred)))
+    is_multiclass_or_binary = y_type == "multiclass" or y_type == "binary"
+    labels_cover_all = not labels_given or (
+        set(labels) >= set(unique_labels(y_true, y_pred))
     )
+    micro_is_accuracy = is_multiclass_or_binary and labels_cover_all
 
-    if target_names is not None and len(labels) != len(target_names):
-        if labels_given:
-            warnings.warn(
-                "labels size, {0}, does not match size of target_names, {1}".format(
-                    len(labels), len(target_names)
-                )
-            )
-        else:
-            raise ValueError(
-                "Number of classes, {0}, does not match size of "
-                "target_names, {1}. Try specifying the labels "
-                "parameter".format(len(labels), len(target_names))
-            )
-    if target_names is None:
-        target_names = ["%s" % l for l in labels]
+    target_names = _check_target_names(labels, target_names, labels_given)
 
     headers = ["precision", "recall", "f1-score", "support"]
     # compute per-class results without averaging
@@ -3135,61 +3269,33 @@ def classification_report(
         average_options = ("micro", "macro", "weighted")
 
     if output_dict:
-        report_dict = {label[0]: label[1:] for label in rows}
-        for label, scores in report_dict.items():
-            report_dict[label] = dict(zip(headers, [float(i) for i in scores]))
-    else:
-        longest_last_line_heading = "weighted avg"
-        name_width = max(len(cn) for cn in target_names)
-        width = max(name_width, len(longest_last_line_heading), digits)
-        head_fmt = "{:>{width}s} " + " {:>9}" * len(headers)
-        report = head_fmt.format("", *headers, width=width)
-        report += "\n\n"
-        row_fmt = "{:>{width}s} " + " {:>9.{digits}f}" * 3 + " {:>9}\n"
-        for row in rows:
-            report += row_fmt.format(*row, width=width, digits=digits)
-        report += "\n"
-
-    # compute all applicable averages
-    for average in average_options:
-        if average.startswith("micro") and micro_is_accuracy:
-            line_heading = "accuracy"
-        else:
-            line_heading = average + " avg"
-
-        # compute averages with specified averaging method
-        avg_p, avg_r, avg_f1, _ = precision_recall_fscore_support(
+        return _build_classification_report_dict(
+            rows,
+            headers,
+            average_options,
             y_true,
             y_pred,
-            labels=labels,
-            average=average,
-            sample_weight=sample_weight,
-            zero_division=zero_division,
+            labels,
+            sample_weight,
+            zero_division,
+            s,
+            micro_is_accuracy,
         )
-        avg = [avg_p, avg_r, avg_f1, np.sum(s)]
 
-        if output_dict:
-            report_dict[line_heading] = dict(zip(headers, [float(i) for i in avg]))
-        else:
-            if line_heading == "accuracy":
-                row_fmt_accuracy = (
-                    "{:>{width}s} "
-                    + " {:>9.{digits}}" * 2
-                    + " {:>9.{digits}f}"
-                    + " {:>9}\n"
-                )
-                report += row_fmt_accuracy.format(
-                    line_heading, "", "", *avg[2:], width=width, digits=digits
-                )
-            else:
-                report += row_fmt.format(line_heading, *avg, width=width, digits=digits)
-
-    if output_dict:
-        if "accuracy" in report_dict.keys():
-            report_dict["accuracy"] = report_dict["accuracy"]["precision"]
-        return report_dict
-    else:
-        return report
+    return _build_classification_report_text(
+        rows,
+        headers,
+        target_names,
+        digits,
+        average_options,
+        y_true,
+        y_pred,
+        labels,
+        sample_weight,
+        zero_division,
+        s,
+        micro_is_accuracy,
+    )
 
 
 @validate_params(
