@@ -464,6 +464,43 @@ def orthogonal_mp(
         return np.squeeze(coef)
 
 
+def _omp_gram_preprocess(gram, xy, tol, norms_squared, copy_gram, copy_xy):
+    """Preprocess and reshape inputs for orthogonal_mp_gram."""
+    gram = check_array(gram, order="F", copy=copy_gram)
+    xy = np.asarray(xy)
+    if xy.ndim > 1 and xy.shape[1] > 1:
+        # or subsequent target will be affected
+        copy_gram = True
+    if xy.ndim == 1:
+        xy = xy[:, np.newaxis]
+        if tol is not None:
+            norms_squared = [norms_squared]
+    if copy_xy or not xy.flags.writeable:
+        # Make the copy once instead of many times in _gram_omp itself.
+        xy = xy.copy()
+    return gram, xy, norms_squared, copy_gram
+
+
+def _omp_gram_validate(gram, n_nonzero_coefs, tol, norms_squared):
+    """Validate parameters and set defaults for orthogonal_mp_gram."""
+    if n_nonzero_coefs is None and tol is None:
+        n_nonzero_coefs = int(0.1 * len(gram))
+    if tol is not None and norms_squared is None:
+        raise ValueError(
+            "Gram OMP needs the precomputed norms in order "
+            "to evaluate the error sum of squares."
+        )
+    if tol is not None and tol < 0:
+        raise ValueError("Epsilon cannot be negative")
+    if tol is None and n_nonzero_coefs <= 0:
+        raise ValueError("The number of atoms must be positive")
+    if tol is None and n_nonzero_coefs > len(gram):
+        raise ValueError(
+            "The number of atoms cannot be more than the number of features"
+        )
+    return n_nonzero_coefs
+
+
 @validate_params(
     {
         "Gram": ["array-like"],
@@ -577,34 +614,12 @@ def orthogonal_mp_gram(
     >>> X[:1,] @ coef
     array([-78.68])
     """
-    Gram = check_array(Gram, order="F", copy=copy_Gram)
-    Xy = np.asarray(Xy)
-    if Xy.ndim > 1 and Xy.shape[1] > 1:
-        # or subsequent target will be affected
-        copy_Gram = True
-    if Xy.ndim == 1:
-        Xy = Xy[:, np.newaxis]
-        if tol is not None:
-            norms_squared = [norms_squared]
-    if copy_Xy or not Xy.flags.writeable:
-        # Make the copy once instead of many times in _gram_omp itself.
-        Xy = Xy.copy()
-
-    if n_nonzero_coefs is None and tol is None:
-        n_nonzero_coefs = int(0.1 * len(Gram))
-    if tol is not None and norms_squared is None:
-        raise ValueError(
-            "Gram OMP needs the precomputed norms in order "
-            "to evaluate the error sum of squares."
-        )
-    if tol is not None and tol < 0:
-        raise ValueError("Epsilon cannot be negative")
-    if tol is None and n_nonzero_coefs <= 0:
-        raise ValueError("The number of atoms must be positive")
-    if tol is None and n_nonzero_coefs > len(Gram):
-        raise ValueError(
-            "The number of atoms cannot be more than the number of features"
-        )
+    Gram, Xy, norms_squared, copy_Gram = _omp_gram_preprocess(
+        Gram, Xy, tol, norms_squared, copy_Gram, copy_Xy
+    )
+    n_nonzero_coefs = _omp_gram_validate(
+        Gram, n_nonzero_coefs, tol, norms_squared
+    )
 
     if return_path:
         coef = np.zeros((len(Gram), Xy.shape[1], len(Gram)), dtype=Gram.dtype)
