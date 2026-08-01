@@ -324,70 +324,14 @@ class KBinsDiscretizer(TransformerMixin, BaseEstimator):
 
         for jj in range(n_features):
             column = X[:, jj]
-            col_min = column[nnz_weight_mask].min()
-            col_max = column[nnz_weight_mask].max()
-
-            if col_min == col_max:
-                warnings.warn(
-                    "Feature %d is constant and will be replaced with 0." % jj
-                )
-                n_bins[jj] = 1
-                bin_edges[jj] = np.array([-np.inf, np.inf])
-                continue
-
-            if self.strategy == "uniform":
-                bin_edges[jj] = np.linspace(col_min, col_max, n_bins[jj] + 1)
-
-            elif self.strategy == "quantile":
-                percentile_levels = np.linspace(0, 100, n_bins[jj] + 1)
-
-                # method="linear" is the implicit default for any numpy
-                # version. So we keep it version independent in that case by
-                # using an empty param dict.
-                percentile_kwargs = {}
-                if quantile_method != "linear" and sample_weight is None:
-                    percentile_kwargs["method"] = quantile_method
-
-                if sample_weight is None:
-                    bin_edges[jj] = np.asarray(
-                        np.percentile(column, percentile_levels, **percentile_kwargs),
-                        dtype=np.float64,
-                    )
-                else:
-                    average = (
-                        True if quantile_method == "averaged_inverted_cdf" else False
-                    )
-                    bin_edges[jj] = _weighted_percentile(
-                        column, sample_weight, percentile_levels, average=average
-                    )
-            elif self.strategy == "kmeans":
-                from sklearn.cluster import KMeans  # fixes import loops
-
-                # Deterministic initialization with uniform spacing
-                uniform_edges = np.linspace(col_min, col_max, n_bins[jj] + 1)
-                init = (uniform_edges[1:] + uniform_edges[:-1])[:, None] * 0.5
-
-                # 1D k-means procedure
-                km = KMeans(n_clusters=n_bins[jj], init=init, n_init=1)
-                centers = km.fit(
-                    column[:, None], sample_weight=sample_weight
-                ).cluster_centers_[:, 0]
-                # Must sort, centers may be unsorted even with sorted init
-                centers.sort()
-                bin_edges[jj] = (centers[1:] + centers[:-1]) * 0.5
-                bin_edges[jj] = np.r_[col_min, bin_edges[jj], col_max]
-
-            # Remove bins whose width are too small (i.e., <= 1e-8)
-            if self.strategy in ("quantile", "kmeans"):
-                mask = np.ediff1d(bin_edges[jj], to_begin=np.inf) > 1e-8
-                bin_edges[jj] = bin_edges[jj][mask]
-                if len(bin_edges[jj]) - 1 != n_bins[jj]:
-                    warnings.warn(
-                        "Bins whose width are too small (i.e., <= "
-                        "1e-8) in feature %d are removed. Consider "
-                        "decreasing the number of bins." % jj
-                    )
-                    n_bins[jj] = len(bin_edges[jj]) - 1
+            bin_edges[jj], n_bins[jj] = self._compute_feature_bin_edges(
+                column,
+                n_bins[jj],
+                nnz_weight_mask,
+                quantile_method,
+                sample_weight,
+                jj,
+            )
 
         self.bin_edges_ = bin_edges
         self.n_bins_ = n_bins
@@ -403,6 +347,96 @@ class KBinsDiscretizer(TransformerMixin, BaseEstimator):
             self._encoder.fit(np.zeros((1, len(self.n_bins_))))
 
         return self
+
+    def _compute_feature_bin_edges(
+        self,
+        column,
+        n_bins_jj,
+        nnz_weight_mask,
+        quantile_method,
+        sample_weight,
+        feature_idx,
+    ):
+        """Compute bin edges for a single feature."""
+        col_min = column[nnz_weight_mask].min()
+        col_max = column[nnz_weight_mask].max()
+
+        if col_min == col_max:
+            warnings.warn(
+                "Feature %d is constant and will be replaced with 0." % feature_idx
+            )
+            return np.array([-np.inf, np.inf]), 1
+
+        if self.strategy == "uniform":
+            bin_edges = np.linspace(col_min, col_max, n_bins_jj + 1)
+
+        elif self.strategy == "quantile":
+            bin_edges = self._compute_quantile_bin_edges(
+                column, n_bins_jj, quantile_method, sample_weight
+            )
+
+        elif self.strategy == "kmeans":
+            bin_edges = self._compute_kmeans_bin_edges(
+                column, col_min, col_max, n_bins_jj, sample_weight
+            )
+
+        # Remove bins whose width are too small (i.e., <= 1e-8)
+        if self.strategy in ("quantile", "kmeans"):
+            mask = np.ediff1d(bin_edges, to_begin=np.inf) > 1e-8
+            bin_edges = bin_edges[mask]
+            if len(bin_edges) - 1 != n_bins_jj:
+                warnings.warn(
+                    "Bins whose width are too small (i.e., <= "
+                    "1e-8) in feature %d are removed. Consider "
+                    "decreasing the number of bins." % feature_idx
+                )
+                n_bins_jj = len(bin_edges) - 1
+
+        return bin_edges, n_bins_jj
+
+    def _compute_quantile_bin_edges(
+        self, column, n_bins_jj, quantile_method, sample_weight
+    ):
+        """Compute bin edges using the quantile strategy."""
+        percentile_levels = np.linspace(0, 100, n_bins_jj + 1)
+
+        # method="linear" is the implicit default for any numpy
+        # version. So we keep it version independent in that case by
+        # using an empty param dict.
+        percentile_kwargs = {}
+        if quantile_method != "linear" and sample_weight is None:
+            percentile_kwargs["method"] = quantile_method
+
+        if sample_weight is None:
+            return np.asarray(
+                np.percentile(column, percentile_levels, **percentile_kwargs),
+                dtype=np.float64,
+            )
+
+        average = quantile_method == "averaged_inverted_cdf"
+        return _weighted_percentile(
+            column, sample_weight, percentile_levels, average=average
+        )
+
+    def _compute_kmeans_bin_edges(
+        self, column, col_min, col_max, n_bins_jj, sample_weight
+    ):
+        """Compute bin edges using the kmeans strategy."""
+        from sklearn.cluster import KMeans  # fixes import loops
+
+        # Deterministic initialization with uniform spacing
+        uniform_edges = np.linspace(col_min, col_max, n_bins_jj + 1)
+        init = (uniform_edges[1:] + uniform_edges[:-1])[:, None] * 0.5
+
+        # 1D k-means procedure
+        km = KMeans(n_clusters=n_bins_jj, init=init, n_init=1)
+        centers = km.fit(
+            column[:, None], sample_weight=sample_weight
+        ).cluster_centers_[:, 0]
+        # Must sort, centers may be unsorted even with sorted init
+        centers.sort()
+        bin_edges = (centers[1:] + centers[:-1]) * 0.5
+        return np.r_[col_min, bin_edges, col_max]
 
     def _validate_n_bins(self, n_features):
         """Returns n_bins_, the number of bins per feature."""

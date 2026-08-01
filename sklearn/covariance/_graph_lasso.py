@@ -944,6 +944,78 @@ class GraphicalLassoCV(BaseGraphicalLasso):
         self.cv = cv
         self.n_jobs = n_jobs
 
+    def _compute_initial_alphas(self, emp_cov):
+        """Compute initial alpha grid and number of refinements."""
+        n_alphas = self.alphas
+        if _is_arraylike_not_scalar(n_alphas):
+            for alpha in self.alphas:
+                check_scalar(
+                    alpha,
+                    "alpha",
+                    Real,
+                    min_val=0,
+                    max_val=np.inf,
+                    include_boundaries="right",
+                )
+            return self.alphas, 1
+        n_refinements = self.n_refinements
+        alpha_1 = alpha_max(emp_cov)
+        alpha_0 = 1e-2 * alpha_1
+        alphas = np.logspace(
+            np.log10(alpha_0), np.log10(alpha_1), n_alphas
+        )[::-1]
+        return alphas, n_refinements
+
+    @staticmethod
+    def _find_best_index(path):
+        """Find the index of the alpha with the best score across CV folds.
+
+        Returns
+        -------
+        best_index : int
+            Index of the best alpha in the path.
+        last_finite_idx : int
+            Index of the last finite score in the path.
+        """
+        best_score = -np.inf
+        last_finite_idx = 0
+        best_index = 0
+        for index, (alpha, scores, _) in enumerate(path):
+            this_score = np.mean(scores)
+            if this_score >= 0.1 / np.finfo(np.float64).eps:
+                this_score = np.nan
+            if np.isfinite(this_score):
+                last_finite_idx = index
+            if this_score >= best_score:
+                best_score = this_score
+                best_index = index
+        return best_index, last_finite_idx
+
+    @staticmethod
+    def _refine_grid(path, best_index, last_finite_idx):
+        """Compute refined alpha bounds based on the best index."""
+        if best_index == 0:
+            # We do not need to go back: we have chosen
+            # the highest value of alpha for which there are
+            # non-zero coefficients
+            alpha_1 = path[0][0]
+            alpha_0 = path[1][0]
+        elif (
+            best_index == last_finite_idx
+            and not best_index == len(path) - 1
+        ):
+            # We have non-converged models on the upper bound of the
+            # grid, we need to refine the grid there
+            alpha_1 = path[best_index][0]
+            alpha_0 = path[best_index + 1][0]
+        elif best_index == len(path) - 1:
+            alpha_1 = path[best_index][0]
+            alpha_0 = 0.01 * path[best_index][0]
+        else:
+            alpha_1 = path[best_index - 1][0]
+            alpha_0 = path[best_index + 1][0]
+        return alpha_1, alpha_0
+
     @_fit_context(prefer_skip_nested_validation=True)
     def fit(self, X, y=None, **params):
         """Fit the GraphicalLasso covariance model to X.
@@ -989,23 +1061,7 @@ class GraphicalLassoCV(BaseGraphicalLasso):
         n_alphas = self.alphas
         inner_verbose = max(0, self.verbose - 1)
 
-        if _is_arraylike_not_scalar(n_alphas):
-            for alpha in self.alphas:
-                check_scalar(
-                    alpha,
-                    "alpha",
-                    Real,
-                    min_val=0,
-                    max_val=np.inf,
-                    include_boundaries="right",
-                )
-            alphas = self.alphas
-            n_refinements = 1
-        else:
-            n_refinements = self.n_refinements
-            alpha_1 = alpha_max(emp_cov)
-            alpha_0 = 1e-2 * alpha_1
-            alphas = np.logspace(np.log10(alpha_0), np.log10(alpha_1), n_alphas)[::-1]
+        alphas, n_refinements = self._compute_initial_alphas(emp_cov)
 
         if _routing_enabled():
             routed_params = process_routing(self, "fit", **params)
@@ -1049,36 +1105,12 @@ class GraphicalLassoCV(BaseGraphicalLasso):
             # Find the maximum (avoid using built in 'max' function to
             # have a fully-reproducible selection of the smallest alpha
             # in case of equality)
-            best_score = -np.inf
-            last_finite_idx = 0
-            for index, (alpha, scores, _) in enumerate(path):
-                this_score = np.mean(scores)
-                if this_score >= 0.1 / np.finfo(np.float64).eps:
-                    this_score = np.nan
-                if np.isfinite(this_score):
-                    last_finite_idx = index
-                if this_score >= best_score:
-                    best_score = this_score
-                    best_index = index
+            best_index, last_finite_idx = self._find_best_index(path)
 
             # Refine the grid
-            if best_index == 0:
-                # We do not need to go back: we have chosen
-                # the highest value of alpha for which there are
-                # non-zero coefficients
-                alpha_1 = path[0][0]
-                alpha_0 = path[1][0]
-            elif best_index == last_finite_idx and not best_index == len(path) - 1:
-                # We have non-converged models on the upper bound of the
-                # grid, we need to refine the grid there
-                alpha_1 = path[best_index][0]
-                alpha_0 = path[best_index + 1][0]
-            elif best_index == len(path) - 1:
-                alpha_1 = path[best_index][0]
-                alpha_0 = 0.01 * path[best_index][0]
-            else:
-                alpha_1 = path[best_index - 1][0]
-                alpha_0 = path[best_index + 1][0]
+            alpha_1, alpha_0 = self._refine_grid(
+                path, best_index, last_finite_idx
+            )
 
             if not _is_arraylike_not_scalar(n_alphas):
                 alphas = np.logspace(np.log10(alpha_1), np.log10(alpha_0), n_alphas + 2)

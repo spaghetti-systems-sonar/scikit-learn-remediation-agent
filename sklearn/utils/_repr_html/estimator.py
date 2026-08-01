@@ -274,6 +274,237 @@ def _get_visual_block(estimator):
     )
 
 
+def _get_doc_link(estimator):
+    """Return the documentation link for an estimator, or empty string."""
+    if hasattr(estimator, "_get_doc_link"):
+        return estimator._get_doc_link()
+    return ""
+
+
+def _get_params_html(estimator, doc_link, is_label=True):
+    """Return the HTML string for estimator parameters.
+
+    Parameters
+    ----------
+    estimator : estimator object
+        The estimator to get parameters from.
+    doc_link : str
+        The documentation link for the estimator.
+    is_label : bool, default=True
+        If True, call `_get_params_html` with keyword argument only.
+        If False, call with `False` as first positional argument.
+
+    Returns
+    -------
+    params : str
+        The HTML representation of the estimator's parameters.
+    """
+    if not hasattr(estimator, "_get_params_html"):
+        return ""
+    if is_label:
+        return estimator._get_params_html(doc_link=doc_link)._repr_html_inner()
+    if not hasattr(estimator, "get_params"):
+        return ""
+    return estimator._get_params_html(False, doc_link)._repr_html_inner()
+
+
+def _get_fitted_attrs_html(estimator, doc_link, is_fitted_css_class):
+    """Return the HTML string for fitted attributes.
+
+    Parameters
+    ----------
+    estimator : estimator object
+        The estimator to get fitted attributes from.
+    doc_link : str
+        The documentation link for the estimator.
+    is_fitted_css_class : str
+        The CSS class indicating fitted status.
+
+    Returns
+    -------
+    attrs : str
+        The HTML representation of the fitted attributes.
+    """
+    if not (
+        hasattr(estimator, "_get_fitted_attr_html")
+        and is_fitted_css_class == "fitted"
+    ):
+        return ""
+    fitted_attrs = estimator._get_fitted_attr_html(doc_link)
+    return fitted_attrs._repr_html_inner() if len(fitted_attrs) > 0 else ""
+
+
+def _get_output_features(estimator):
+    """Try to get output feature names from an estimator.
+
+    Returns None if the call fails.
+    """
+    try:
+        return estimator.get_feature_names_out()
+    except Exception:
+        return None
+
+
+def _build_param_prefix(param_prefix, name):
+    """Build the parameter prefix for nested estimators.
+
+    Parameters
+    ----------
+    param_prefix : str
+        The current parameter prefix.
+    name : str
+        The name of the current step.
+
+    Returns
+    -------
+    new_prefix : str
+        The updated parameter prefix.
+    """
+    if not hasattr(name, "split"):
+        return param_prefix
+    if param_prefix:
+        return f"{param_prefix}{name.split(':')[0]}__"
+    return f"{name.split(':')[0]}__" if name else ""
+
+
+def _write_serial_parallel_html(
+    out,
+    estimator,
+    estimator_label,
+    estimator_label_details,
+    est_block,
+    is_fitted_css_class,
+    is_fitted_icon,
+    first_call,
+    param_prefix,
+    doc_link,
+    has_feature_names_out,
+    is_not_pipeline_step,
+):
+    """Write HTML for serial or parallel visual blocks."""
+    from sklearn.compose import ColumnTransformer
+
+    dashed_wrapped = first_call or est_block.dash_wrapped
+    dash_cls = " sk-dashed-wrapped" if dashed_wrapped else ""
+    out.write(f'<div class="sk-item{dash_cls}">')
+
+    if estimator_label:
+        params = _get_params_html(estimator, doc_link, is_label=False)
+        attrs = _get_fitted_attrs_html(estimator, doc_link, is_fitted_css_class)
+        _write_label_html(
+            out,
+            params,
+            attrs,
+            estimator_label,
+            estimator_label_details,
+            doc_link=doc_link,
+            features=None,
+            is_fitted_css_class=is_fitted_css_class,
+            is_fitted_icon=is_fitted_icon,
+            param_prefix=param_prefix,
+        )
+
+    kind = est_block.kind
+    out.write(f'<div class="sk-{kind}">')
+    est_infos = zip(est_block.estimators, est_block.names, est_block.name_details)
+
+    for est, name, name_details in est_infos:
+        new_prefix = _build_param_prefix(param_prefix, name)
+        if kind == "serial":
+            _write_estimator_html(
+                out,
+                est,
+                name,
+                name_details,
+                is_fitted_css_class=is_fitted_css_class,
+                param_prefix=new_prefix,
+            )
+        else:  # parallel
+            out.write('<div class="sk-parallel-item">')
+            serial_block = _VisualBlock("serial", [est], dash_wrapped=False)
+            _write_estimator_html(
+                out,
+                serial_block,
+                name,
+                name_details,
+                is_fitted_css_class=is_fitted_css_class,
+                param_prefix=new_prefix,
+            )
+            out.write("</div>")  # sk-parallel-item
+
+    out.write("</div>")
+
+    is_column_transformer = isinstance(estimator, ColumnTransformer)
+    has_single_estimator = len(est_block.estimators) == 1
+    should_show_features = (
+        is_fitted_css_class
+        and has_feature_names_out
+        and is_not_pipeline_step
+        and not (is_column_transformer and has_single_estimator)
+    )
+    if should_show_features:
+        output_features = _get_output_features(estimator)
+        if output_features is not None:
+            features_div = _features_html(output_features, is_fitted_css_class)
+            total_output_features_item = (
+                f"<div class='total_features'>{features_div}</div>"
+            )
+            out.write(total_output_features_item)
+
+    out.write("</div>")
+
+
+def _write_single_html(
+    out,
+    estimator,
+    est_block,
+    is_fitted_css_class,
+    is_fitted_icon,
+    first_call,
+    param_prefix,
+    doc_link,
+    has_feature_names_out,
+    is_not_pipeline_step,
+):
+    """Write HTML for a single visual block."""
+    if has_feature_names_out and is_not_pipeline_step and is_fitted_css_class:
+        output_features = _get_output_features(estimator)
+    else:
+        output_features = ""
+
+    if est_block.names == "NoneType(...)":
+        est_block.names = "passthrough"
+
+    is_passthrough = est_block.names == "passthrough"
+    if hasattr(estimator, "_get_params_html") and not is_passthrough:
+        params = estimator._get_params_html(doc_link=doc_link)._repr_html_inner()
+    else:
+        params = ""
+
+    if not is_passthrough:
+        attrs = _get_fitted_attrs_html(estimator, doc_link, is_fitted_css_class)
+    else:
+        attrs = ""
+
+    _write_label_html(
+        out,
+        params,
+        attrs,
+        est_block.names,
+        est_block.name_details,
+        est_block.name_caption,
+        est_block.doc_link_label,
+        outer_class="sk-item",
+        inner_class="sk-estimator",
+        checked=first_call,
+        doc_link=doc_link,
+        features=output_features,
+        is_fitted_css_class=is_fitted_css_class,
+        is_fitted_icon=is_fitted_icon,
+        param_prefix=param_prefix,
+    )
+
+
 def _write_estimator_html(
     out,
     estimator,
@@ -317,165 +548,44 @@ def _write_estimator_html(
         The prefix to prepend to parameter names for nested estimators.
         For example, in a pipeline this might be "pipeline__stepname__".
     """
-    from sklearn.compose import ColumnTransformer
-
     if first_call:
         est_block = _get_visual_block(estimator)
     else:
         is_fitted_icon = ""
         with config_context(print_changed_only=True):
             est_block = _get_visual_block(estimator)
-    # `estimator` can also be an instance of `_VisualBlock`
-    if hasattr(estimator, "_get_doc_link"):
-        doc_link = estimator._get_doc_link()
-    else:
-        doc_link = ""
 
+    doc_link = _get_doc_link(estimator)
     has_feature_names_out = hasattr(estimator, "get_feature_names_out")
     is_not_pipeline_step = not hasattr(estimator, "steps")
 
     if est_block.kind in ("serial", "parallel"):
-        dashed_wrapped = first_call or est_block.dash_wrapped
-        dash_cls = " sk-dashed-wrapped" if dashed_wrapped else ""
-        out.write(f'<div class="sk-item{dash_cls}">')
-        if estimator_label:
-            if hasattr(estimator, "get_params") and hasattr(
-                estimator, "_get_params_html"
-            ):
-                params = estimator._get_params_html(False, doc_link)._repr_html_inner()
-            else:
-                params = ""
-            if (
-                hasattr(estimator, "_get_fitted_attr_html")
-                and is_fitted_css_class == "fitted"
-            ):
-                fitted_attrs = estimator._get_fitted_attr_html(doc_link)
-                attrs = fitted_attrs._repr_html_inner() if len(fitted_attrs) > 0 else ""
-
-            else:
-                attrs = ""
-
-            _write_label_html(
-                out,
-                params,
-                attrs,
-                estimator_label,
-                estimator_label_details,
-                doc_link=doc_link,
-                features=None,
-                is_fitted_css_class=is_fitted_css_class,
-                is_fitted_icon=is_fitted_icon,
-                param_prefix=param_prefix,
-            )
-
-        kind = est_block.kind
-        out.write(f'<div class="sk-{kind}">')
-        est_infos = zip(est_block.estimators, est_block.names, est_block.name_details)
-
-        for est, name, name_details in est_infos:
-            # Build the parameter prefix for nested estimators
-
-            if param_prefix and hasattr(name, "split"):
-                # If we already have a prefix, append the new component
-                new_prefix = f"{param_prefix}{name.split(':')[0]}__"
-            elif hasattr(name, "split"):
-                # If this is the first level, start the prefix
-                new_prefix = f"{name.split(':')[0]}__" if name else ""
-            else:
-                new_prefix = param_prefix
-
-            if kind == "serial":
-                _write_estimator_html(
-                    out,
-                    est,
-                    name,
-                    name_details,
-                    is_fitted_css_class=is_fitted_css_class,
-                    param_prefix=new_prefix,
-                )
-            else:  # parallel
-                out.write('<div class="sk-parallel-item">')
-                # wrap element in a serial visualblock
-                serial_block = _VisualBlock("serial", [est], dash_wrapped=False)
-                _write_estimator_html(
-                    out,
-                    serial_block,
-                    name,
-                    name_details,
-                    is_fitted_css_class=is_fitted_css_class,
-                    param_prefix=new_prefix,
-                )
-                out.write("</div>")  # sk-parallel-item
-
-        out.write("</div>")
-
-        is_column_transformer = isinstance(estimator, ColumnTransformer)
-        has_single_estimator = len(est_block.estimators) == 1
-        if (
-            is_fitted_css_class
-            and has_feature_names_out
-            and is_not_pipeline_step
-            and not (is_column_transformer and has_single_estimator)
-        ):
-            try:
-                output_features = estimator.get_feature_names_out()
-            except Exception:
-                output_features = None
-
-            if output_features is not None:
-                features_div = _features_html(output_features, is_fitted_css_class)
-                total_output_features_item = (
-                    f"<div class='total_features'>{features_div}</div>"
-                )
-                out.write(total_output_features_item)
-
-        out.write("</div>")
-    elif est_block.kind == "single":
-        if has_feature_names_out and is_not_pipeline_step and is_fitted_css_class:
-            try:
-                output_features = estimator.get_feature_names_out()
-            except Exception:
-                output_features = None
-        else:
-            output_features = ""
-
-        if est_block.names == "NoneType(...)":
-            est_block.names = "passthrough"
-
-        if (
-            hasattr(estimator, "_get_params_html")
-            and not est_block.names == "passthrough"
-        ):
-            params = estimator._get_params_html(doc_link=doc_link)._repr_html_inner()
-        else:
-            params = ""
-        if (
-            hasattr(estimator, "_get_fitted_attr_html")
-            and not est_block.names == "passthrough"
-            and is_fitted_css_class == "fitted"
-        ):
-            fitted_attrs = estimator._get_fitted_attr_html(doc_link)
-            attrs = fitted_attrs._repr_html_inner() if len(fitted_attrs) > 0 else ""
-
-        else:
-            attrs = ""
-
-        _write_label_html(
+        _write_serial_parallel_html(
             out,
-            params,
-            attrs,
-            est_block.names,
-            est_block.name_details,
-            est_block.name_caption,
-            est_block.doc_link_label,
-            outer_class="sk-item",
-            inner_class="sk-estimator",
-            checked=first_call,
-            doc_link=doc_link,
-            features=output_features,
-            is_fitted_css_class=is_fitted_css_class,
-            is_fitted_icon=is_fitted_icon,
-            param_prefix=param_prefix,
+            estimator,
+            estimator_label,
+            estimator_label_details,
+            est_block,
+            is_fitted_css_class,
+            is_fitted_icon,
+            first_call,
+            param_prefix,
+            doc_link,
+            has_feature_names_out,
+            is_not_pipeline_step,
+        )
+    elif est_block.kind == "single":
+        _write_single_html(
+            out,
+            estimator,
+            est_block,
+            is_fitted_css_class,
+            is_fitted_icon,
+            first_call,
+            param_prefix,
+            doc_link,
+            has_feature_names_out,
+            is_not_pipeline_step,
         )
 
 
