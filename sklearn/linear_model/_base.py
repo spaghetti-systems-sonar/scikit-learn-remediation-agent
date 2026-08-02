@@ -110,6 +110,17 @@ def make_dataset(X, y, sample_weight, random_state=None):
     return dataset, intercept_decay
 
 
+def _cast_and_copy(X, y, *, copy, xp):
+    """Cast y to X's dtype and optionally copy X."""
+    y = xp.astype(y, X.dtype)
+    if copy:
+        if sp.issparse(X):
+            X = X.copy()
+        else:
+            X = _asarray_with_order(X, order="K", copy=True, xp=xp)
+    return X, y
+
+
 def _preprocess_data(
     X,
     y,
@@ -177,12 +188,7 @@ def _preprocess_data(
         )
         y = check_array(y, dtype=X.dtype, copy=True, ensure_2d=False)
     else:
-        y = xp.astype(y, X.dtype)
-        if copy:
-            if X_is_sparse:
-                X = X.copy()
-            else:
-                X = _asarray_with_order(X, order="K", copy=True, xp=xp)
+        X, y = _cast_and_copy(X, y, copy=copy, xp=xp)
 
     dtype_ = X.dtype
 
@@ -218,6 +224,16 @@ def _preprocess_data(
     else:
         sample_weight_sqrt = None
     return X, y, X_offset, y_offset, X_scale, sample_weight_sqrt
+
+
+def _rescale_dense(array, sample_weight_sqrt, inplace):
+    """Rescale a dense array sample-wise by sample_weight_sqrt."""
+    sw = sample_weight_sqrt if array.ndim == 1 else sample_weight_sqrt[:, None]
+    if inplace:
+        array *= sw
+    else:
+        array = array * sw
+    return array
 
 
 def _rescale_data(X, y, sample_weight, inplace=False):
@@ -260,24 +276,13 @@ def _rescale_data(X, y, sample_weight, inplace=False):
     if sp.issparse(X):
         X = safe_sparse_dot(sw_matrix, X)
     else:
-        if inplace:
-            X *= sample_weight_sqrt[:, None]
-        else:
-            X = X * sample_weight_sqrt[:, None]
+        X = _rescale_dense(X, sample_weight_sqrt, inplace)
 
     if sp.issparse(y):
         y = safe_sparse_dot(sw_matrix, y)
     else:
-        if inplace:
-            if y.ndim == 1:
-                y *= sample_weight_sqrt
-            else:
-                y *= sample_weight_sqrt[:, None]
-        else:
-            if y.ndim == 1:
-                y = y * sample_weight_sqrt
-            else:
-                y = y * sample_weight_sqrt[:, None]
+        y = _rescale_dense(y, sample_weight_sqrt, inplace)
+
     return _align_api_if_sparse(X), _align_api_if_sparse(y), sample_weight_sqrt
 
 
@@ -516,6 +521,29 @@ class SparseCoefMixin:
         return self
 
 
+def _sparse_centered_operator(x, x_offset, sw_sqrt, has_sw):
+    """Build a LinearOperator that centers a sparse matrix on the fly."""
+    if has_sw:
+
+        def matvec(b):
+            return x.dot(b) - sw_sqrt * b.dot(x_offset)
+
+        def rmatvec(b):
+            return x.T.dot(b) - x_offset * b.dot(sw_sqrt)
+
+    else:
+
+        def matvec(b):
+            return x.dot(b) - b.dot(x_offset)
+
+        def rmatvec(b):
+            return x.T.dot(b) - x_offset * b.sum()
+
+    return sparse.linalg.LinearOperator(
+        shape=x.shape, matvec=matvec, rmatvec=rmatvec
+    )
+
+
 class LinearRegression(RegressorMixin, MultiOutputLinearModel):
     """
     Ordinary least squares Linear Regression.
@@ -717,24 +745,8 @@ class LinearRegression(RegressorMixin, MultiOutputLinearModel):
                 )
                 self.coef_ = np.vstack([out[0] for out in outs])
         elif sp.issparse(X):
-            if has_sw:
-
-                def matvec(b):
-                    return X.dot(b) - sample_weight_sqrt * b.dot(X_offset)
-
-                def rmatvec(b):
-                    return X.T.dot(b) - X_offset * b.dot(sample_weight_sqrt)
-
-            else:
-
-                def matvec(b):
-                    return X.dot(b) - b.dot(X_offset)
-
-                def rmatvec(b):
-                    return X.T.dot(b) - X_offset * b.sum()
-
-            X_centered = sparse.linalg.LinearOperator(
-                shape=X.shape, matvec=matvec, rmatvec=rmatvec
+            X_centered = _sparse_centered_operator(
+                X, X_offset, sample_weight_sqrt, has_sw
             )
 
             if y.ndim < 2:
@@ -829,6 +841,23 @@ def _check_precomputed_gram_matrix(
         )
 
 
+def _compute_gram_xy(X, y, n_features):
+    """Compute the dot product X.T @ y for use with a precomputed Gram matrix."""
+    common_dtype = np.result_type(X.dtype, y.dtype)
+    if y.ndim == 1:
+        # Xy is 1d, make sure it is contiguous.
+        xy = np.empty(shape=n_features, dtype=common_dtype, order="C")
+        np.dot(X.T, y, out=xy)
+    else:
+        # Make sure that Xy is always F contiguous even if X or y are not
+        # contiguous: the goal is to make it fast to extract the data for a
+        # specific target.
+        n_targets = y.shape[1]
+        xy = np.empty(shape=(n_features, n_targets), dtype=common_dtype, order="F")
+        np.dot(y.T, X, out=xy.T)
+    return xy
+
+
 def _pre_fit(
     X,
     y,
@@ -912,17 +941,6 @@ def _pre_fit(
         Xy = None  # cannot use Xy if precompute is not Gram
 
     if hasattr(precompute, "__array__") and Xy is None:
-        common_dtype = np.result_type(X.dtype, y.dtype)
-        if y.ndim == 1:
-            # Xy is 1d, make sure it is contiguous.
-            Xy = np.empty(shape=n_features, dtype=common_dtype, order="C")
-            np.dot(X.T, y, out=Xy)
-        else:
-            # Make sure that Xy is always F contiguous even if X or y are not
-            # contiguous: the goal is to make it fast to extract the data for a
-            # specific target.
-            n_targets = y.shape[1]
-            Xy = np.empty(shape=(n_features, n_targets), dtype=common_dtype, order="F")
-            np.dot(y.T, X, out=Xy.T)
+        Xy = _compute_gram_xy(X, y, n_features)
 
     return X, y, X_offset, y_offset, X_scale, precompute, Xy

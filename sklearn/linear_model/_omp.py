@@ -287,6 +287,36 @@ def _gram_omp(
         return gamma, indices[:n_active], n_active
 
 
+def _omp_path_residues(X, y, n_nonzero_coefs, tol, copy_x, return_path):
+    """Solve OMP for multiple targets via Cholesky and assemble coefficients."""
+    if return_path:
+        coef = np.zeros((X.shape[1], y.shape[1], X.shape[1]))
+    else:
+        coef = np.zeros((X.shape[1], y.shape[1]))
+    n_iters = []
+
+    for k in range(y.shape[1]):
+        out = _cholesky_omp(
+            X,
+            y[:, k],
+            n_nonzero_coefs,
+            tol,
+            copy_X=copy_x,
+            return_path=return_path,
+        )
+        if return_path:
+            _, idx, coefs, n_iter = out
+            coef = coef[:, :, : len(idx)]
+            for n_active, x in enumerate(coefs.T):
+                coef[idx[: n_active + 1], k, n_active] = x[: n_active + 1]
+        else:
+            x, idx, n_iter = out
+            coef[idx, k] = x
+        n_iters.append(n_iter)
+
+    return coef, n_iters
+
+
 @validate_params(
     {
         "X": ["array-like"],
@@ -435,25 +465,9 @@ def orthogonal_mp(
             return_path=return_path,
         )
 
-    if return_path:
-        coef = np.zeros((X.shape[1], y.shape[1], X.shape[1]))
-    else:
-        coef = np.zeros((X.shape[1], y.shape[1]))
-    n_iters = []
-
-    for k in range(y.shape[1]):
-        out = _cholesky_omp(
-            X, y[:, k], n_nonzero_coefs, tol, copy_X=copy_X, return_path=return_path
-        )
-        if return_path:
-            _, idx, coefs, n_iter = out
-            coef = coef[:, :, : len(idx)]
-            for n_active, x in enumerate(coefs.T):
-                coef[idx[: n_active + 1], k, n_active] = x[: n_active + 1]
-        else:
-            x, idx, n_iter = out
-            coef[idx, k] = x
-        n_iters.append(n_iter)
+    coef, n_iters = _omp_path_residues(
+        X, y, n_nonzero_coefs, tol, copy_X, return_path
+    )
 
     if y.shape[1] == 1:
         n_iters = n_iters[0]
