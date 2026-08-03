@@ -202,6 +202,50 @@ class NewtonSolver(ABC):
         if len(coef_shape) > 1:
             self.coef = self.coef.reshape(coef_shape, order="F")
 
+    def _line_search_check(
+        self, t, armijo_term, eps, sum_abs_grad_old, is_verbose, i
+    ):
+        """Check Armijo condition and gradient-based convergence.
+
+        Returns (converged, sum_abs_grad_old).
+        """
+        # 1. Check Armijo / sufficient decrease condition.
+        # The smaller (more negative) the better.
+        loss_improvement = self.loss_value - self.loss_value_old
+        check = loss_improvement <= t * armijo_term
+        if is_verbose:
+            print(
+                f"    line search iteration={i + 1}, step size={t}\n"
+                f"      check loss improvement <= armijo term: {loss_improvement} "
+                f"<= {t * armijo_term} {check}"
+            )
+        if check:
+            return True, sum_abs_grad_old
+
+        # 2. Deal with relative loss differences around machine precision.
+        tiny_loss = np.abs(self.loss_value_old * eps)
+        check = np.abs(loss_improvement) <= tiny_loss
+        if is_verbose:
+            print(
+                "      check loss |improvement| <= eps * |loss_old|:"
+                f" {np.abs(loss_improvement)} <= {tiny_loss} {check}"
+            )
+        if check:
+            if sum_abs_grad_old < 0:
+                sum_abs_grad_old = scipy.linalg.norm(self.gradient_old, ord=1)
+            # 2.1 Check sum of absolute gradients as alternative condition.
+            sum_abs_grad = scipy.linalg.norm(self.gradient, ord=1)
+            check = sum_abs_grad < sum_abs_grad_old
+            if is_verbose:
+                print(
+                    "      check sum(|gradient|) < sum(|gradient_old|): "
+                    f"{sum_abs_grad} < {sum_abs_grad_old} {check}"
+                )
+            if check:
+                return True, sum_abs_grad_old
+
+        return False, sum_abs_grad_old
+
     def line_search(self, X, y, sample_weight):
         """Backtracking line search.
 
@@ -256,39 +300,11 @@ class NewtonSolver(ABC):
             # potentially accompanied by a RuntimeWarning.
             # This case will be captured by the Armijo condition.
 
-            # 1. Check Armijo / sufficient decrease condition.
-            # The smaller (more negative) the better.
-            loss_improvement = self.loss_value - self.loss_value_old
-            check = loss_improvement <= t * armijo_term
-            if is_verbose:
-                print(
-                    f"    line search iteration={i + 1}, step size={t}\n"
-                    f"      check loss improvement <= armijo term: {loss_improvement} "
-                    f"<= {t * armijo_term} {check}"
-                )
-            if check:
+            converged, sum_abs_grad_old = self._line_search_check(
+                t, armijo_term, eps, sum_abs_grad_old, is_verbose, i
+            )
+            if converged:
                 break
-            # 2. Deal with relative loss differences around machine precision.
-            tiny_loss = np.abs(self.loss_value_old * eps)
-            check = np.abs(loss_improvement) <= tiny_loss
-            if is_verbose:
-                print(
-                    "      check loss |improvement| <= eps * |loss_old|:"
-                    f" {np.abs(loss_improvement)} <= {tiny_loss} {check}"
-                )
-            if check:
-                if sum_abs_grad_old < 0:
-                    sum_abs_grad_old = scipy.linalg.norm(self.gradient_old, ord=1)
-                # 2.1 Check sum of absolute gradients as alternative condition.
-                sum_abs_grad = scipy.linalg.norm(self.gradient, ord=1)
-                check = sum_abs_grad < sum_abs_grad_old
-                if is_verbose:
-                    print(
-                        "      check sum(|gradient|) < sum(|gradient_old|): "
-                        f"{sum_abs_grad} < {sum_abs_grad_old} {check}"
-                    )
-                if check:
-                    break
 
             t *= beta
         else:

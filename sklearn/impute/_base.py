@@ -328,7 +328,8 @@ class SimpleImputer(_BaseImputer):
         self.fill_value = fill_value
         self.copy = copy
 
-    def _validate_input(self, X, in_fit):
+    def _resolve_dtype(self, X, in_fit):
+        """Determine the dtype to use for input validation."""
         if self.strategy in ("most_frequent", "constant"):
             # If input is a list of strings, dtype = object.
             # Otherwise ValueError is raised in SimpleImputer
@@ -346,6 +347,39 @@ class SimpleImputer(_BaseImputer):
         if not in_fit and self._fit_dtype.kind == "O":
             # Use object dtype if fitted on object dtypes
             dtype = self._fit_dtype
+
+        return dtype
+
+    def _validate_fill_value(self, X, in_fit):
+        """Validate that fill_value can be cast to the input data dtype."""
+        if in_fit and self.fill_value is not None:
+            fill_value_dtype = type(self.fill_value)
+            err_msg = (
+                f"fill_value={self.fill_value!r} (of type {fill_value_dtype!r}) "
+                f"cannot be cast to the input data that is {X.dtype!r}. "
+                "If fill_value is a Python scalar, instead pass  a numpy scalar "
+                "(e.g. fill_value=np.uint8(0) if your data is of type np.uint8). "
+                "Make sure that both dtypes are of the same kind."
+            )
+        elif not in_fit:
+            fill_value_dtype = self._fill_dtype
+            err_msg = (
+                f"The dtype of the filling value (i.e. {fill_value_dtype!r}) "
+                f"cannot be cast to the input data that is {X.dtype!r}. "
+                "Make sure that the dtypes of the input data are of the same kind "
+                "between fit and transform."
+            )
+        else:
+            # By default, fill_value=None, and the replacement is always
+            # compatible with the input data
+            fill_value_dtype = X.dtype
+
+        # Make sure we can safely cast fill_value dtype to the input data dtype
+        if not np.can_cast(fill_value_dtype, X.dtype, casting="same_kind"):
+            raise ValueError(err_msg)
+
+    def _validate_input(self, X, in_fit):
+        dtype = self._resolve_dtype(X, in_fit)
 
         if is_pandas_na(self.missing_values) or is_scalar_nan(self.missing_values):
             ensure_all_finite = "allow-nan"
@@ -399,31 +433,7 @@ class SimpleImputer(_BaseImputer):
             )
 
         if self.strategy == "constant":
-            if in_fit and self.fill_value is not None:
-                fill_value_dtype = type(self.fill_value)
-                err_msg = (
-                    f"fill_value={self.fill_value!r} (of type {fill_value_dtype!r}) "
-                    f"cannot be cast to the input data that is {X.dtype!r}. "
-                    "If fill_value is a Python scalar, instead pass  a numpy scalar "
-                    "(e.g. fill_value=np.uint8(0) if your data is of type np.uint8). "
-                    "Make sure that both dtypes are of the same kind."
-                )
-            elif not in_fit:
-                fill_value_dtype = self._fill_dtype
-                err_msg = (
-                    f"The dtype of the filling value (i.e. {fill_value_dtype!r}) "
-                    f"cannot be cast to the input data that is {X.dtype!r}. "
-                    "Make sure that the dtypes of the input data are of the same kind "
-                    "between fit and transform."
-                )
-            else:
-                # By default, fill_value=None, and the replacement is always
-                # compatible with the input data
-                fill_value_dtype = X.dtype
-
-            # Make sure we can safely cast fill_value dtype to the input data dtype
-            if not np.can_cast(fill_value_dtype, X.dtype, casting="same_kind"):
-                raise ValueError(err_msg)
+            self._validate_fill_value(X, in_fit)
 
         return X
 
