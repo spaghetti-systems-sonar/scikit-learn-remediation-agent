@@ -1085,6 +1085,223 @@ def check_supervised_y_no_nan(name, estimator_orig):
             estimator.fit(X, y)
 
 
+def _check_attribute_shape_and_dtype(attribute, est_xp_param_np, xp_x, x_ns_and_device):
+    """Check shape and dtype of a fitted attribute against its array API counterpart."""
+    assert attribute.shape == est_xp_param_np.shape
+    expected_dtype = attribute.dtype
+    if np.issubdtype(attribute.dtype, np.floating):
+        max_float_dtype = _max_precision_float_dtype(
+            xp_x, device=x_ns_and_device.device
+        )
+        # for some devices the maximum supported floating dtype is float32
+        if max_float_dtype == xp_x.float32:
+            expected_dtype = np.float32
+    assert est_xp_param_np.dtype == expected_dtype
+
+
+def _check_array_api_attributes(
+    est, est_xp, xp_x, x_xp, x_ns, x_ns_and_device, check_values, x_data
+):
+    """Check that fitted array attributes have the correct namespace and dtype."""
+    array_attributes = {
+        key: value for key, value in vars(est).items() if isinstance(value, np.ndarray)
+    }
+
+    # Fitted attributes which are arrays must have the same namespace as `X`,
+    # except `classes_`, to allow it to be string when `y` is string.
+    for key, attribute in array_attributes.items():
+        est_xp_param = getattr(est_xp, key)
+        with config_context(array_api_dispatch=True):
+            attribute_ns = get_namespace(est_xp_param)[0].__name__
+        if key != "classes_":
+            assert attribute_ns == x_ns, (
+                f"'{key}' attribute is in wrong namespace, expected {x_ns} "
+                f"got {attribute_ns}"
+            )
+
+        with config_context(array_api_dispatch=True):
+            if key != "classes_":
+                assert array_device(est_xp_param) == array_device(x_xp)
+
+        est_xp_param_np = move_to(est_xp_param, xp=np, device="cpu")
+        if check_values:
+            assert_allclose(
+                attribute,
+                est_xp_param_np,
+                err_msg=f"{key} not the same",
+                atol=_atol_for_type(x_data.dtype),
+            )
+        else:
+            _check_attribute_shape_and_dtype(
+                attribute, est_xp_param_np, xp_x, x_ns_and_device
+            )
+
+
+def _check_array_api_numpy_asarray(est, xp_x, x_xp, y_xp, methods):
+    """Smoke test: check methods work when np.asarray can convert inputs."""
+    try:
+        np.asarray(x_xp)
+        np.asarray(y_xp)
+        # TODO There are a few errors in SearchCV with array-api-strict because
+        # we end up doing X[train_indices] where X is an array-api-strict array
+        # and train_indices is a numpy array. array-api-strict insists
+        # train_indices should be an array-api-strict array. On the other hand,
+        # all the array API libraries (PyTorch, jax, CuPy) accept indexing with a
+        # numpy array. This is probably not worth doing anything about for
+        # now since array-api-strict seems a bit too strict ...
+        numpy_asarray_works = xp_x.__name__ != "array_api_strict"
+
+    except (TypeError, RuntimeError, ValueError):
+        # PyTorch with CUDA device and CuPy raise TypeError consistently.
+        # array-api-strict chose to raise RuntimeError instead. NumPy emits
+        # a ValueError if `__array__` dunder does not return an array.
+        # Exception type may need to be updated in the future for other libraries.
+        numpy_asarray_works = False
+
+    if not numpy_asarray_works:
+        return
+
+    # In this case, array_api_dispatch is disabled and we rely on np.asarray
+    # being called to convert the non-NumPy inputs to NumPy arrays when needed.
+    est_fitted_with_as_array = clone(est).fit(x_xp, y_xp)
+    # We only do a smoke test for now, in order to avoid complicating the
+    # test function even further.
+    for method_name in methods:
+        method = getattr(est_fitted_with_as_array, method_name, None)
+        if method is None:
+            continue
+
+        if method_name == "score":
+            method(x_xp, y_xp)
+        else:
+            method(x_xp)
+
+
+def _check_score_method(method, est_xp, x_data, x_xp, y_data, y_xp, check_values):
+    """Check that the score method returns consistent float results."""
+    result = method(x_data, y_data)
+    with config_context(array_api_dispatch=True):
+        result_xp = getattr(est_xp, "score")(x_xp, y_xp)
+    # score typically returns a Python float
+    assert isinstance(result, float)
+    assert isinstance(result_xp, float)
+    if check_values:
+        assert abs(result - result_xp) < _atol_for_type(x_data.dtype)
+
+
+def _check_array_output(result, result_xp, x_xp, x_data, method, check_values):
+    """Check device, values, shape, and dtype of an array output."""
+    with config_context(array_api_dispatch=True):
+        assert array_device(result_xp) == array_device(x_xp)
+
+    result_xp_np = move_to(result_xp, xp=np, device="cpu")
+    if check_values:
+        assert_allclose(
+            result,
+            result_xp_np,
+            err_msg=f"{method} did not the return the same result",
+            atol=_atol_for_type(x_data.dtype),
+        )
+    elif hasattr(result, "shape"):
+        assert result.shape == result_xp_np.shape
+        assert result.dtype == result_xp_np.dtype
+
+
+def _check_inverse_transform(
+    est,
+    est_xp,
+    result,
+    result_xp,
+    x_xp,
+    x_ns,
+    x_data,
+    check_values,
+    expect_only_array_outputs,
+):
+    """Check that inverse_transform gives consistent results across namespaces."""
+    inverse_result = est.inverse_transform(result)
+    with config_context(array_api_dispatch=True):
+        inverse_result_xp = est_xp.inverse_transform(result_xp)
+
+    if not expect_only_array_outputs:
+        return
+
+    with config_context(array_api_dispatch=True):
+        inverse_result_ns = get_namespace(inverse_result_xp)[0].__name__
+    assert inverse_result_ns == x_ns, (
+        "'inverse_transform' output is in wrong namespace, expected"
+        f" {x_ns}, got {inverse_result_ns}."
+    )
+    with config_context(array_api_dispatch=True):
+        assert array_device(result_xp) == array_device(x_xp)
+
+    inverse_result_xp_np = move_to(inverse_result_xp, xp=np, device="cpu")
+    if check_values:
+        assert_allclose(
+            inverse_result,
+            inverse_result_xp_np,
+            err_msg="inverse_transform did not the return the same result",
+            atol=_atol_for_type(x_data.dtype),
+        )
+    elif hasattr(result, "shape"):
+        assert inverse_result.shape == inverse_result_xp_np.shape
+        assert inverse_result.dtype == inverse_result_xp_np.dtype
+
+
+def _check_array_api_method_results(
+    est,
+    est_xp,
+    x_data,
+    x_xp,
+    y_data,
+    y_xp,
+    x_ns,
+    methods,
+    check_values,
+    expect_only_array_outputs,
+):
+    """Check that estimator methods give consistent results across namespaces."""
+    for method_name in methods:
+        method = getattr(est, method_name, None)
+        if method is None:
+            continue
+
+        if method_name == "score":
+            _check_score_method(
+                method, est_xp, x_data, x_xp, y_data, y_xp, check_values
+            )
+            continue
+
+        result = method(x_data)
+        with config_context(array_api_dispatch=True):
+            result_xp = getattr(est_xp, method_name)(x_xp)
+
+        with config_context(array_api_dispatch=True):
+            result_ns = get_namespace(result_xp)[0].__name__
+        assert result_ns == x_ns, (
+            f"'{method}' output is in wrong namespace, expected {x_ns}, "
+            f"got {result_ns}."
+        )
+
+        if expect_only_array_outputs:
+            _check_array_output(
+                result, result_xp, x_xp, x_data, method, check_values
+            )
+
+        if method_name == "transform" and hasattr(est, "inverse_transform"):
+            _check_inverse_transform(
+                est,
+                est_xp,
+                result,
+                result_xp,
+                x_xp,
+                x_ns,
+                x_data,
+                check_values,
+                expect_only_array_outputs,
+            )
+
+
 def _check_array_api_core(
     estimator_orig,
     X_ns_and_device,
@@ -1137,45 +1354,9 @@ def _check_array_api_core(
 
     X_ns = xp_X.__name__
 
-    array_attributes = {
-        key: value for key, value in vars(est).items() if isinstance(value, np.ndarray)
-    }
-
-    # Fitted attributes which are arrays must have the same namespace as `X`,
-    # except `classes_`, to allow it to be string when `y` is string.
-    for key, attribute in array_attributes.items():
-        est_xp_param = getattr(est_xp, key)
-        with config_context(array_api_dispatch=True):
-            attribute_ns = get_namespace(est_xp_param)[0].__name__
-        if key != "classes_":
-            assert attribute_ns == X_ns, (
-                f"'{key}' attribute is in wrong namespace, expected {X_ns} "
-                f"got {attribute_ns}"
-            )
-
-        with config_context(array_api_dispatch=True):
-            if key != "classes_":
-                assert array_device(est_xp_param) == array_device(X_xp)
-
-        est_xp_param_np = move_to(est_xp_param, xp=np, device="cpu")
-        if check_values:
-            assert_allclose(
-                attribute,
-                est_xp_param_np,
-                err_msg=f"{key} not the same",
-                atol=_atol_for_type(X.dtype),
-            )
-        else:
-            assert attribute.shape == est_xp_param_np.shape
-            expected_dtype = attribute.dtype
-            if np.issubdtype(attribute.dtype, np.floating):
-                max_float_dtype = _max_precision_float_dtype(
-                    xp_X, device=X_ns_and_device.device
-                )
-                # for some devices the maximum supported floating dtype is float32
-                if max_float_dtype == xp_X.float32:
-                    expected_dtype = np.float32
-            assert est_xp_param_np.dtype == expected_dtype
+    _check_array_api_attributes(
+        est, est_xp, xp_X, X_xp, X_ns, X_ns_and_device, check_values, X
+    )
 
     # Check estimator methods, if supported, give the same results
     methods = (
@@ -1188,110 +1369,12 @@ def _check_array_api_core(
         "transform",
     )
 
-    try:
-        np.asarray(X_xp)
-        np.asarray(y_xp)
-        # TODO There are a few errors in SearchCV with array-api-strict because
-        # we end up doing X[train_indices] where X is an array-api-strict array
-        # and train_indices is a numpy array. array-api-strict insists
-        # train_indices should be an array-api-strict array. On the other hand,
-        # all the array API libraries (PyTorch, jax, CuPy) accept indexing with a
-        # numpy array. This is probably not worth doing anything about for
-        # now since array-api-strict seems a bit too strict ...
-        numpy_asarray_works = xp_X.__name__ != "array_api_strict"
+    _check_array_api_numpy_asarray(est, xp_X, X_xp, y_xp, methods)
 
-    except (TypeError, RuntimeError, ValueError):
-        # PyTorch with CUDA device and CuPy raise TypeError consistently.
-        # array-api-strict chose to raise RuntimeError instead. NumPy emits
-        # a ValueError if `__array__` dunder does not return an array.
-        # Exception type may need to be updated in the future for other libraries.
-        numpy_asarray_works = False
-
-    if numpy_asarray_works:
-        # In this case, array_api_dispatch is disabled and we rely on np.asarray
-        # being called to convert the non-NumPy inputs to NumPy arrays when needed.
-        est_fitted_with_as_array = clone(est).fit(X_xp, y_xp)
-        # We only do a smoke test for now, in order to avoid complicating the
-        # test function even further.
-        for method_name in methods:
-            method = getattr(est_fitted_with_as_array, method_name, None)
-            if method is None:
-                continue
-
-            if method_name == "score":
-                method(X_xp, y_xp)
-            else:
-                method(X_xp)
-
-    for method_name in methods:
-        method = getattr(est, method_name, None)
-        if method is None:
-            continue
-
-        if method_name == "score":
-            result = method(X, y)
-            with config_context(array_api_dispatch=True):
-                result_xp = getattr(est_xp, method_name)(X_xp, y_xp)
-            # score typically returns a Python float
-            assert isinstance(result, float)
-            assert isinstance(result_xp, float)
-            if check_values:
-                assert abs(result - result_xp) < _atol_for_type(X.dtype)
-            continue
-        else:
-            result = method(X)
-            with config_context(array_api_dispatch=True):
-                result_xp = getattr(est_xp, method_name)(X_xp)
-
-        with config_context(array_api_dispatch=True):
-            result_ns = get_namespace(result_xp)[0].__name__
-        assert result_ns == X_ns, (
-            f"'{method}' output is in wrong namespace, expected {X_ns}, "
-            f"got {result_ns}."
-        )
-
-        if expect_only_array_outputs:
-            with config_context(array_api_dispatch=True):
-                assert array_device(result_xp) == array_device(X_xp)
-
-            result_xp_np = move_to(result_xp, xp=np, device="cpu")
-            if check_values:
-                assert_allclose(
-                    result,
-                    result_xp_np,
-                    err_msg=f"{method} did not the return the same result",
-                    atol=_atol_for_type(X.dtype),
-                )
-            elif hasattr(result, "shape"):
-                assert result.shape == result_xp_np.shape
-                assert result.dtype == result_xp_np.dtype
-
-        if method_name == "transform" and hasattr(est, "inverse_transform"):
-            inverse_result = est.inverse_transform(result)
-            with config_context(array_api_dispatch=True):
-                inverse_result_xp = est_xp.inverse_transform(result_xp)
-
-            if expect_only_array_outputs:
-                with config_context(array_api_dispatch=True):
-                    inverse_result_ns = get_namespace(inverse_result_xp)[0].__name__
-                assert inverse_result_ns == X_ns, (
-                    "'inverse_transform' output is in wrong namespace, expected"
-                    f" {X_ns}, got {inverse_result_ns}."
-                )
-                with config_context(array_api_dispatch=True):
-                    assert array_device(result_xp) == array_device(X_xp)
-
-                inverse_result_xp_np = move_to(inverse_result_xp, xp=np, device="cpu")
-                if check_values:
-                    assert_allclose(
-                        inverse_result,
-                        inverse_result_xp_np,
-                        err_msg="inverse_transform did not the return the same result",
-                        atol=_atol_for_type(X.dtype),
-                    )
-                elif hasattr(result, "shape"):
-                    assert inverse_result.shape == inverse_result_xp_np.shape
-                    assert inverse_result.dtype == inverse_result_xp_np.dtype
+    _check_array_api_method_results(
+        est, est_xp, X, X_xp, y, y_xp, X_ns, methods,
+        check_values, expect_only_array_outputs,
+    )
 
 
 def check_array_api_input(

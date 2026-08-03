@@ -78,6 +78,121 @@ TOPICS_METADATA = RemoteFileMetadata(
 
 logger = logging.getLogger(__name__)
 
+N_SAMPLES = 804414
+N_FEATURES = 47236
+N_CATEGORIES = 103
+N_TRAIN = 23149
+
+
+def _load_xy_data(
+    rcv1_dir, samples_path, sample_id_path, download_if_missing, n_retries, delay
+):
+    """Load data (X) and sample_id, downloading if necessary."""
+    if download_if_missing and (
+        not exists(samples_path) or not exists(sample_id_path)
+    ):
+        files = []
+        for each in XY_METADATA:
+            logger.info("Downloading %s" % each.url)
+            file_path = _fetch_remote(
+                each, dirname=rcv1_dir, n_retries=n_retries, delay=delay
+            )
+            files.append(GzipFile(filename=file_path))
+
+        Xy = load_svmlight_files(files, n_features=N_FEATURES)
+
+        # Training data is before testing data
+        X = sp.vstack([Xy[8], Xy[0], Xy[2], Xy[4], Xy[6]]).tocsr()
+        sample_id = np.hstack((Xy[9], Xy[1], Xy[3], Xy[5], Xy[7]))
+        sample_id = sample_id.astype(np.uint32, copy=False)
+
+        joblib.dump(X, samples_path, compress=9)
+        joblib.dump(sample_id, sample_id_path, compress=9)
+
+        # delete archives
+        for f in files:
+            f.close()
+            remove(f.name)
+    else:
+        X = joblib.load(samples_path)
+        sample_id = joblib.load(sample_id_path)
+
+    return X, sample_id
+
+
+def _parse_topics_file(topics_archive_path):
+    """Parse the topics archive and return target array, sample IDs, and category names."""
+    y = np.zeros((N_SAMPLES, N_CATEGORIES), dtype=np.uint8)
+    sample_id_bis = np.zeros(N_SAMPLES, dtype=np.int32)
+    category_names = {}
+    n_cat = -1
+    n_doc = -1
+    doc_previous = -1
+    with GzipFile(filename=topics_archive_path, mode="rb") as f:
+        for line in f:
+            line_components = line.decode("ascii").split(" ")
+            if len(line_components) == 3:
+                cat, doc, _ = line_components
+                if cat not in category_names:
+                    n_cat += 1
+                    category_names[cat] = n_cat
+
+                doc = int(doc)
+                if doc != doc_previous:
+                    doc_previous = doc
+                    n_doc += 1
+                    sample_id_bis[n_doc] = doc
+                y[n_doc, category_names[cat]] = 1
+
+    return y, sample_id_bis, category_names
+
+
+def _load_target_data(
+    rcv1_dir,
+    sample_topics_path,
+    topics_path,
+    sample_id,
+    download_if_missing,
+    n_retries,
+    delay,
+):
+    """Load target (y) and categories, downloading if necessary."""
+    if download_if_missing and (
+        not exists(sample_topics_path) or not exists(topics_path)
+    ):
+        logger.info("Downloading %s" % TOPICS_METADATA.url)
+        topics_archive_path = _fetch_remote(
+            TOPICS_METADATA, dirname=rcv1_dir, n_retries=n_retries, delay=delay
+        )
+
+        y, sample_id_bis, category_names = _parse_topics_file(topics_archive_path)
+
+        # delete archive
+        remove(topics_archive_path)
+
+        # Samples in X are ordered with sample_id,
+        # whereas in y, they are ordered with sample_id_bis.
+        permutation = _find_permutation(sample_id_bis, sample_id)
+        y = y[permutation, :]
+
+        # save category names in a list, with same order than y
+        categories = np.empty(N_CATEGORIES, dtype=object)
+        for k in category_names.keys():
+            categories[category_names[k]] = k
+
+        # reorder categories in lexicographic order
+        order = np.argsort(categories)
+        categories = categories[order]
+        y = _align_api_if_sparse(sp.csr_array(y[:, order]))
+
+        joblib.dump(y, sample_topics_path, compress=9)
+        joblib.dump(categories, topics_path, compress=9)
+    else:
+        y = joblib.load(sample_topics_path)
+        categories = joblib.load(topics_path)
+
+    return y, categories
+
 
 @validate_params(
     {
@@ -194,109 +309,30 @@ def fetch_rcv1(
     >>> rcv1.target.shape
     (804414, 103)
     """
-    N_SAMPLES = 804414
-    N_FEATURES = 47236
-    N_CATEGORIES = 103
-    N_TRAIN = 23149
-
     data_home = get_data_home(data_home=data_home)
     rcv1_dir = join(data_home, "RCV1")
-    if download_if_missing:
-        if not exists(rcv1_dir):
-            makedirs(rcv1_dir)
+    if download_if_missing and not exists(rcv1_dir):
+        makedirs(rcv1_dir)
 
     samples_path = _pkl_filepath(rcv1_dir, "samples.pkl")
     sample_id_path = _pkl_filepath(rcv1_dir, "sample_id.pkl")
     sample_topics_path = _pkl_filepath(rcv1_dir, "sample_topics.pkl")
     topics_path = _pkl_filepath(rcv1_dir, "topics_names.pkl")
 
-    # load data (X) and sample_id
-    if download_if_missing and (not exists(samples_path) or not exists(sample_id_path)):
-        files = []
-        for each in XY_METADATA:
-            logger.info("Downloading %s" % each.url)
-            file_path = _fetch_remote(
-                each, dirname=rcv1_dir, n_retries=n_retries, delay=delay
-            )
-            files.append(GzipFile(filename=file_path))
+    X, sample_id = _load_xy_data(
+        rcv1_dir, samples_path, sample_id_path, download_if_missing, n_retries, delay
+    )
+    y, categories = _load_target_data(
+        rcv1_dir,
+        sample_topics_path,
+        topics_path,
+        sample_id,
+        download_if_missing,
+        n_retries,
+        delay,
+    )
 
-        Xy = load_svmlight_files(files, n_features=N_FEATURES)
-
-        # Training data is before testing data
-        X = sp.vstack([Xy[8], Xy[0], Xy[2], Xy[4], Xy[6]]).tocsr()
-        sample_id = np.hstack((Xy[9], Xy[1], Xy[3], Xy[5], Xy[7]))
-        sample_id = sample_id.astype(np.uint32, copy=False)
-
-        joblib.dump(X, samples_path, compress=9)
-        joblib.dump(sample_id, sample_id_path, compress=9)
-
-        # delete archives
-        for f in files:
-            f.close()
-            remove(f.name)
-    else:
-        X = joblib.load(samples_path)
-        sample_id = joblib.load(sample_id_path)
-
-    # load target (y), categories, and sample_id_bis
-    if download_if_missing and (
-        not exists(sample_topics_path) or not exists(topics_path)
-    ):
-        logger.info("Downloading %s" % TOPICS_METADATA.url)
-        topics_archive_path = _fetch_remote(
-            TOPICS_METADATA, dirname=rcv1_dir, n_retries=n_retries, delay=delay
-        )
-
-        # parse the target file
-        n_cat = -1
-        n_doc = -1
-        doc_previous = -1
-        y = np.zeros((N_SAMPLES, N_CATEGORIES), dtype=np.uint8)
-        sample_id_bis = np.zeros(N_SAMPLES, dtype=np.int32)
-        category_names = {}
-        with GzipFile(filename=topics_archive_path, mode="rb") as f:
-            for line in f:
-                line_components = line.decode("ascii").split(" ")
-                if len(line_components) == 3:
-                    cat, doc, _ = line_components
-                    if cat not in category_names:
-                        n_cat += 1
-                        category_names[cat] = n_cat
-
-                    doc = int(doc)
-                    if doc != doc_previous:
-                        doc_previous = doc
-                        n_doc += 1
-                        sample_id_bis[n_doc] = doc
-                    y[n_doc, category_names[cat]] = 1
-
-        # delete archive
-        remove(topics_archive_path)
-
-        # Samples in X are ordered with sample_id,
-        # whereas in y, they are ordered with sample_id_bis.
-        permutation = _find_permutation(sample_id_bis, sample_id)
-        y = y[permutation, :]
-
-        # save category names in a list, with same order than y
-        categories = np.empty(N_CATEGORIES, dtype=object)
-        for k in category_names.keys():
-            categories[category_names[k]] = k
-
-        # reorder categories in lexicographic order
-        order = np.argsort(categories)
-        categories = categories[order]
-        y = _align_api_if_sparse(sp.csr_array(y[:, order]))
-
-        joblib.dump(y, sample_topics_path, compress=9)
-        joblib.dump(categories, topics_path, compress=9)
-    else:
-        y = joblib.load(sample_topics_path)
-        categories = joblib.load(topics_path)
-
-    if subset == "all":
-        pass
-    elif subset == "train":
+    if subset == "train":
         X = X[:N_TRAIN, :]
         y = y[:N_TRAIN, :]
         sample_id = sample_id[:N_TRAIN]
@@ -304,7 +340,7 @@ def fetch_rcv1(
         X = X[N_TRAIN:, :]
         y = y[N_TRAIN:, :]
         sample_id = sample_id[N_TRAIN:]
-    else:
+    elif subset != "all":
         raise ValueError(
             "Unknown subset parameter. Got '%s' instead of one"
             " of ('all', 'train', test')" % subset
