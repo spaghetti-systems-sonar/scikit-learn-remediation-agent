@@ -253,20 +253,7 @@ class _GeneralizedLinearRegressor(RegressorMixin, BaseEstimator):
         #     obj = LinearModelLoss.loss(...)
 
         loss_dtype_np = _matching_numpy_dtype(X, xp=xp)
-        if self.warm_start and hasattr(self, "coef_"):
-            coef_xp, _ = get_namespace(self.coef_)
-            coef = move_to(self.coef_, xp=np, device="cpu")
-            if self.fit_intercept:
-                # LinearModelLoss needs intercept at the end of coefficient array.
-                intercept = move_to(self.intercept_, xp=np, device="cpu")
-                coef = np.concatenate((coef, np.array([intercept])))
-            coef = coef.astype(loss_dtype_np, copy=False)
-        else:
-            coef = linear_loss.init_zero_coef(X, dtype=loss_dtype_np)
-            if self.fit_intercept:
-                coef[-1] = linear_loss.base_loss.link.link(
-                    _average(y, weights=sample_weight)
-                )
+        coef = self._init_coef(X, y, sample_weight, linear_loss, loss_dtype_np)
 
         l2_reg_strength = self.alpha
         n_threads = _openmp_effective_n_threads()
@@ -337,6 +324,24 @@ class _GeneralizedLinearRegressor(RegressorMixin, BaseEstimator):
             self.coef_ = coef
 
         return self
+
+    def _init_coef(self, X, y, sample_weight, linear_loss, loss_dtype_np):
+        """Initialize coefficients for warm start or zero initialization."""
+        if self.warm_start and hasattr(self, "coef_"):
+            coef_xp, _ = get_namespace(self.coef_)
+            coef = move_to(self.coef_, xp=np, device="cpu")
+            if self.fit_intercept:
+                # LinearModelLoss needs intercept at the end of coefficient array.
+                intercept = move_to(self.intercept_, xp=np, device="cpu")
+                coef = np.concatenate((coef, np.array([intercept])))
+            coef = coef.astype(loss_dtype_np, copy=False)
+        else:
+            coef = linear_loss.init_zero_coef(X, dtype=loss_dtype_np)
+            if self.fit_intercept:
+                coef[-1] = linear_loss.base_loss.link.link(
+                    _average(y, weights=sample_weight)
+                )
+        return coef
 
     def _linear_predictor(self, X):
         """Compute the linear_predictor = `X @ coef_ + intercept_`.

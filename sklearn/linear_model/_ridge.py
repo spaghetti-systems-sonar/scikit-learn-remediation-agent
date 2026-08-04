@@ -916,9 +916,8 @@ class _BaseRidge(LinearModel, metaclass=ABCMeta):
         self.positive = positive
         self.random_state = random_state
 
-    def fit(self, X, y, sample_weight=None):
-        xp, is_array_api_compliant = get_namespace(X, y, sample_weight)
-
+    def _validate_solver(self, X):
+        """Validate and resolve the solver to use for fitting."""
         if self.solver == "lbfgs" and not self.positive:
             raise ValueError(
                 "'lbfgs' solver can be used only when positive=True. "
@@ -931,31 +930,39 @@ class _BaseRidge(LinearModel, metaclass=ABCMeta):
                     f"solver='{self.solver}' does not support positive fitting. Please"
                     " set the solver to 'auto' or 'lbfgs', or set `positive=False`"
                 )
-            else:
-                solver = self.solver
-        elif sparse.issparse(X) and self.fit_intercept:
-            if self.solver not in ["auto", "lbfgs", "lsqr", "sag", "sparse_cg"]:
-                raise ValueError(
-                    "solver='{}' does not support fitting the intercept "
-                    "on sparse data. Please set the solver to 'auto' or "
-                    "'lsqr', 'sparse_cg', 'sag', 'lbfgs' "
-                    "or set `fit_intercept=False`".format(self.solver)
-                )
-            if self.solver in ["lsqr", "lbfgs"]:
-                solver = self.solver
-            elif self.solver == "sag" and self.max_iter is None and self.tol > 1e-4:
-                warnings.warn(
-                    '"sag" solver requires many iterations to fit '
-                    "an intercept with sparse inputs. Either set the "
-                    'solver to "auto" or "sparse_cg", or set a low '
-                    '"tol" and a high "max_iter" (especially if inputs are '
-                    "not standardized)."
-                )
-                solver = "sag"
-            else:
-                solver = "sparse_cg"
-        else:
-            solver = self.solver
+            return self.solver
+
+        if sparse.issparse(X) and self.fit_intercept:
+            return self._resolve_sparse_intercept_solver()
+
+        return self.solver
+
+    def _resolve_sparse_intercept_solver(self):
+        """Resolve solver when fitting intercept on sparse data."""
+        if self.solver not in ["auto", "lbfgs", "lsqr", "sag", "sparse_cg"]:
+            raise ValueError(
+                "solver='{}' does not support fitting the intercept "
+                "on sparse data. Please set the solver to 'auto' or "
+                "'lsqr', 'sparse_cg', 'sag', 'lbfgs' "
+                "or set `fit_intercept=False`".format(self.solver)
+            )
+        if self.solver in ["lsqr", "lbfgs"]:
+            return self.solver
+        if self.solver == "sag" and self.max_iter is None and self.tol > 1e-4:
+            warnings.warn(
+                '"sag" solver requires many iterations to fit '
+                "an intercept with sparse inputs. Either set the "
+                'solver to "auto" or "sparse_cg", or set a low '
+                '"tol" and a high "max_iter" (especially if inputs are '
+                "not standardized)."
+            )
+            return "sag"
+        return "sparse_cg"
+
+    def fit(self, X, y, sample_weight=None):
+        xp, is_array_api_compliant = get_namespace(X, y, sample_weight)
+
+        solver = self._validate_solver(X)
 
         if sample_weight is not None:
             sample_weight = _check_sample_weight(sample_weight, X, dtype=X.dtype)

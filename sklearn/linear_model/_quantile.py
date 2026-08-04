@@ -139,6 +139,28 @@ class QuantileRegressor(LinearModel, RegressorMixin, BaseEstimator):
         self.solver = solver
         self.solver_options = solver_options
 
+    def _build_equality_constraint(self, X, n_indices):
+        """Build the equality constraint matrix for the linear program."""
+        if self.solver in ["highs", "highs-ds", "highs-ipm"]:
+            # Note that highs methods always use a sparse CSC memory layout
+            # internally, even for optimization problems parametrized using
+            # dense numpy arrays. Therefore, we work with CSC matrices as
+            # early as possible to limit unnecessary repeated memory copies.
+            eye = _sparse_eye_array(n_indices, dtype=X.dtype, format="csc")
+            if self.fit_intercept:
+                ones = sparse.csc_array(
+                    np.ones(shape=(n_indices, 1), dtype=X.dtype)
+                )
+                return sparse.hstack(
+                    [ones, X, -ones, -X, eye, -eye], format="csc"
+                )
+            return sparse.hstack([X, -X, eye, -eye], format="csc")
+        eye = np.eye(n_indices)
+        if self.fit_intercept:
+            ones = np.ones((n_indices, 1))
+            return np.concatenate([ones, X, -ones, -X, eye, -eye], axis=1)
+        return np.concatenate([X, -X, eye, -eye], axis=1)
+
     @_fit_context(prefer_skip_nested_validation=True)
     def fit(self, X, y, sample_weight=None):
         """Fit the model according to the given training data.
@@ -235,25 +257,7 @@ class QuantileRegressor(LinearModel, RegressorMixin, BaseEstimator):
             c[0] = 0
             c[n_params] = 0
 
-        if self.solver in ["highs", "highs-ds", "highs-ipm"]:
-            # Note that highs methods always use a sparse CSC memory layout internally,
-            # even for optimization problems parametrized using dense numpy arrays.
-            # Therefore, we work with CSC matrices as early as possible to limit
-            # unnecessary repeated memory copies.
-            eye = _sparse_eye_array(n_indices, dtype=X.dtype, format="csc")
-            if self.fit_intercept:
-                ones = sparse.csc_array(np.ones(shape=(n_indices, 1), dtype=X.dtype))
-                A_eq = sparse.hstack([ones, X, -ones, -X, eye, -eye], format="csc")
-            else:
-                A_eq = sparse.hstack([X, -X, eye, -eye], format="csc")
-        else:
-            eye = np.eye(n_indices)
-            if self.fit_intercept:
-                ones = np.ones((n_indices, 1))
-                A_eq = np.concatenate([ones, X, -ones, -X, eye, -eye], axis=1)
-            else:
-                A_eq = np.concatenate([X, -X, eye, -eye], axis=1)
-
+        A_eq = self._build_equality_constraint(X, n_indices)
         b_eq = y
 
         result = linprog(
