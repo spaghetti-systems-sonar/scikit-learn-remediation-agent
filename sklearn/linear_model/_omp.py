@@ -33,6 +33,40 @@ premature = (
 )
 
 
+def _update_cholesky_factor(x, lower, n_active, lam, alpha, min_float, nrm2_func):
+    """Validate atom selection and update the Cholesky decomposition.
+
+    Returns True if the iteration should stop due to an invalid atom
+    or dependent atoms.
+    """
+    if lam < n_active or alpha[lam] ** 2 < min_float:
+        # atom already selected or inner product too small
+        warnings.warn(premature, RuntimeWarning, stacklevel=3)
+        return True
+
+    if n_active > 0:
+        # Updates the Cholesky decomposition of X' X
+        lower[n_active, :n_active] = np.dot(x[:, :n_active].T, x[:, lam])
+        linalg.solve_triangular(
+            lower[:n_active, :n_active],
+            lower[n_active, :n_active],
+            trans=0,
+            lower=1,
+            overwrite_b=True,
+            check_finite=False,
+        )
+        v = nrm2_func(lower[n_active, :n_active]) ** 2
+        lkk = linalg.norm(x[:, lam]) ** 2 - v
+        if lkk <= min_float:  # selected atoms are dependent
+            warnings.warn(premature, RuntimeWarning, stacklevel=3)
+            return True
+        lower[n_active, n_active] = sqrt(lkk)
+    else:
+        lower[0, 0] = linalg.norm(x[:, lam])
+
+    return False
+
+
 def _cholesky_omp(X, y, n_nonzero_coefs, tol=None, copy_X=True, return_path=False):
     """Orthogonal Matching Pursuit step using the Cholesky decomposition.
 
@@ -100,30 +134,8 @@ def _cholesky_omp(X, y, n_nonzero_coefs, tol=None, copy_X=True, return_path=Fals
 
     while True:
         lam = np.argmax(np.abs(np.dot(X.T, residual)))
-        if lam < n_active or alpha[lam] ** 2 < min_float:
-            # atom already selected or inner product too small
-            warnings.warn(premature, RuntimeWarning, stacklevel=2)
+        if _update_cholesky_factor(X, L, n_active, lam, alpha, min_float, nrm2):
             break
-
-        if n_active > 0:
-            # Updates the Cholesky decomposition of X' X
-            L[n_active, :n_active] = np.dot(X[:, :n_active].T, X[:, lam])
-            linalg.solve_triangular(
-                L[:n_active, :n_active],
-                L[n_active, :n_active],
-                trans=0,
-                lower=1,
-                overwrite_b=True,
-                check_finite=False,
-            )
-            v = nrm2(L[n_active, :n_active]) ** 2
-            Lkk = linalg.norm(X[:, lam]) ** 2 - v
-            if Lkk <= min_float:  # selected atoms are dependent
-                warnings.warn(premature, RuntimeWarning, stacklevel=2)
-                break
-            L[n_active, n_active] = sqrt(Lkk)
-        else:
-            L[0, 0] = linalg.norm(X[:, lam])
 
         X.T[n_active], X.T[lam] = swap(X.T[n_active], X.T[lam])
         alpha[n_active], alpha[lam] = alpha[lam], alpha[n_active]
@@ -147,6 +159,54 @@ def _cholesky_omp(X, y, n_nonzero_coefs, tol=None, copy_X=True, return_path=Fals
         return gamma, indices[:n_active], coefs[:, :n_active], n_active
     else:
         return gamma, indices[:n_active], n_active
+
+
+def _gram_omp_no_improvement(lam, n_active, alpha, min_float):
+    """Check if OMP should stop due to no improvement."""
+    return lam < n_active or alpha[lam] ** 2 < min_float
+
+
+def _gram_omp_update_cholesky(chol_factor, gram, lam, n_active, nrm2, min_float):
+    """Update the Cholesky factor for the Gram OMP step.
+
+    Returns True if the selected atoms are linearly dependent.
+    """
+    if n_active > 0:
+        chol_factor[n_active, :n_active] = gram[lam, :n_active]
+        linalg.solve_triangular(
+            chol_factor[:n_active, :n_active],
+            chol_factor[n_active, :n_active],
+            trans=0,
+            lower=1,
+            overwrite_b=True,
+            check_finite=False,
+        )
+        v = nrm2(chol_factor[n_active, :n_active]) ** 2
+        lkk = gram[lam, lam] - v
+        if lkk <= min_float:
+            return True
+        chol_factor[n_active, n_active] = sqrt(lkk)
+    else:
+        chol_factor[0, 0] = sqrt(gram[lam, lam])
+    return False
+
+
+def _gram_omp_check_convergence(
+    tol, tol_curr, delta, gamma, beta, n_active, max_features,
+):
+    """Check convergence for the Gram OMP step.
+
+    Returns (should_break, tol_curr, delta).
+    """
+    if tol is not None:
+        tol_curr += delta
+        delta = np.inner(gamma, beta[:n_active])
+        tol_curr -= delta
+        if abs(tol_curr) <= tol:
+            return True, tol_curr, delta
+    elif n_active == max_features:
+        return True, tol_curr, delta
+    return False, tol_curr, delta
 
 
 def _gram_omp(
@@ -236,28 +296,13 @@ def _gram_omp(
 
     while True:
         lam = np.argmax(np.abs(alpha))
-        if lam < n_active or alpha[lam] ** 2 < min_float:
+        if _gram_omp_no_improvement(lam, n_active, alpha, min_float):
             # selected same atom twice, or inner product too small
             warnings.warn(premature, RuntimeWarning, stacklevel=3)
             break
-        if n_active > 0:
-            L[n_active, :n_active] = Gram[lam, :n_active]
-            linalg.solve_triangular(
-                L[:n_active, :n_active],
-                L[n_active, :n_active],
-                trans=0,
-                lower=1,
-                overwrite_b=True,
-                check_finite=False,
-            )
-            v = nrm2(L[n_active, :n_active]) ** 2
-            Lkk = Gram[lam, lam] - v
-            if Lkk <= min_float:  # selected atoms are dependent
-                warnings.warn(premature, RuntimeWarning, stacklevel=3)
-                break
-            L[n_active, n_active] = sqrt(Lkk)
-        else:
-            L[0, 0] = sqrt(Gram[lam, lam])
+        if _gram_omp_update_cholesky(L, Gram, lam, n_active, nrm2, min_float):
+            warnings.warn(premature, RuntimeWarning, stacklevel=3)
+            break
 
         Gram[n_active], Gram[lam] = swap(Gram[n_active], Gram[lam])
         Gram.T[n_active], Gram.T[lam] = swap(Gram.T[n_active], Gram.T[lam])
@@ -272,19 +317,15 @@ def _gram_omp(
             coefs[:n_active, n_active - 1] = gamma
         beta = np.dot(Gram[:, :n_active], gamma)
         alpha = Xy - beta
-        if tol is not None:
-            tol_curr += delta
-            delta = np.inner(gamma, beta[:n_active])
-            tol_curr -= delta
-            if abs(tol_curr) <= tol:
-                break
-        elif n_active == max_features:
+        should_break, tol_curr, delta = _gram_omp_check_convergence(
+            tol, tol_curr, delta, gamma, beta, n_active, max_features
+        )
+        if should_break:
             break
 
     if return_path:
         return gamma, indices[:n_active], coefs[:, :n_active], n_active
-    else:
-        return gamma, indices[:n_active], n_active
+    return gamma, indices[:n_active], n_active
 
 
 def _omp_path_residues(X, y, n_nonzero_coefs, tol, copy_x, return_path):
