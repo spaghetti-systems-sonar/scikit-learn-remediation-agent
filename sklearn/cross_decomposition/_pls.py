@@ -28,6 +28,8 @@ from sklearn.utils.validation import FLOAT_DTYPES, check_is_fitted, validate_dat
 
 __all__ = ["PLSSVD", "PLSCanonical", "PLSRegression"]
 
+_Y_RESIDUAL_CONSTANT = "y residual is constant"
+
 
 def _pinv2_old(a):
     # Used previous scipy pinv2 that was updated in:
@@ -62,7 +64,7 @@ def _get_first_singular_vectors_power_method(
     try:
         y_score = next(col for col in y.T if np.any(np.abs(col) > eps))
     except StopIteration as e:
-        raise StopIteration("y residual is constant") from e
+        raise StopIteration(_Y_RESIDUAL_CONSTANT) from e
 
     x_weights_old = 100  # init to big value for first convergence check
 
@@ -202,6 +204,41 @@ class _PLS(
         self.tol = tol
         self.copy = copy
 
+    def _compute_singular_vectors(self, xk, yk, y_eps, norm_y_weights, k):
+        """Compute first singular vectors for the current deflation step.
+
+        Returns (x_weights, y_weights) or None if iteration should stop.
+        """
+        if self.algorithm == "nipals":
+            # Replace columns that are all close to zero with zeros
+            yk_mask = np.all(np.abs(yk) < 10 * y_eps, axis=0)
+            yk[:, yk_mask] = 0.0
+
+            try:
+                (
+                    x_weights,
+                    y_weights,
+                    n_iter_,
+                ) = _get_first_singular_vectors_power_method(
+                    xk,
+                    yk,
+                    mode=self.mode,
+                    max_iter=self.max_iter,
+                    tol=self.tol,
+                    norm_y_weights=norm_y_weights,
+                )
+            except StopIteration as e:
+                if str(e) != _Y_RESIDUAL_CONSTANT:
+                    raise
+                warnings.warn(f"y residual is constant at iteration {k}")
+                return None
+
+            self.n_iter_.append(n_iter_)
+        else:
+            x_weights, y_weights = _get_first_singular_vectors_svd(xk, yk)
+
+        return x_weights, y_weights
+
     @_fit_context(prefer_skip_nested_validation=True)
     def fit(self, X, y):
         """Fit model to data.
@@ -284,44 +321,19 @@ class _PLS(
         for k in range(n_components):
             # Find first left and right singular vectors of the X.T.dot(y)
             # cross-covariance matrix.
-            if self.algorithm == "nipals":
-                # Replace columns that are all close to zero with zeros
-                yk_mask = np.all(np.abs(yk) < 10 * y_eps, axis=0)
-                yk[:, yk_mask] = 0.0
-
-                try:
-                    (
-                        x_weights,
-                        y_weights,
-                        n_iter_,
-                    ) = _get_first_singular_vectors_power_method(
-                        Xk,
-                        yk,
-                        mode=self.mode,
-                        max_iter=self.max_iter,
-                        tol=self.tol,
-                        norm_y_weights=norm_y_weights,
-                    )
-                except StopIteration as e:
-                    if str(e) != "y residual is constant":
-                        raise
-                    warnings.warn(f"y residual is constant at iteration {k}")
-                    break
-
-                self.n_iter_.append(n_iter_)
-
-            elif self.algorithm == "svd":
-                x_weights, y_weights = _get_first_singular_vectors_svd(Xk, yk)
+            result = self._compute_singular_vectors(
+                Xk, yk, y_eps, norm_y_weights, k
+            )
+            if result is None:
+                break
+            x_weights, y_weights = result
 
             # inplace sign flip for consistency across solvers and archs
             _svd_flip_1d(x_weights, y_weights)
 
             # compute scores, i.e. the projections of X and y
             x_scores = np.dot(Xk, x_weights)
-            if norm_y_weights:
-                y_ss = 1
-            else:
-                y_ss = np.dot(y_weights, y_weights)
+            y_ss = 1 if norm_y_weights else np.dot(y_weights, y_weights)
             y_scores = np.dot(yk, y_weights) / y_ss
 
             # Deflation: subtract rank-one approx to obtain Xk+1 and yk+1
@@ -332,7 +344,7 @@ class _PLS(
                 # regress yk on y_score
                 y_loadings = np.dot(y_scores, yk) / np.dot(y_scores, y_scores)
                 yk -= np.outer(y_scores, y_loadings)
-            if self.deflation_mode == "regression":
+            elif self.deflation_mode == "regression":
                 # regress yk on x_score
                 y_loadings = np.dot(x_scores, yk) / np.dot(x_scores, x_scores)
                 yk -= np.outer(x_scores, y_loadings)

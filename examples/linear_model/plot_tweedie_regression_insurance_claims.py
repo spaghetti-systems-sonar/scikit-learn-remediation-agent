@@ -141,6 +141,16 @@ def plot_obs_pred(
     )
 
 
+def _predict(estimator, X):
+    """Return predictions, handling the case of a (frequency, severity) pair."""
+    if isinstance(estimator, tuple) and len(estimator) == 2:
+        # Score the model consisting of the product of frequency and
+        # severity models.
+        est_freq, est_sev = estimator
+        return est_freq.predict(X) * est_sev.predict(X)
+    return estimator.predict(X)
+
+
 def score_estimator(
     estimator,
     X_train,
@@ -174,13 +184,7 @@ def score_estimator(
     ]:
         y, _weights = df[target], df[weights]
         for score_label, metric in metrics:
-            if isinstance(estimator, tuple) and len(estimator) == 2:
-                # Score the model consisting of the product of frequency and
-                # severity models.
-                est_freq, est_sev = estimator
-                y_pred = est_freq.predict(X) * est_sev.predict(X)
-            else:
-                y_pred = estimator.predict(X)
+            y_pred = _predict(estimator, X)
 
             if metric is None:
                 if not hasattr(estimator, "score"):

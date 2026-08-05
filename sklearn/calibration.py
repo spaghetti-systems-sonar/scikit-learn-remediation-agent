@@ -831,20 +831,24 @@ class _CalibratedClassifier:
                     proba, denominator, out=uniform_proba, where=denominator != 0
                 )
         elif self.method == "temperature":
-            xp, _ = get_namespace(predictions)
-            if n_classes == 2 and predictions.shape[-1] == 1:
-                response_method_name = _check_response_method(
-                    self.estimator,
-                    ["decision_function", "predict_proba"],
-                ).__name__
-                if response_method_name == "predict_proba":
-                    predictions = xp.concat([1 - predictions, predictions], axis=1)
-            proba = self.calibrators[0].predict(predictions)
+            proba = self._calibrate_with_temperature(predictions, n_classes)
 
         # Deal with cases where the predicted probability minimally exceeds 1.0
         proba[(1.0 < proba) & (proba <= 1.0 + 1e-5)] = 1.0
 
         return proba
+
+    def _calibrate_with_temperature(self, predictions, n_classes):
+        """Calibrate predictions using the temperature scaling method."""
+        xp, _ = get_namespace(predictions)
+        if n_classes == 2 and predictions.shape[-1] == 1:
+            response_method_name = _check_response_method(
+                self.estimator,
+                ["decision_function", "predict_proba"],
+            ).__name__
+            if response_method_name == "predict_proba":
+                predictions = xp.concat([1 - predictions, predictions], axis=1)
+        return self.calibrators[0].predict(predictions)
 
 
 # The max_abs_prediction_threshold was approximated using
