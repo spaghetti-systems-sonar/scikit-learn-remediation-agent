@@ -35,6 +35,41 @@ from sklearn.utils.validation import check_is_fitted, validate_data
 __all__ = ["LinearDiscriminantAnalysis", "QuadraticDiscriminantAnalysis"]
 
 
+def _cov_with_estimator(X, shrinkage, covariance_estimator):
+    """Estimate covariance matrix using a provided covariance estimator.
+
+    Parameters
+    ----------
+    X : array-like of shape (n_samples, n_features)
+        Input data.
+
+    shrinkage : {'empirical', 'auto'} or float, default=None
+        Shrinkage parameter. Must be None or 0 when using a
+        covariance estimator.
+
+    covariance_estimator : estimator
+        The covariance estimator to use. Must have a fit method and
+        a ``covariance_`` attribute after fitting.
+
+    Returns
+    -------
+    s : ndarray of shape (n_features, n_features)
+        Estimated covariance matrix.
+    """
+    if shrinkage is not None and shrinkage != 0:
+        raise ValueError(
+            "covariance_estimator and shrinkage parameters "
+            "are not None. Only one of the two can be set."
+        )
+    covariance_estimator.fit(X)
+    if not hasattr(covariance_estimator, "covariance_"):
+        raise ValueError(
+            "%s does not have a covariance_ attribute"
+            % covariance_estimator.__class__.__name__
+        )
+    return covariance_estimator.covariance_
+
+
 def _cov(X, shrinkage=None, covariance_estimator=None):
     """Estimate covariance matrix (using optional covariance_estimator).
     Parameters
@@ -66,32 +101,21 @@ def _cov(X, shrinkage=None, covariance_estimator=None):
     s : ndarray of shape (n_features, n_features)
         Estimated covariance matrix.
     """
-    if covariance_estimator is None:
-        shrinkage = "empirical" if shrinkage is None else shrinkage
-        if isinstance(shrinkage, str):
-            if shrinkage == "auto":
-                sc = StandardScaler()  # standardize features
-                X = sc.fit_transform(X)
-                s = ledoit_wolf(X)[0]
-                # rescale
-                s = sc.scale_[:, np.newaxis] * s * sc.scale_[np.newaxis, :]
-            elif shrinkage == "empirical":
-                s = empirical_covariance(X)
-        elif isinstance(shrinkage, Real):
-            s = shrunk_covariance(empirical_covariance(X), shrinkage)
-    else:
-        if shrinkage is not None and shrinkage != 0:
-            raise ValueError(
-                "covariance_estimator and shrinkage parameters "
-                "are not None. Only one of the two can be set."
-            )
-        covariance_estimator.fit(X)
-        if not hasattr(covariance_estimator, "covariance_"):
-            raise ValueError(
-                "%s does not have a covariance_ attribute"
-                % covariance_estimator.__class__.__name__
-            )
-        s = covariance_estimator.covariance_
+    if covariance_estimator is not None:
+        return _cov_with_estimator(X, shrinkage, covariance_estimator)
+
+    shrinkage = "empirical" if shrinkage is None else shrinkage
+    if isinstance(shrinkage, str):
+        if shrinkage == "auto":
+            sc = StandardScaler()  # standardize features
+            X = sc.fit_transform(X)
+            s = ledoit_wolf(X)[0]
+            # rescale
+            s = sc.scale_[:, np.newaxis] * s * sc.scale_[np.newaxis, :]
+        elif shrinkage == "empirical":
+            s = empirical_covariance(X)
+    elif isinstance(shrinkage, Real):
+        s = shrunk_covariance(empirical_covariance(X), shrinkage)
     return s
 
 
@@ -638,6 +662,17 @@ class LinearDiscriminantAnalysis(
         self.coef_ = coef @ self.scalings_.T
         self.intercept_ -= self.xbar_ @ self.coef_.T
 
+    def _validate_n_components(self, max_components):
+        """Validate and set the maximum number of components."""
+        if self.n_components is None:
+            self._max_components = max_components
+        else:
+            if self.n_components > max_components:
+                raise ValueError(
+                    "n_components cannot be larger than min(n_features, n_classes - 1)."
+                )
+            self._max_components = self.n_components
+
     @_fit_context(
         # LinearDiscriminantAnalysis.covariance_estimator is not validated yet
         prefer_skip_nested_validation=False
@@ -692,14 +727,7 @@ class LinearDiscriminantAnalysis(
         # specified:
         max_components = min(n_classes - 1, n_features)
 
-        if self.n_components is None:
-            self._max_components = max_components
-        else:
-            if self.n_components > max_components:
-                raise ValueError(
-                    "n_components cannot be larger than min(n_features, n_classes - 1)."
-                )
-            self._max_components = self.n_components
+        self._validate_n_components(max_components)
 
         if self.solver == "svd":
             if self.shrinkage is not None:

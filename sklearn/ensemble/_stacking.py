@@ -152,6 +152,34 @@ class _BaseStacking(TransformerMixin, _BaseHeterogeneousEnsemble, metaclass=ABCM
 
         return method_name
 
+    def _get_routed_params(self, names, fit_params):
+        """Get routed parameters for each estimator."""
+        if _routing_enabled():
+            return process_routing(self, "fit", **fit_params)
+
+        routed_params = Bunch()
+        for name in names:
+            routed_params[name] = Bunch(fit={})
+            if "sample_weight" in fit_params:
+                routed_params[name].fit["sample_weight"] = fit_params[
+                    "sample_weight"
+                ]
+        return routed_params
+
+    def _assign_named_estimators(self, names, all_estimators):
+        """Populate named_estimators_ and feature_names_in_."""
+        self.named_estimators_ = Bunch()
+        est_fitted_idx = 0
+        for name_est, org_est in zip(names, all_estimators):
+            if org_est != "drop":
+                current_estimator = self.estimators_[est_fitted_idx]
+                self.named_estimators_[name_est] = current_estimator
+                est_fitted_idx += 1
+                if hasattr(current_estimator, "feature_names_in_"):
+                    self.feature_names_in_ = current_estimator.feature_names_in_
+            else:
+                self.named_estimators_[name_est] = "drop"
+
     @_fit_context(
         # estimators in Stacking*.estimators are not validated yet
         prefer_skip_nested_validation=False
@@ -187,16 +215,7 @@ class _BaseStacking(TransformerMixin, _BaseHeterogeneousEnsemble, metaclass=ABCM
 
         stack_method = [self.stack_method] * len(all_estimators)
 
-        if _routing_enabled():
-            routed_params = process_routing(self, "fit", **fit_params)
-        else:
-            routed_params = Bunch()
-            for name in names:
-                routed_params[name] = Bunch(fit={})
-                if "sample_weight" in fit_params:
-                    routed_params[name].fit["sample_weight"] = fit_params[
-                        "sample_weight"
-                    ]
+        routed_params = self._get_routed_params(names, fit_params)
 
         if self.cv == "prefit":
             self.estimators_ = []
@@ -216,17 +235,7 @@ class _BaseStacking(TransformerMixin, _BaseHeterogeneousEnsemble, metaclass=ABCM
                 if est != "drop"
             )
 
-        self.named_estimators_ = Bunch()
-        est_fitted_idx = 0
-        for name_est, org_est in zip(names, all_estimators):
-            if org_est != "drop":
-                current_estimator = self.estimators_[est_fitted_idx]
-                self.named_estimators_[name_est] = current_estimator
-                est_fitted_idx += 1
-                if hasattr(current_estimator, "feature_names_in_"):
-                    self.feature_names_in_ = current_estimator.feature_names_in_
-            else:
-                self.named_estimators_[name_est] = "drop"
+        self._assign_named_estimators(names, all_estimators)
 
         self.stack_method_ = [
             self._method_name(name, est, meth)

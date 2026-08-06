@@ -84,6 +84,63 @@ def get_auto_step_size(
     return step
 
 
+def _init_warm_start_params(warm_start_mem, n_samples, n_features, n_classes, dtype):
+    """Initialize parameters from warm_start_mem for the SAG solver."""
+    if "coef" in warm_start_mem.keys():
+        coef_init = warm_start_mem["coef"]
+    else:
+        # assume fit_intercept is False
+        coef_init = np.zeros((n_features, n_classes), dtype=dtype, order="C")
+
+    # coef_init contains possibly the intercept_init at the end.
+    # Note that Ridge centers the data before fitting, so fit_intercept=False.
+    fit_intercept = coef_init.shape[0] == (n_features + 1)
+    if fit_intercept:
+        intercept_init = coef_init[-1, :]
+        coef_init = coef_init[:-1, :]
+    else:
+        intercept_init = np.zeros(n_classes, dtype=dtype)
+
+    if "intercept_sum_gradient" in warm_start_mem.keys():
+        intercept_sum_gradient = warm_start_mem["intercept_sum_gradient"]
+    else:
+        intercept_sum_gradient = np.zeros(n_classes, dtype=dtype)
+
+    if "gradient_memory" in warm_start_mem.keys():
+        gradient_memory_init = warm_start_mem["gradient_memory"]
+    else:
+        gradient_memory_init = np.zeros(
+            (n_samples, n_classes), dtype=dtype, order="C"
+        )
+    if "sum_gradient" in warm_start_mem.keys():
+        sum_gradient_init = warm_start_mem["sum_gradient"]
+    else:
+        sum_gradient_init = np.zeros(
+            (n_features, n_classes), dtype=dtype, order="C"
+        )
+
+    if "seen" in warm_start_mem.keys():
+        seen_init = warm_start_mem["seen"]
+    else:
+        seen_init = np.zeros(n_samples, dtype=np.int32, order="C")
+
+    if "num_seen" in warm_start_mem.keys():
+        num_seen_init = warm_start_mem["num_seen"]
+    else:
+        num_seen_init = 0
+
+    return (
+        coef_init,
+        intercept_init,
+        fit_intercept,
+        intercept_sum_gradient,
+        gradient_memory_init,
+        sum_gradient_init,
+        seen_init,
+        num_seen_init,
+    )
+
+
 def sag_solver(
     X,
     y,
@@ -260,46 +317,18 @@ def sag_solver(
     # initialization
     sample_weight = _check_sample_weight(sample_weight, X, dtype=X.dtype)
 
-    if "coef" in warm_start_mem.keys():
-        coef_init = warm_start_mem["coef"]
-    else:
-        # assume fit_intercept is False
-        coef_init = np.zeros((n_features, n_classes), dtype=X.dtype, order="C")
-
-    # coef_init contains possibly the intercept_init at the end.
-    # Note that Ridge centers the data before fitting, so fit_intercept=False.
-    fit_intercept = coef_init.shape[0] == (n_features + 1)
-    if fit_intercept:
-        intercept_init = coef_init[-1, :]
-        coef_init = coef_init[:-1, :]
-    else:
-        intercept_init = np.zeros(n_classes, dtype=X.dtype)
-
-    if "intercept_sum_gradient" in warm_start_mem.keys():
-        intercept_sum_gradient = warm_start_mem["intercept_sum_gradient"]
-    else:
-        intercept_sum_gradient = np.zeros(n_classes, dtype=X.dtype)
-
-    if "gradient_memory" in warm_start_mem.keys():
-        gradient_memory_init = warm_start_mem["gradient_memory"]
-    else:
-        gradient_memory_init = np.zeros(
-            (n_samples, n_classes), dtype=X.dtype, order="C"
-        )
-    if "sum_gradient" in warm_start_mem.keys():
-        sum_gradient_init = warm_start_mem["sum_gradient"]
-    else:
-        sum_gradient_init = np.zeros((n_features, n_classes), dtype=X.dtype, order="C")
-
-    if "seen" in warm_start_mem.keys():
-        seen_init = warm_start_mem["seen"]
-    else:
-        seen_init = np.zeros(n_samples, dtype=np.int32, order="C")
-
-    if "num_seen" in warm_start_mem.keys():
-        num_seen_init = warm_start_mem["num_seen"]
-    else:
-        num_seen_init = 0
+    (
+        coef_init,
+        intercept_init,
+        fit_intercept,
+        intercept_sum_gradient,
+        gradient_memory_init,
+        sum_gradient_init,
+        seen_init,
+        num_seen_init,
+    ) = _init_warm_start_params(
+        warm_start_mem, n_samples, n_features, n_classes, X.dtype
+    )
 
     dataset, intercept_decay = make_dataset(X, y, sample_weight, random_state)
 
