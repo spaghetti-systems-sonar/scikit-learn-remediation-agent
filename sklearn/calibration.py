@@ -333,6 +333,61 @@ class CalibratedClassifierCV(ClassifierMixin, MetaEstimatorMixin, BaseEstimator)
 
         return estimator
 
+    def _get_routed_params(self, estimator, sample_weight, fit_params):
+        """Build routed parameters for the estimator and splitter."""
+        if _routing_enabled():
+            return process_routing(
+                self,
+                "fit",
+                sample_weight=sample_weight,
+                **fit_params,
+            )
+
+        # sample_weight checks
+        fit_parameters = signature(estimator.fit).parameters
+        supports_sw = "sample_weight" in fit_parameters
+        if sample_weight is not None and not supports_sw:
+            estimator_name = type(estimator).__name__
+            warnings.warn(
+                f"Since {estimator_name} does not appear to accept"
+                " sample_weight, sample weights will only be used for the"
+                " calibration itself. This can be caused by a limitation of"
+                " the current scikit-learn API. See the following issue for"
+                " more details:"
+                " https://github.com/scikit-learn/scikit-learn/issues/21134."
+                " Be warned that the result of the calibration is likely to be"
+                " incorrect."
+            )
+        routed_params = Bunch()
+        routed_params.splitter = Bunch(split={})  # no routing for splitter
+        routed_params.estimator = Bunch(fit=fit_params)
+        if sample_weight is not None and supports_sw:
+            routed_params.estimator.fit["sample_weight"] = sample_weight
+        return routed_params
+
+    def _check_cv_and_get_splitter(self, xp, y):
+        """Validate cross-validation configuration and return a CV splitter."""
+        if isinstance(self.cv, int):
+            n_folds = self.cv
+        elif hasattr(self.cv, "n_splits"):
+            n_folds = self.cv.n_splits
+        else:
+            n_folds = None
+        if n_folds and xp.any(xp.unique_counts(y)[1] < n_folds):
+            raise ValueError(
+                f"Requesting {n_folds}-fold "
+                "cross-validation but provided less than "
+                f"{n_folds} examples for at least one class."
+            )
+        if isinstance(self.cv, LeaveOneOut):
+            raise ValueError(
+                "LeaveOneOut cross-validation does not allow"
+                "all classes to be present in test splits. "
+                "Please use a cross-validation generator that allows "
+                "all classes to appear in every test and train split."
+            )
+        return check_cv(self.cv, y, classifier=True)
+
     @_fit_context(
         # CalibratedClassifierCV.estimator is not validated yet
         prefer_skip_nested_validation=False
@@ -379,60 +434,13 @@ class CalibratedClassifierCV(ClassifierMixin, MetaEstimatorMixin, BaseEstimator)
             # `_fit_calibrator` function.
             y = label_encoder_.transform(y=y)
 
-        if _routing_enabled():
-            routed_params = process_routing(
-                self,
-                "fit",
-                sample_weight=sample_weight,
-                **fit_params,
-            )
-        else:
-            # sample_weight checks
-            fit_parameters = signature(estimator.fit).parameters
-            supports_sw = "sample_weight" in fit_parameters
-            if sample_weight is not None and not supports_sw:
-                estimator_name = type(estimator).__name__
-                warnings.warn(
-                    f"Since {estimator_name} does not appear to accept"
-                    " sample_weight, sample weights will only be used for the"
-                    " calibration itself. This can be caused by a limitation of"
-                    " the current scikit-learn API. See the following issue for"
-                    " more details:"
-                    " https://github.com/scikit-learn/scikit-learn/issues/21134."
-                    " Be warned that the result of the calibration is likely to be"
-                    " incorrect."
-                )
-            routed_params = Bunch()
-            routed_params.splitter = Bunch(split={})  # no routing for splitter
-            routed_params.estimator = Bunch(fit=fit_params)
-            if sample_weight is not None and supports_sw:
-                routed_params.estimator.fit["sample_weight"] = sample_weight
+        routed_params = self._get_routed_params(estimator, sample_weight, fit_params)
 
         xp, is_array_api, device_ = get_namespace_and_device(X)
         if is_array_api:
             y, sample_weight = move_to(y, sample_weight, xp=xp, device=device_)
-        # Check that each cross-validation fold can have at least one
-        # example per class
-        if isinstance(self.cv, int):
-            n_folds = self.cv
-        elif hasattr(self.cv, "n_splits"):
-            n_folds = self.cv.n_splits
-        else:
-            n_folds = None
-        if n_folds and xp.any(xp.unique_counts(y)[1] < n_folds):
-            raise ValueError(
-                f"Requesting {n_folds}-fold "
-                "cross-validation but provided less than "
-                f"{n_folds} examples for at least one class."
-            )
-        if isinstance(self.cv, LeaveOneOut):
-            raise ValueError(
-                "LeaveOneOut cross-validation does not allow"
-                "all classes to be present in test splits. "
-                "Please use a cross-validation generator that allows "
-                "all classes to appear in every test and train split."
-            )
-        cv = check_cv(self.cv, y, classifier=True)
+
+        cv = self._check_cv_and_get_splitter(xp, y)
 
         if _ensemble:
             parallel = Parallel(n_jobs=self.n_jobs)
