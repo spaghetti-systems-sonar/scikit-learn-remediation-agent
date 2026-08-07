@@ -103,6 +103,13 @@ def _consumes_sample_weight(estimator):
     return consumes_sample_weight
 
 
+def _get_estimator_fit(estimator, has_check_input, check_input):
+    """Return the fit method, optionally wrapping it with check_input."""
+    if has_check_input:
+        return partial(estimator.fit, check_input=check_input)
+    return estimator.fit
+
+
 def _parallel_build_estimators(
     n_estimators,
     ensemble,
@@ -140,10 +147,7 @@ def _parallel_build_estimators(
         random_state = seeds[i]
         estimator = ensemble._make_estimator(append=False, random_state=random_state)
 
-        if has_check_input:
-            estimator_fit = partial(estimator.fit, check_input=check_input)
-        else:
-            estimator_fit = estimator.fit
+        estimator_fit = _get_estimator_fit(estimator, has_check_input, check_input)
 
         # Draw random feature, sample indices (using normalized sample_weight
         # as probabilities if provided).
@@ -395,6 +399,38 @@ class BaseBagging(BaseEnsemble, metaclass=ABCMeta):
     def _parallel_args(self):
         return {}
 
+    def _get_routed_params(self, fit_params):
+        """Get routed parameters for the estimator."""
+        if _routing_enabled():
+            return process_routing(self, "fit", **fit_params)
+        routed_params = Bunch()
+        routed_params.estimator = Bunch(fit=fit_params)
+        return routed_params
+
+    def _validate_max_samples(self, max_samples, n_samples, sample_weight):
+        """Validate and return the effective max_samples value."""
+        if max_samples is None:
+            max_samples = self.max_samples
+        max_samples = _get_n_samples_bootstrap(
+            n_samples, max_samples, sample_weight
+        )
+        if not self.bootstrap and max_samples > n_samples:
+            raise ValueError(
+                f"Effective max_samples={max_samples} must be <= n_samples="
+                f"{n_samples} to be able to sample without replacement."
+            )
+        return max_samples
+
+    def _validate_max_features(self):
+        """Validate and return the effective max_features value."""
+        if isinstance(self.max_features, numbers.Integral):
+            max_features = self.max_features
+        elif isinstance(self.max_features, float):
+            max_features = int(self.max_features * self.n_features_in_)
+        if max_features > self.n_features_in_:
+            raise ValueError("max_features must be <= n_features")
+        return max(1, int(max_features))
+
     def _fit(
         self,
         X,
@@ -453,42 +489,18 @@ class BaseBagging(BaseEnsemble, metaclass=ABCMeta):
         # Check parameters
         self._validate_estimator(self._get_estimator())
 
-        if _routing_enabled():
-            routed_params = process_routing(self, "fit", **fit_params)
-        else:
-            routed_params = Bunch()
-            routed_params.estimator = Bunch(fit=fit_params)
+        routed_params = self._get_routed_params(fit_params)
 
         if max_depth is not None:
             self.estimator_.max_depth = max_depth
 
-        # Validate max_samples
-        if max_samples is None:
-            max_samples = self.max_samples
+        # Validate and store max_samples
+        self._max_samples = self._validate_max_samples(
+            max_samples, X.shape[0], sample_weight
+        )
 
-        max_samples = _get_n_samples_bootstrap(X.shape[0], max_samples, sample_weight)
-        if not self.bootstrap and max_samples > X.shape[0]:
-            raise ValueError(
-                f"Effective max_samples={max_samples} must be <= n_samples="
-                f"{X.shape[0]} to be able to sample without replacement."
-            )
-
-        # Store validated integer row sampling value
-        self._max_samples = max_samples
-
-        # Validate max_features
-        if isinstance(self.max_features, numbers.Integral):
-            max_features = self.max_features
-        elif isinstance(self.max_features, float):
-            max_features = int(self.max_features * self.n_features_in_)
-
-        if max_features > self.n_features_in_:
-            raise ValueError("max_features must be <= n_features")
-
-        max_features = max(1, int(max_features))
-
-        # Store validated integer feature sampling value
-        self._max_features = max_features
+        # Validate and store max_features
+        self._max_features = self._validate_max_features()
 
         # Store sample_weight (needed in _get_estimators_indices). Note that
         # we intentionally do not materialize `sample_weight=None` as an array

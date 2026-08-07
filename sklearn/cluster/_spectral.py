@@ -52,6 +52,21 @@ def cluster_qr(vectors):
     return vectors.argmax(axis=1)
 
 
+def _normalize_and_reorient_eigenvectors(vectors, n_samples):
+    """Normalize eigenvectors and reorient them to a consistent direction.
+
+    Each eigenvector column is normalized to have the same length as a vector
+    of ones, then reoriented to point in the negative direction with respect
+    to the first element.
+    """
+    norm_ones = np.sqrt(n_samples)
+    for i in range(vectors.shape[1]):
+        vectors[:, i] = (vectors[:, i] / np.linalg.norm(vectors[:, i])) * norm_ones
+        if vectors[0, i] != 0:
+            vectors[:, i] = -1 * vectors[:, i] * np.sign(vectors[0, i])
+    return vectors
+
+
 def discretize(
     vectors, *, copy=True, max_svd_restarts=30, n_iter_max=20, random_state=None
 ):
@@ -119,11 +134,7 @@ def discretize(
     # to the first element.  This may have to do with constraining the
     # eigenvectors to lie in a specific quadrant to make the discretization
     # search easier.
-    norm_ones = np.sqrt(n_samples)
-    for i in range(vectors.shape[1]):
-        vectors[:, i] = (vectors[:, i] / np.linalg.norm(vectors[:, i])) * norm_ones
-        if vectors[0, i] != 0:
-            vectors[:, i] = -1 * vectors[:, i] * np.sign(vectors[0, i])
+    vectors = _normalize_and_reorient_eigenvectors(vectors, n_samples)
 
     # Normalize the rows of the eigenvectors.  Samples should lie on the unit
     # hypersphere centered at the origin.  This transforms the samples in the

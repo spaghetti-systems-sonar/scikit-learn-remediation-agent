@@ -351,35 +351,35 @@ class TheilSenRegressor(RegressorMixin, LinearModel):
         self.n_jobs = n_jobs
         self.verbose = verbose
 
+    def _validate_n_subsamples(self, n_subsamples, n_samples, n_features, n_dim):
+        if n_subsamples > n_samples:
+            raise ValueError(
+                "Invalid parameter since n_subsamples > "
+                "n_samples ({0} > {1}).".format(n_subsamples, n_samples)
+            )
+        if n_samples >= n_features:
+            if n_dim > n_subsamples:
+                plus_1 = "+1" if self.fit_intercept else ""
+                raise ValueError(
+                    "Invalid parameter since n_features{0} "
+                    "> n_subsamples ({1} > {2})."
+                    "".format(plus_1, n_dim, n_subsamples)
+                )
+        elif n_subsamples != n_samples:
+            raise ValueError(
+                "Invalid parameter since n_subsamples != "
+                "n_samples ({0} != {1}) while n_samples "
+                "< n_features.".format(n_subsamples, n_samples)
+            )
+
     def _check_subparams(self, n_samples, n_features):
         n_subsamples = self.n_subsamples
-
-        if self.fit_intercept:
-            n_dim = n_features + 1
-        else:
-            n_dim = n_features
+        n_dim = n_features + 1 if self.fit_intercept else n_features
 
         if n_subsamples is not None:
-            if n_subsamples > n_samples:
-                raise ValueError(
-                    "Invalid parameter since n_subsamples > "
-                    "n_samples ({0} > {1}).".format(n_subsamples, n_samples)
-                )
-            if n_samples >= n_features:
-                if n_dim > n_subsamples:
-                    plus_1 = "+1" if self.fit_intercept else ""
-                    raise ValueError(
-                        "Invalid parameter since n_features{0} "
-                        "> n_subsamples ({1} > {2})."
-                        "".format(plus_1, n_dim, n_subsamples)
-                    )
-            else:  # if n_samples < n_features
-                if n_subsamples != n_samples:
-                    raise ValueError(
-                        "Invalid parameter since n_subsamples != "
-                        "n_samples ({0} != {1}) while n_samples "
-                        "< n_features.".format(n_subsamples, n_samples)
-                    )
+            self._validate_n_subsamples(
+                n_subsamples, n_samples, n_features, n_dim
+            )
         else:
             n_subsamples = min(n_dim, n_samples)
 
