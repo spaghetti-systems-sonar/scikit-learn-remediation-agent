@@ -1080,6 +1080,67 @@ class Lars(RegressorMixin, MultiOutputLinearModel):
 
         return precompute
 
+    def _fit_with_path(self, X, y, gram, xy, alpha, max_iter, n_targets):
+        """Fit the model when return_path=True."""
+        self.active_ = []
+        self.coef_path_ = []
+        for k in range(n_targets):
+            this_xy = None if xy is None else xy[:, k]
+            alphas, active, coef_path, n_iter_ = lars_path(
+                X,
+                y[:, k],
+                Gram=gram,
+                Xy=this_xy,
+                copy_X=self.copy_X,
+                copy_Gram=True,
+                alpha_min=alpha,
+                method=self.method,
+                verbose=max(0, self.verbose - 1),
+                max_iter=max_iter,
+                eps=self.eps,
+                return_path=True,
+                return_n_iter=True,
+                positive=self.positive,
+            )
+            self.alphas_.append(alphas)
+            self.active_.append(active)
+            self.n_iter_.append(n_iter_)
+            self.coef_path_.append(coef_path)
+            self.coef_[k] = coef_path[:, -1]
+
+        if n_targets == 1:
+            self.alphas_, self.active_, self.coef_path_, self.coef_ = [
+                a[0]
+                for a in (self.alphas_, self.active_, self.coef_path_, self.coef_)
+            ]
+            self.n_iter_ = self.n_iter_[0]
+
+    def _fit_without_path(self, X, y, gram, xy, alpha, max_iter, n_targets):
+        """Fit the model when return_path=False."""
+        for k in range(n_targets):
+            this_xy = None if xy is None else xy[:, k]
+            alphas, _, self.coef_[k], n_iter_ = lars_path(
+                X,
+                y[:, k],
+                Gram=gram,
+                Xy=this_xy,
+                copy_X=self.copy_X,
+                copy_Gram=True,
+                alpha_min=alpha,
+                method=self.method,
+                verbose=max(0, self.verbose - 1),
+                max_iter=max_iter,
+                eps=self.eps,
+                return_path=False,
+                return_n_iter=True,
+                positive=self.positive,
+            )
+            self.alphas_.append(alphas)
+            self.n_iter_.append(n_iter_)
+        if n_targets == 1:
+            self.alphas_ = self.alphas_[0]
+            self.n_iter_ = self.n_iter_[0]
+
     def _fit(self, X, y, max_iter, alpha, fit_path, Xy=None):
         """Auxiliary method to fit the model using X, y as training data"""
         n_features = X.shape[1]
@@ -1100,62 +1161,9 @@ class Lars(RegressorMixin, MultiOutputLinearModel):
         self.coef_ = np.empty((n_targets, n_features), dtype=X.dtype)
 
         if fit_path:
-            self.active_ = []
-            self.coef_path_ = []
-            for k in range(n_targets):
-                this_Xy = None if Xy is None else Xy[:, k]
-                alphas, active, coef_path, n_iter_ = lars_path(
-                    X,
-                    y[:, k],
-                    Gram=Gram,
-                    Xy=this_Xy,
-                    copy_X=self.copy_X,
-                    copy_Gram=True,
-                    alpha_min=alpha,
-                    method=self.method,
-                    verbose=max(0, self.verbose - 1),
-                    max_iter=max_iter,
-                    eps=self.eps,
-                    return_path=True,
-                    return_n_iter=True,
-                    positive=self.positive,
-                )
-                self.alphas_.append(alphas)
-                self.active_.append(active)
-                self.n_iter_.append(n_iter_)
-                self.coef_path_.append(coef_path)
-                self.coef_[k] = coef_path[:, -1]
-
-            if n_targets == 1:
-                self.alphas_, self.active_, self.coef_path_, self.coef_ = [
-                    a[0]
-                    for a in (self.alphas_, self.active_, self.coef_path_, self.coef_)
-                ]
-                self.n_iter_ = self.n_iter_[0]
+            self._fit_with_path(X, y, Gram, Xy, alpha, max_iter, n_targets)
         else:
-            for k in range(n_targets):
-                this_Xy = None if Xy is None else Xy[:, k]
-                alphas, _, self.coef_[k], n_iter_ = lars_path(
-                    X,
-                    y[:, k],
-                    Gram=Gram,
-                    Xy=this_Xy,
-                    copy_X=self.copy_X,
-                    copy_Gram=True,
-                    alpha_min=alpha,
-                    method=self.method,
-                    verbose=max(0, self.verbose - 1),
-                    max_iter=max_iter,
-                    eps=self.eps,
-                    return_path=False,
-                    return_n_iter=True,
-                    positive=self.positive,
-                )
-                self.alphas_.append(alphas)
-                self.n_iter_.append(n_iter_)
-            if n_targets == 1:
-                self.alphas_ = self.alphas_[0]
-                self.n_iter_ = self.n_iter_[0]
+            self._fit_without_path(X, y, Gram, Xy, alpha, max_iter, n_targets)
 
         self._set_intercept(X_offset, y_offset, X_scale)
         return self
