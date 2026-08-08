@@ -373,6 +373,18 @@ def euclidean_distances(
     return _euclidean_distances(X, Y, X_norm_squared, Y_norm_squared, squared)
 
 
+def _get_norm_squared(arr, norm_squared, xp, reshape_shape):
+    """Return reshaped squared norms, computing them if needed.
+
+    Returns None for float32 arrays without precomputed non-float32 norms.
+    """
+    if norm_squared is not None and norm_squared.dtype != xp.float32:
+        return xp.reshape(norm_squared, reshape_shape)
+    if arr.dtype != xp.float32:
+        return xp.reshape(row_norms(arr, squared=True), reshape_shape)
+    return None
+
+
 def _euclidean_distances(X, Y, X_norm_squared=None, Y_norm_squared=None, squared=False):
     """Computational part of euclidean_distances
 
@@ -383,22 +395,12 @@ def _euclidean_distances(X, Y, X_norm_squared=None, Y_norm_squared=None, squared
     TODO: use a float64 accumulator in row_norms to avoid the latter.
     """
     xp, _, device_ = get_namespace_and_device(X, Y)
-    if X_norm_squared is not None and X_norm_squared.dtype != xp.float32:
-        XX = xp.reshape(X_norm_squared, (-1, 1))
-    elif X.dtype != xp.float32:
-        XX = row_norms(X, squared=True)[:, None]
-    else:
-        XX = None
+    XX = _get_norm_squared(X, X_norm_squared, xp, (-1, 1))
 
     if Y is X:
         YY = None if XX is None else XX.T
     else:
-        if Y_norm_squared is not None and Y_norm_squared.dtype != xp.float32:
-            YY = xp.reshape(Y_norm_squared, (1, -1))
-        elif Y.dtype != xp.float32:
-            YY = row_norms(Y, squared=True)[None, :]
-        else:
-            YY = None
+        YY = _get_norm_squared(Y, Y_norm_squared, xp, (1, -1))
 
     if X.dtype == xp.float32 or Y.dtype == xp.float32:
         # To minimize precision issues with float32, we compute the distance
@@ -564,6 +566,49 @@ def nan_euclidean_distances(
     return distances
 
 
+def _compute_upcast_batch_size(x, y, n_samples_x, n_samples_y, n_features):
+    """Compute the default batch size for upcast euclidean distance computation."""
+    x_density = x.nnz / np.prod(x.shape) if issparse(x) else 1
+    y_density = y.nnz / np.prod(y.shape) if issparse(y) else 1
+
+    # Allow 10% more memory than X, Y and the distance matrix take (at
+    # least 10MiB)
+    maxmem = max(
+        (
+            (x_density * n_samples_x + y_density * n_samples_y) * n_features
+            + (x_density * n_samples_x * y_density * n_samples_y)
+        )
+        / 10,
+        10 * 2**17,
+    )
+
+    # The increase amount of memory in 8-byte blocks is:
+    # - x_density * batch_size * n_features (copy of chunk of X)
+    # - y_density * batch_size * n_features (copy of chunk of Y)
+    # - batch_size * batch_size (chunk of distance matrix)
+    # Hence x² + (xd+yd)kx = M, where x=batch_size, k=n_features, M=maxmem
+    #                                 xd=x_density and yd=y_density
+    tmp = (x_density + y_density) * n_features
+    result = (-tmp + math.sqrt(tmp**2 + 4 * maxmem)) / 2
+    return max(int(result), 1)
+
+
+def _compute_euclidean_distance_chunk(
+    y, y_slice, x_chunk, xx_chunk, yy, xp, xp_max_float
+):
+    """Compute a chunk of pairwise euclidean distances."""
+    Y_chunk = xp.astype(y[y_slice, :], xp_max_float)
+    if yy is None:
+        YY_chunk = row_norms(Y_chunk, squared=True)[None, :]
+    else:
+        YY_chunk = yy[:, y_slice]
+
+    d = -2 * safe_sparse_dot(x_chunk, Y_chunk.T, dense_output=True)
+    d += xx_chunk
+    d += YY_chunk
+    return d
+
+
 def _euclidean_distances_upcast(X, XX=None, Y=None, YY=None, batch_size=None):
     """Euclidean distances between X and Y.
 
@@ -581,29 +626,9 @@ def _euclidean_distances_upcast(X, XX=None, Y=None, YY=None, batch_size=None):
     distances = xp.empty((n_samples_X, n_samples_Y), dtype=xp.float32, device=device_)
 
     if batch_size is None:
-        x_density = X.nnz / np.prod(X.shape) if issparse(X) else 1
-        y_density = Y.nnz / np.prod(Y.shape) if issparse(Y) else 1
-
-        # Allow 10% more memory than X, Y and the distance matrix take (at
-        # least 10MiB)
-        maxmem = max(
-            (
-                (x_density * n_samples_X + y_density * n_samples_Y) * n_features
-                + (x_density * n_samples_X * y_density * n_samples_Y)
-            )
-            / 10,
-            10 * 2**17,
+        batch_size = _compute_upcast_batch_size(
+            X, Y, n_samples_X, n_samples_Y, n_features
         )
-
-        # The increase amount of memory in 8-byte blocks is:
-        # - x_density * batch_size * n_features (copy of chunk of X)
-        # - y_density * batch_size * n_features (copy of chunk of Y)
-        # - batch_size * batch_size (chunk of distance matrix)
-        # Hence x² + (xd+yd)kx = M, where x=batch_size, k=n_features, M=maxmem
-        #                                 xd=x_density and yd=y_density
-        tmp = (x_density + y_density) * n_features
-        batch_size = (-tmp + math.sqrt(tmp**2 + 4 * maxmem)) / 2
-        batch_size = max(int(batch_size), 1)
 
     x_batches = gen_batches(n_samples_X, batch_size)
     xp_max_float = _max_precision_float_dtype(xp=xp, device=device_)
@@ -621,17 +646,10 @@ def _euclidean_distances_upcast(X, XX=None, Y=None, YY=None, batch_size=None):
                 # when X is Y the distance matrix is symmetric so we only need
                 # to compute half of it.
                 d = distances[y_slice, x_slice].T
-
             else:
-                Y_chunk = xp.astype(Y[y_slice, :], xp_max_float)
-                if YY is None:
-                    YY_chunk = row_norms(Y_chunk, squared=True)[None, :]
-                else:
-                    YY_chunk = YY[:, y_slice]
-
-                d = -2 * safe_sparse_dot(X_chunk, Y_chunk.T, dense_output=True)
-                d += XX_chunk
-                d += YY_chunk
+                d = _compute_euclidean_distance_chunk(
+                    Y, y_slice, X_chunk, XX_chunk, YY, xp, xp_max_float
+                )
 
             distances[x_slice, y_slice] = xp.astype(d, xp.float32, copy=False)
 
@@ -2290,6 +2308,13 @@ def pairwise_distances_chunked(
         yield D_chunk
 
 
+def _is_boolean_dtype_mismatch(dtype, X, Y):
+    """Check if data needs boolean conversion for a boolean metric."""
+    return dtype is bool and (
+        X.dtype != bool or (Y is not None and Y.dtype != bool)
+    )
+
+
 @validate_params(
     {
         "X": ["array-like", "sparse matrix"],
@@ -2469,7 +2494,7 @@ def pairwise_distances(
 
         dtype = bool if metric in PAIRWISE_BOOLEAN_FUNCTIONS else "infer_float"
 
-        if dtype is bool and (X.dtype != bool or (Y is not None and Y.dtype != bool)):
+        if _is_boolean_dtype_mismatch(dtype, X, Y):
             msg = "Data was converted to boolean for metric %s" % metric
             warnings.warn(msg, DataConversionWarning)
 
