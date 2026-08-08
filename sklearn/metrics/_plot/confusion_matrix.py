@@ -12,6 +12,18 @@ from sklearn.utils._plotting import _validate_style_kwargs
 from sklearn.utils.multiclass import unique_labels
 
 
+def _format_cell_value(value, values_format, dtype_kind):
+    """Format a single cell value for the confusion matrix display."""
+    if values_format is not None:
+        return format(value, values_format)
+    text_cm = format(value, ".2g")
+    if dtype_kind != "f":
+        text_d = format(value, "d")
+        if len(text_d) < len(text_cm):
+            text_cm = text_d
+    return text_cm
+
+
 class ConfusionMatrixDisplay:
     """Confusion Matrix visualization.
 
@@ -165,14 +177,9 @@ class ConfusionMatrixDisplay:
             for i, j in product(range(n_classes), range(n_classes)):
                 color = cmap_max if cm[i, j] < thresh else cmap_min
 
-                if values_format is None:
-                    text_cm = format(cm[i, j], ".2g")
-                    if cm.dtype.kind != "f":
-                        text_d = format(cm[i, j], "d")
-                        if len(text_d) < len(text_cm):
-                            text_cm = text_d
-                else:
-                    text_cm = format(cm[i, j], values_format)
+                text_cm = _format_cell_value(
+                    cm[i, j], values_format, cm.dtype.kind
+                )
 
                 default_text_kwargs = dict(ha="center", va="center", color=color)
                 text_kwargs = _validate_style_kwargs(default_text_kwargs, text_kw)

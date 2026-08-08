@@ -210,6 +210,66 @@ class KNNImputer(_BaseImputer):
 
         return np.ma.average(donors, axis=1, weights=weight_matrix).data
 
+    def _process_chunk(self, dist_chunk, start, X, row_missing_idx, mask, dist_idx_map):
+        """Impute missing values for a chunk of the distance matrix.
+
+        Modifies ``X`` in place.
+        """
+        mask_fit_X = self._mask_fit_X
+        valid_mask = self._valid_mask
+        non_missing_fix_X = np.logical_not(mask_fit_X)
+        row_missing_chunk = row_missing_idx[start : start + len(dist_chunk)]
+
+        # Find and impute missing by column
+        for col in range(X.shape[1]):
+            if not valid_mask[col]:
+                # column was all missing during training
+                continue
+
+            col_mask = mask[row_missing_chunk, col]
+            if not np.any(col_mask):
+                # column has no missing values
+                continue
+
+            (potential_donors_idx,) = np.nonzero(non_missing_fix_X[:, col])
+
+            # receivers_idx are indices in X
+            receivers_idx = row_missing_chunk[np.flatnonzero(col_mask)]
+
+            # distances for samples that needed imputation for column
+            dist_subset = dist_chunk[dist_idx_map[receivers_idx] - start][
+                :, potential_donors_idx
+            ]
+
+            # receivers with all nan distances impute with mean
+            all_nan_dist_mask = np.isnan(dist_subset).all(axis=1)
+            all_nan_receivers_idx = receivers_idx[all_nan_dist_mask]
+
+            if all_nan_receivers_idx.size:
+                col_mean = np.ma.array(
+                    self._fit_X[:, col], mask=mask_fit_X[:, col]
+                ).mean()
+                X[all_nan_receivers_idx, col] = col_mean
+
+                if len(all_nan_receivers_idx) == len(receivers_idx):
+                    # all receivers imputed with mean
+                    continue
+
+                # receivers with at least one defined distance
+                receivers_idx = receivers_idx[~all_nan_dist_mask]
+                dist_subset = dist_chunk[dist_idx_map[receivers_idx] - start][
+                    :, potential_donors_idx
+                ]
+
+            n_neighbors = min(self.n_neighbors, len(potential_donors_idx))
+            value = self._calc_impute(
+                dist_subset,
+                n_neighbors,
+                self._fit_X[potential_donors_idx, col],
+                mask_fit_X[potential_donors_idx, col],
+            )
+            X[receivers_idx, col] = value
+
     @_fit_context(prefer_skip_nested_validation=True)
     def fit(self, X, y=None):
         """Fit the imputer on X.
@@ -283,7 +343,6 @@ class KNNImputer(_BaseImputer):
         )
 
         mask = _get_mask(X, self.missing_values)
-        mask_fit_X = self._mask_fit_X
         valid_mask = self._valid_mask
 
         X_indicator = super()._transform_indicator(mask)
@@ -305,64 +364,14 @@ class KNNImputer(_BaseImputer):
 
         row_missing_idx = np.flatnonzero(mask[:, valid_mask].any(axis=1))
 
-        non_missing_fix_X = np.logical_not(mask_fit_X)
-
         # Maps from indices from X to indices in dist matrix
         dist_idx_map = np.zeros(X.shape[0], dtype=int)
         dist_idx_map[row_missing_idx] = np.arange(row_missing_idx.shape[0])
 
         def process_chunk(dist_chunk, start):
-            row_missing_chunk = row_missing_idx[start : start + len(dist_chunk)]
-
-            # Find and impute missing by column
-            for col in range(X.shape[1]):
-                if not valid_mask[col]:
-                    # column was all missing during training
-                    continue
-
-                col_mask = mask[row_missing_chunk, col]
-                if not np.any(col_mask):
-                    # column has no missing values
-                    continue
-
-                (potential_donors_idx,) = np.nonzero(non_missing_fix_X[:, col])
-
-                # receivers_idx are indices in X
-                receivers_idx = row_missing_chunk[np.flatnonzero(col_mask)]
-
-                # distances for samples that needed imputation for column
-                dist_subset = dist_chunk[dist_idx_map[receivers_idx] - start][
-                    :, potential_donors_idx
-                ]
-
-                # receivers with all nan distances impute with mean
-                all_nan_dist_mask = np.isnan(dist_subset).all(axis=1)
-                all_nan_receivers_idx = receivers_idx[all_nan_dist_mask]
-
-                if all_nan_receivers_idx.size:
-                    col_mean = np.ma.array(
-                        self._fit_X[:, col], mask=mask_fit_X[:, col]
-                    ).mean()
-                    X[all_nan_receivers_idx, col] = col_mean
-
-                    if len(all_nan_receivers_idx) == len(receivers_idx):
-                        # all receivers imputed with mean
-                        continue
-
-                    # receivers with at least one defined distance
-                    receivers_idx = receivers_idx[~all_nan_dist_mask]
-                    dist_subset = dist_chunk[dist_idx_map[receivers_idx] - start][
-                        :, potential_donors_idx
-                    ]
-
-                n_neighbors = min(self.n_neighbors, len(potential_donors_idx))
-                value = self._calc_impute(
-                    dist_subset,
-                    n_neighbors,
-                    self._fit_X[potential_donors_idx, col],
-                    mask_fit_X[potential_donors_idx, col],
-                )
-                X[receivers_idx, col] = value
+            self._process_chunk(
+                dist_chunk, start, X, row_missing_idx, mask, dist_idx_map
+            )
 
         # process in fixed-memory chunks
         gen = pairwise_distances_chunked(
