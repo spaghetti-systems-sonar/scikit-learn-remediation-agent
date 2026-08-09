@@ -898,45 +898,37 @@ def _yield_instances_for_check(check, estimator_orig):
         yield estimator
 
 
+SAMPLE_WEIGHT_NOT_EQUIVALENT = (
+    "sample_weight is not equivalent to removing/repeating samples."
+)
+CHECK_SAME_NAMESPACE_NOT_ADDED = "check_same_namespace not yet added"
+MIXED_ARRAY_API_NOT_ADDED = "mixed array API input support not added yet"
+N_ITER_NOT_ACCESSIBLE = "n_iter_ cannot be easily accessed."
+EMPTY_ARRAY_PASSED = "empty array passed inside"
+
 PER_ESTIMATOR_XFAIL_CHECKS = {
     AdaBoostClassifier: {
         # TODO: replace by a statistical test, see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     AdaBoostRegressor: {
         # TODO: replace by a statistical test, see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     BaggingClassifier: {
         # TODO: replace by a statistical test, see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     BaggingRegressor: {
         # TODO: replace by a statistical test, see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     Binarizer: {
-        "check_array_api_same_namespace": "check_same_namespace not yet added",
+        "check_array_api_same_namespace": CHECK_SAME_NAMESPACE_NOT_ADDED,
     },
     BernoulliRBM: {
         "check_methods_subset_invariance": ("fails for the decision_function method"),
@@ -944,15 +936,11 @@ PER_ESTIMATOR_XFAIL_CHECKS = {
     },
     BisectingKMeans: {
         # TODO: replace by a statistical test, see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     CalibratedClassifierCV: {
-        "check_array_api_mixed_inputs": "mixed array API input support not added yet",
+        "check_array_api_mixed_inputs": MIXED_ARRAY_API_NOT_ADDED,
     },
     ColumnTransformer: {
         "check_estimators_empty_data_messages": "FIXME",
@@ -971,7 +959,7 @@ PER_ESTIMATOR_XFAIL_CHECKS = {
     FeatureUnion: {
         # Fails because StandardScaler, which gets wrapped by FeatureUnion, supports
         # array API but FeatureUnion itself does not
-        "check_array_api_same_namespace": "check_same_namespace not yet added",
+        "check_array_api_same_namespace": CHECK_SAME_NAMESPACE_NOT_ADDED,
         "check_estimators_overwrite_params": "FIXME",
         "check_estimators_nan_inf": "FIXME",
         "check_dont_overwrite_parameters": "FIXME",
@@ -983,41 +971,31 @@ PER_ESTIMATOR_XFAIL_CHECKS = {
             " is not strictly equal to putting is weight to zero. Specific unit"
             " tests are added for TunedThresholdClassifierCV specifically."
         ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     GaussianMixture: {
-        "check_array_api_mixed_inputs": "mixed array API input support not added yet",
+        "check_array_api_mixed_inputs": MIXED_ARRAY_API_NOT_ADDED,
     },
     GaussianNB: {
-        "check_array_api_mixed_inputs": "mixed array API input support not added yet",
-        "check_array_api_same_namespace": "check_same_namespace not yet added",
+        "check_array_api_mixed_inputs": MIXED_ARRAY_API_NOT_ADDED,
+        "check_array_api_same_namespace": CHECK_SAME_NAMESPACE_NOT_ADDED,
     },
     GradientBoostingClassifier: {
         # TODO: investigate failure see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     GradientBoostingRegressor: {
         # TODO: investigate failure see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     GridSearchCV: {
         "check_supervised_y_2d": "DataConversionWarning not caught",
         "check_requires_y_none": "Doesn't fail gracefully",
     },
     HalvingGridSearchCV: {
-        "check_array_api_mixed_inputs": "mixed array API input support not added yet",
+        "check_array_api_mixed_inputs": MIXED_ARRAY_API_NOT_ADDED,
         "check_fit2d_1sample": (
             "Fail during parameter check since min/max resources requires more samples"
         ),
@@ -1028,7 +1006,7 @@ PER_ESTIMATOR_XFAIL_CHECKS = {
         "check_requires_y_none": "Doesn't fail gracefully",
     },
     HalvingRandomSearchCV: {
-        "check_array_api_mixed_inputs": "mixed array API input support not added yet",
+        "check_array_api_mixed_inputs": MIXED_ARRAY_API_NOT_ADDED,
         "check_fit2d_1sample": (
             "Fail during parameter check since min/max resources requires more samples"
         ),
@@ -1040,33 +1018,21 @@ PER_ESTIMATOR_XFAIL_CHECKS = {
     },
     HistGradientBoostingClassifier: {
         # TODO: replace by a statistical test, see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     HistGradientBoostingRegressor: {
         # TODO: replace by a statistical test, see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     IsolationForest: {
         # TODO: replace by a statistical test, see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     KernelCenterer: {
-        "check_array_api_same_namespace": "check_same_namespace not yet added",
+        "check_array_api_same_namespace": CHECK_SAME_NAMESPACE_NOT_ADDED,
     },
     KernelDensity: {
         "check_sample_weight_equivalence_on_dense_data": (
@@ -1075,120 +1041,82 @@ PER_ESTIMATOR_XFAIL_CHECKS = {
     },
     KMeans: {
         # TODO: replace by a statistical test, see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     KNeighborsTransformer: {
         "check_methods_sample_order_invariance": "check is not applicable."
     },
     LinearDiscriminantAnalysis: {
-        "check_array_api_mixed_inputs": "mixed array API input support not added yet",
+        "check_array_api_mixed_inputs": MIXED_ARRAY_API_NOT_ADDED,
     },
     LabelEncoder: {
-        "check_array_api_same_namespace": "check_same_namespace not yet added",
+        "check_array_api_same_namespace": CHECK_SAME_NAMESPACE_NOT_ADDED,
     },
     LinearSVC: {
         # TODO: replace by a statistical test when _dual=True, see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_non_transformer_estimators_n_iter": (
-            "n_iter_ cannot be easily accessed."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_non_transformer_estimators_n_iter": N_ITER_NOT_ACCESSIBLE,
     },
     LinearSVR: {
         # TODO: replace by a statistical test, see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     LogisticRegression: {
         # TODO: fix sample_weight handling of this estimator, see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     MinMaxScaler: {
-        "check_array_api_same_namespace": "check_same_namespace not yet added",
+        "check_array_api_same_namespace": CHECK_SAME_NAMESPACE_NOT_ADDED,
     },
     MiniBatchKMeans: {
         # TODO: replace by a statistical test, see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     NuSVC: {
         "check_class_weight_classifiers": "class_weight is ignored.",
         # TODO: fix sample_weight handling of this estimator when probability=False
         # TODO: replace by a statistical test when probability=True
         # see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
         "check_classifiers_one_label_sample_weights": (
             "specified nu is infeasible for the fit."
         ),
     },
     NuSVR: {
         # TODO: fix sample_weight handling of this estimator, see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     Normalizer: {
-        "check_array_api_same_namespace": "check_same_namespace not yet added",
+        "check_array_api_same_namespace": CHECK_SAME_NAMESPACE_NOT_ADDED,
     },
     Nystroem: {
-        "check_array_api_same_namespace": "check_same_namespace not yet added",
+        "check_array_api_same_namespace": CHECK_SAME_NAMESPACE_NOT_ADDED,
         "check_transformer_preserve_dtypes": (
             "dtypes are preserved but not at a close enough precision"
         ),
     },
     OneClassSVM: {
         # TODO: fix sample_weight handling of this estimator, see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     PCA: {
-        "check_array_api_mixed_inputs": "mixed array API input support not added yet",
+        "check_array_api_mixed_inputs": MIXED_ARRAY_API_NOT_ADDED,
         # TODO: see gh-33205 for details
         "check_array_api_input": "`linalg.inv` fails because input is singular",
-        "check_array_api_same_namespace": "check_same_namespace not yet added",
+        "check_array_api_same_namespace": CHECK_SAME_NAMESPACE_NOT_ADDED,
     },
     Perceptron: {
         # TODO: replace by a statistical test, see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     Pipeline: {
         "check_dont_overwrite_parameters": (
@@ -1201,23 +1129,19 @@ PER_ESTIMATOR_XFAIL_CHECKS = {
         ),
     },
     PoissonRegressor: {
-        "check_array_api_mixed_inputs": "mixed array API input support not added yet",
-        "check_array_api_same_namespace": "check_same_namespace not yet added",
+        "check_array_api_mixed_inputs": MIXED_ARRAY_API_NOT_ADDED,
+        "check_array_api_same_namespace": CHECK_SAME_NAMESPACE_NOT_ADDED,
     },
     PolynomialFeatures: {
-        "check_array_api_same_namespace": "check_same_namespace not yet added",
+        "check_array_api_same_namespace": CHECK_SAME_NAMESPACE_NOT_ADDED,
     },
     RadiusNeighborsTransformer: {
         "check_methods_sample_order_invariance": "check is not applicable."
     },
     RandomForestClassifier: {
         # TODO: replace by a statistical test, see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
         # TODO: error raised by all zero sample weights will be addressed by PR #31529
         "check_classifiers_one_label_sample_weights": (
             "failed when fitted on one label after sample_weight trimming."
@@ -1225,12 +1149,8 @@ PER_ESTIMATOR_XFAIL_CHECKS = {
     },
     RandomForestRegressor: {
         # TODO: replace by a statistical test, see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     RandomizedSearchCV: {
         "check_supervised_y_2d": "DataConversionWarning not caught",
@@ -1238,64 +1158,40 @@ PER_ESTIMATOR_XFAIL_CHECKS = {
     },
     RandomTreesEmbedding: {
         # TODO: replace by a statistical test, see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     RANSACRegressor: {
         # TODO: replace by a statistical test, see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     RBFSampler: {
-        "check_array_api_same_namespace": "check_same_namespace not yet added",
+        "check_array_api_same_namespace": CHECK_SAME_NAMESPACE_NOT_ADDED,
     },
     Ridge: {
-        "check_non_transformer_estimators_n_iter": (
-            "n_iter_ cannot be easily accessed."
-        )
+        "check_non_transformer_estimators_n_iter": N_ITER_NOT_ACCESSIBLE,
     },
     RidgeClassifier: {
-        "check_non_transformer_estimators_n_iter": (
-            "n_iter_ cannot be easily accessed."
-        ),
+        "check_non_transformer_estimators_n_iter": N_ITER_NOT_ACCESSIBLE,
     },
     SelfTrainingClassifier: {
         "check_non_transformer_estimators_n_iter": "n_iter_ can be 0."
     },
     SGDClassifier: {
         # TODO: replace by a statistical test, see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     SGDOneClassSVM: {
         # TODO: replace by a statistical test, see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     SGDRegressor: {
         # TODO: replace by a statistical test, see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     SpectralCoclustering: {
         "check_estimators_dtypes": "raises nan error",
@@ -1303,9 +1199,9 @@ PER_ESTIMATOR_XFAIL_CHECKS = {
         "check_fit2d_1feature": "raises apply_along_axis error",
         "check_estimator_sparse_matrix": "does not fail gracefully",
         "check_estimator_sparse_array": "does not fail gracefully",
-        "check_methods_subset_invariance": "empty array passed inside",
-        "check_dont_overwrite_parameters": "empty array passed inside",
-        "check_fit2d_predict1d": "empty array passed inside",
+        "check_methods_subset_invariance": EMPTY_ARRAY_PASSED,
+        "check_dont_overwrite_parameters": EMPTY_ARRAY_PASSED,
+        "check_fit2d_predict1d": EMPTY_ARRAY_PASSED,
         # ValueError: Found array with 0 feature(s) (shape=(23, 0))
         # while a minimum of 1 is required.
         "check_dict_unchanged": "FIXME",
@@ -1316,32 +1212,24 @@ PER_ESTIMATOR_XFAIL_CHECKS = {
         "check_fit2d_1feature": "raises apply_along_axis error",
         "check_estimator_sparse_matrix": "does not fail gracefully",
         "check_estimator_sparse_array": "does not fail gracefully",
-        "check_methods_subset_invariance": "empty array passed inside",
-        "check_dont_overwrite_parameters": "empty array passed inside",
-        "check_fit2d_predict1d": "empty array passed inside",
+        "check_methods_subset_invariance": EMPTY_ARRAY_PASSED,
+        "check_dont_overwrite_parameters": EMPTY_ARRAY_PASSED,
+        "check_fit2d_predict1d": EMPTY_ARRAY_PASSED,
     },
     StandardScaler: {
-        "check_array_api_same_namespace": "check_same_namespace not yet added",
+        "check_array_api_same_namespace": CHECK_SAME_NAMESPACE_NOT_ADDED,
     },
     SVC: {
         # TODO: fix sample_weight handling of this estimator when probability=False
         # TODO: replace by a statistical test when probability=True
         # see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     SVR: {
         # TODO: fix sample_weight handling of this estimator, see meta-issue #16298
-        "check_sample_weight_equivalence_on_dense_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
-        "check_sample_weight_equivalence_on_sparse_data": (
-            "sample_weight is not equivalent to removing/repeating samples."
-        ),
+        "check_sample_weight_equivalence_on_dense_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
+        "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     TunedThresholdClassifierCV: {
         "check_classifiers_train": "Threshold at probability 0.5 does not hold",
