@@ -68,6 +68,84 @@ def _dual_gap(emp_cov, precision_, alpha):
 
 
 # The g-lasso algorithm
+def _graphical_lasso_iteration(
+    covariance_,
+    precision_,
+    emp_cov,
+    sub_covariance,
+    indices,
+    n_features,
+    mode,
+    alpha,
+    eps,
+    enet_tol,
+    max_iter,
+    errors,
+):
+    """Perform one full iteration of the graphical lasso over all features.
+
+    Updates `covariance_`, `precision_`, and `sub_covariance` in-place.
+    """
+    for idx in range(n_features):
+        # To keep the contiguous matrix `sub_covariance` equal to
+        # covariance_[indices != idx].T[indices != idx]
+        # we only need to update 1 column and 1 line when idx changes
+        if idx > 0:
+            di = idx - 1
+            sub_covariance[di] = covariance_[di][indices != idx]
+            sub_covariance[:, di] = covariance_[:, di][indices != idx]
+        else:
+            sub_covariance[:] = covariance_[1:, 1:]
+        row = emp_cov[idx, indices != idx]
+        with np.errstate(**errors):
+            if mode == "cd":
+                # Use coordinate descent
+                coefs = -(
+                    precision_[indices != idx, idx]
+                    / (precision_[idx, idx] + 1000 * eps)
+                )
+                coefs, _, _, _ = cd_fast.enet_coordinate_descent_gram(
+                    w=coefs,
+                    alpha=alpha,
+                    beta=0,
+                    Q=sub_covariance,
+                    q=row,
+                    y=row,
+                    # TODO: It is not ideal that the max_iter of the outer
+                    # solver (graphical lasso) is coupled with the max_iter of
+                    # the inner solver (CD). Ideally, CD has its own parameter
+                    # enet_max_iter (like enet_tol). A minimum of 20 is rather
+                    # arbitrary, but not unreasonable.
+                    max_iter=max(20, max_iter),
+                    tol=enet_tol,
+                    rng=check_random_state(None),
+                    random=False,
+                    positive=False,
+                    do_screening=True,
+                )
+            else:  # mode == "lars"
+                _, _, coefs = lars_path_gram(
+                    Xy=row,
+                    Gram=sub_covariance,
+                    n_samples=row.size,
+                    alpha_min=alpha / (n_features - 1),
+                    copy_Gram=True,
+                    eps=eps,
+                    method="lars",
+                    return_path=False,
+                )
+        # Update the precision matrix
+        precision_[idx, idx] = 1.0 / (
+            covariance_[idx, idx]
+            - np.dot(covariance_[indices != idx, idx], coefs)
+        )
+        precision_[indices != idx, idx] = -precision_[idx, idx] * coefs
+        precision_[idx, indices != idx] = -precision_[idx, idx] * coefs
+        coefs = np.dot(sub_covariance, coefs)
+        covariance_[idx, indices != idx] = coefs
+        covariance_[indices != idx, idx] = coefs
+
+
 def _graphical_lasso(
     emp_cov,
     alpha,
@@ -89,10 +167,7 @@ def _graphical_lasso(
         d_gap = np.sum(emp_cov * precision_) - n_features
         return emp_cov, precision_, (cost, d_gap), 0
 
-    if cov_init is None:
-        covariance_ = emp_cov.copy()
-    else:
-        covariance_ = cov_init.copy()
+    covariance_ = emp_cov.copy() if cov_init is None else cov_init.copy()
     # As a trivial regularization (Tikhonov like), we scale down the
     # off-diagonal coefficients of our starting point: This is needed, as
     # in the cross-validation the cov_init can easily be
@@ -106,12 +181,13 @@ def _graphical_lasso(
 
     indices = np.arange(n_features)
     i = 0  # initialize the counter to be robust to `max_iter=0`
-    costs = list()
+    costs = []
     # The different l1 regression solver have different numerical errors
-    if mode == "cd":
-        errors = dict(over="raise", invalid="ignore")
-    else:
-        errors = dict(invalid="raise")
+    errors = (
+        {"over": "raise", "invalid": "ignore"}
+        if mode == "cd"
+        else {"invalid": "raise"}
+    )
     try:
         # be robust to the max_iter=0 edge case, see:
         # https://github.com/scikit-learn/scikit-learn/issues/4134
@@ -119,64 +195,20 @@ def _graphical_lasso(
         # set a sub_covariance buffer
         sub_covariance = np.copy(covariance_[1:, 1:], order="C")
         for i in range(max_iter):
-            for idx in range(n_features):
-                # To keep the contiguous matrix `sub_covariance` equal to
-                # covariance_[indices != idx].T[indices != idx]
-                # we only need to update 1 column and 1 line when idx changes
-                if idx > 0:
-                    di = idx - 1
-                    sub_covariance[di] = covariance_[di][indices != idx]
-                    sub_covariance[:, di] = covariance_[:, di][indices != idx]
-                else:
-                    sub_covariance[:] = covariance_[1:, 1:]
-                row = emp_cov[idx, indices != idx]
-                with np.errstate(**errors):
-                    if mode == "cd":
-                        # Use coordinate descent
-                        coefs = -(
-                            precision_[indices != idx, idx]
-                            / (precision_[idx, idx] + 1000 * eps)
-                        )
-                        coefs, _, _, _ = cd_fast.enet_coordinate_descent_gram(
-                            w=coefs,
-                            alpha=alpha,
-                            beta=0,
-                            Q=sub_covariance,
-                            q=row,
-                            y=row,
-                            # TODO: It is not ideal that the max_iter of the outer
-                            # solver (graphical lasso) is coupled with the max_iter of
-                            # the inner solver (CD). Ideally, CD has its own parameter
-                            # enet_max_iter (like enet_tol). A minimum of 20 is rather
-                            # arbitrary, but not unreasonable.
-                            max_iter=max(20, max_iter),
-                            tol=enet_tol,
-                            rng=check_random_state(None),
-                            random=False,
-                            positive=False,
-                            do_screening=True,
-                        )
-                    else:  # mode == "lars"
-                        _, _, coefs = lars_path_gram(
-                            Xy=row,
-                            Gram=sub_covariance,
-                            n_samples=row.size,
-                            alpha_min=alpha / (n_features - 1),
-                            copy_Gram=True,
-                            eps=eps,
-                            method="lars",
-                            return_path=False,
-                        )
-                # Update the precision matrix
-                precision_[idx, idx] = 1.0 / (
-                    covariance_[idx, idx]
-                    - np.dot(covariance_[indices != idx, idx], coefs)
-                )
-                precision_[indices != idx, idx] = -precision_[idx, idx] * coefs
-                precision_[idx, indices != idx] = -precision_[idx, idx] * coefs
-                coefs = np.dot(sub_covariance, coefs)
-                covariance_[idx, indices != idx] = coefs
-                covariance_[indices != idx, idx] = coefs
+            _graphical_lasso_iteration(
+                covariance_,
+                precision_,
+                emp_cov,
+                sub_covariance,
+                indices,
+                n_features,
+                mode,
+                alpha,
+                eps,
+                enet_tol,
+                max_iter,
+                errors,
+            )
             if not np.isfinite(precision_.sum()):
                 raise FloatingPointError(
                     "The system is too ill-conditioned for this solver"

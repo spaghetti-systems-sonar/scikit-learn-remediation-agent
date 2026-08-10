@@ -28,6 +28,55 @@ from sklearn.utils.extmath import safe_sparse_dot, softmax
 from sklearn.utils.parallel import Parallel, delayed
 
 
+def _build_classifier(
+    solver, alpha, beta, lightning_penalty, this_max_iter, c, l1_ratio, multi_class
+):
+    """Build the classifier for the given solver and parameters."""
+    if solver == "lightning":
+        from lightning.classification import SAGAClassifier
+
+        return SAGAClassifier(
+            loss="log",
+            alpha=alpha,
+            beta=beta,
+            penalty=lightning_penalty,
+            tol=-1,
+            max_iter=this_max_iter,
+        )
+
+    lr = LogisticRegression(
+        solver=solver,
+        C=c,
+        l1_ratio=l1_ratio,
+        fit_intercept=False,
+        tol=0,
+        max_iter=this_max_iter,
+        random_state=42,
+    )
+    if multi_class == "ovr":
+        lr = OneVsRestClassifier(lr)
+    return lr
+
+
+def _compute_scores(lr, X_train, y_train, X_test, y_test, n_samples, alpha, beta):
+    """Compute train and test scores for the given classifier."""
+    scores = []
+    for X, y in [(X_train, y_train), (X_test, y_test)]:
+        try:
+            y_proba = lr.predict_proba(X)
+        except NotImplementedError:
+            # Lightning predict_proba is not implemented for n_classes > 2
+            y_proba = _predict_proba(lr, X)
+        if isinstance(lr, OneVsRestClassifier):
+            coef = np.concatenate([est.coef_ for est in lr.estimators_])
+        else:
+            coef = lr.coef_
+        score = log_loss(y, y_proba, normalize=False) / n_samples
+        score += 0.5 * alpha * np.sum(coef**2) + beta * np.sum(np.abs(coef))
+        scores.append(score)
+    return tuple(scores)
+
+
 def fit_single(
     solver,
     X,
@@ -47,9 +96,6 @@ def fit_single(
         "Solving %s logistic regression with penalty %s, solver %s."
         % ("binary" if single_target else "multinomial", penalty, solver)
     )
-
-    if solver == "lightning":
-        from lightning.classification import SAGAClassifier
 
     if single_target or solver not in ["sag", "saga"]:
         multi_class = "ovr"
@@ -88,27 +134,16 @@ def fit_single(
                 this_max_iter,
             )
         )
-        if solver == "lightning":
-            lr = SAGAClassifier(
-                loss="log",
-                alpha=alpha,
-                beta=beta,
-                penalty=lightning_penalty,
-                tol=-1,
-                max_iter=this_max_iter,
-            )
-        else:
-            lr = LogisticRegression(
-                solver=solver,
-                C=C,
-                l1_ratio=l1_ratio,
-                fit_intercept=False,
-                tol=0,
-                max_iter=this_max_iter,
-                random_state=42,
-            )
-            if multi_class == "ovr":
-                lr = OneVsRestClassifier(lr)
+        lr = _build_classifier(
+            solver,
+            alpha,
+            beta,
+            lightning_penalty,
+            this_max_iter,
+            C,
+            l1_ratio,
+            multi_class,
+        )
 
         # Makes cpu cache even for all fit calls
         X_train.max()
@@ -117,21 +152,9 @@ def fit_single(
         lr.fit(X_train, y_train)
         train_time = time.clock() - t0
 
-        scores = []
-        for X, y in [(X_train, y_train), (X_test, y_test)]:
-            try:
-                y_proba = lr.predict_proba(X)
-            except NotImplementedError:
-                # Lightning predict_proba is not implemented for n_classes > 2
-                y_proba = _predict_proba(lr, X)
-            if isinstance(lr, OneVsRestClassifier):
-                coef = np.concatenate([est.coef_ for est in lr.estimators_])
-            else:
-                coef = lr.coef_
-            score = log_loss(y, y_proba, normalize=False) / n_samples
-            score += 0.5 * alpha * np.sum(coef**2) + beta * np.sum(np.abs(coef))
-            scores.append(score)
-        train_score, test_score = tuple(scores)
+        train_score, test_score = _compute_scores(
+            lr, X_train, y_train, X_test, y_test, n_samples, alpha, beta
+        )
 
         y_pred = lr.predict(X_test)
         accuracy = np.sum(y_pred == y_test) / y_test.shape[0]
