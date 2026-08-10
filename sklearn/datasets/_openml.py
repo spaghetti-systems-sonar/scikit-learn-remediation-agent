@@ -756,6 +756,140 @@ def _valid_data_column_names(features_list, target_columns):
     return valid_data_column_names
 
 
+def _resolve_data_id(name, version, data_id, data_home, n_retries, delay):
+    """Validate and resolve the dataset identifier to a data_id."""
+    if name is not None:
+        # OpenML is case-insensitive, but the caching mechanism is not
+        # convert all data names (str) to lower case
+        name = name.lower()
+        if data_id is not None:
+            raise ValueError(
+                "Dataset data_id={} and name={} passed, but you can only "
+                "specify a numeric data_id or a name, not "
+                "both.".format(data_id, name)
+            )
+        data_info = _get_data_info_by_name(
+            name, version, data_home, n_retries=n_retries, delay=delay
+        )
+        return data_info["did"]
+    elif data_id is not None:
+        # from the previous if statement, it is given that name is None
+        if version != "active":
+            raise ValueError(
+                "Dataset data_id={} and version={} passed, but you can only "
+                "specify a numeric data_id or a version, not "
+                "both.".format(data_id, version)
+            )
+        return data_id
+    else:
+        raise ValueError(
+            "Neither name nor data_id are provided. Please provide name or"
+            " data_id."
+        )
+
+
+def _warn_data_description_issues(data_description):
+    """Emit warnings for inactive, erroneous, or flagged datasets."""
+    if data_description["status"] != "active":
+        warn(
+            "Version {} of dataset {} is inactive, meaning that issues have "
+            "been found in the dataset. Try using a newer version from "
+            "this URL: {}".format(
+                data_description["version"],
+                data_description["name"],
+                data_description["url"],
+            )
+        )
+    if "error" in data_description:
+        warn(
+            "OpenML registered a problem with the dataset. It might be "
+            "unusable. Error: {}".format(data_description["error"])
+        )
+    if "warning" in data_description:
+        warn(
+            "OpenML raised a warning on the dataset. It might be "
+            "unusable. Warning: {}".format(data_description["warning"])
+        )
+
+
+def _resolve_parser(parser, return_sparse):
+    """Resolve the parser parameter to the actual parser to use."""
+    if parser == "auto":
+        return "liac-arff" if return_sparse else "pandas"
+    return parser
+
+
+def _check_pandas_support_for_parser(parser_, parser, as_frame):
+    """Check pandas availability when using the pandas parser."""
+    if parser_ != "pandas":
+        return
+    try:
+        check_pandas_support("`fetch_openml`")
+    except ImportError as exc:
+        if as_frame:
+            err_msg = (
+                "Returning pandas objects requires pandas to be installed. "
+                "Alternatively, explicitly set `as_frame=False` and "
+                "`parser='liac-arff'`."
+            )
+        else:
+            err_msg = (
+                f"Using `parser={parser!r}` with dense data requires pandas"
+                " to be installed. Alternatively, explicitly set"
+                " `parser='liac-arff'`."
+            )
+        raise ImportError(err_msg) from exc
+
+
+def _validate_sparse_format(return_sparse, as_frame, parser_, parser):
+    """Validate constraints for sparse ARFF datasets."""
+    if not return_sparse:
+        return
+    if as_frame:
+        raise ValueError(
+            "Sparse ARFF datasets cannot be loaded with as_frame=True. "
+            "Use as_frame=False or as_frame='auto' instead."
+        )
+    if parser_ == "pandas":
+        raise ValueError(
+            f"Sparse ARFF datasets cannot be loaded with parser={parser!r}. "
+            "Use parser='liac-arff' or parser='auto' instead."
+        )
+
+
+def _validate_no_string_features(features_list):
+    """Raise if any active feature has a string data type."""
+    for feature in features_list:
+        if "true" in (feature["is_ignore"], feature["is_row_identifier"]):
+            continue
+        if feature["data_type"] == "string":
+            raise ValueError(
+                "STRING attributes are not supported for "
+                "array representation. Try as_frame=True"
+            )
+
+
+def _resolve_target_columns(target_column, features_list):
+    """Resolve the target_column parameter into a list of column names."""
+    if target_column == "default-target":
+        # determines the default target based on the data feature results
+        # (which is currently more reliable than the data description;
+        # see issue: https://github.com/openml/OpenML/issues/768)
+        return [
+            feature["name"]
+            for feature in features_list
+            if feature["is_target"] == "true"
+        ]
+    elif isinstance(target_column, str):
+        # for code-simplicity, make target_column by default a list
+        return [target_column]
+    elif target_column is None:
+        return []
+    else:
+        # target_column already is of type list
+        return target_column
+
+
 @validate_params(
     {
         "name": [str, None],
@@ -1003,121 +1137,26 @@ def fetch_openml(
 
     # check valid function arguments. data_id XOR (name, version) should be
     # provided
-    if name is not None:
-        # OpenML is case-insensitive, but the caching mechanism is not
-        # convert all data names (str) to lower case
-        name = name.lower()
-        if data_id is not None:
-            raise ValueError(
-                "Dataset data_id={} and name={} passed, but you can only "
-                "specify a numeric data_id or a name, not "
-                "both.".format(data_id, name)
-            )
-        data_info = _get_data_info_by_name(
-            name, version, data_home, n_retries=n_retries, delay=delay
-        )
-        data_id = data_info["did"]
-    elif data_id is not None:
-        # from the previous if statement, it is given that name is None
-        if version != "active":
-            raise ValueError(
-                "Dataset data_id={} and version={} passed, but you can only "
-                "specify a numeric data_id or a version, not "
-                "both.".format(data_id, version)
-            )
-    else:
-        raise ValueError(
-            "Neither name nor data_id are provided. Please provide name or data_id."
-        )
+    data_id = _resolve_data_id(
+        name, version, data_id, data_home, n_retries, delay
+    )
 
     data_description = _get_data_description_by_id(data_id, data_home)
-    if data_description["status"] != "active":
-        warn(
-            "Version {} of dataset {} is inactive, meaning that issues have "
-            "been found in the dataset. Try using a newer version from "
-            "this URL: {}".format(
-                data_description["version"],
-                data_description["name"],
-                data_description["url"],
-            )
-        )
-    if "error" in data_description:
-        warn(
-            "OpenML registered a problem with the dataset. It might be "
-            "unusable. Error: {}".format(data_description["error"])
-        )
-    if "warning" in data_description:
-        warn(
-            "OpenML raised a warning on the dataset. It might be "
-            "unusable. Warning: {}".format(data_description["warning"])
-        )
+    _warn_data_description_issues(data_description)
 
     return_sparse = data_description["format"].lower() == "sparse_arff"
     as_frame = not return_sparse if as_frame == "auto" else as_frame
-    if parser == "auto":
-        parser_ = "liac-arff" if return_sparse else "pandas"
-    else:
-        parser_ = parser
-
-    if parser_ == "pandas":
-        try:
-            check_pandas_support("`fetch_openml`")
-        except ImportError as exc:
-            if as_frame:
-                err_msg = (
-                    "Returning pandas objects requires pandas to be installed. "
-                    "Alternatively, explicitly set `as_frame=False` and "
-                    "`parser='liac-arff'`."
-                )
-            else:
-                err_msg = (
-                    f"Using `parser={parser!r}` with dense data requires pandas to be "
-                    "installed. Alternatively, explicitly set `parser='liac-arff'`."
-                )
-            raise ImportError(err_msg) from exc
-
-    if return_sparse:
-        if as_frame:
-            raise ValueError(
-                "Sparse ARFF datasets cannot be loaded with as_frame=True. "
-                "Use as_frame=False or as_frame='auto' instead."
-            )
-        if parser_ == "pandas":
-            raise ValueError(
-                f"Sparse ARFF datasets cannot be loaded with parser={parser!r}. "
-                "Use parser='liac-arff' or parser='auto' instead."
-            )
+    parser_ = _resolve_parser(parser, return_sparse)
+    _check_pandas_support_for_parser(parser_, parser, as_frame)
+    _validate_sparse_format(return_sparse, as_frame, parser_, parser)
 
     # download data features, meta-info about column types
     features_list = _get_data_features(data_id, data_home)
 
     if not as_frame:
-        for feature in features_list:
-            if "true" in (feature["is_ignore"], feature["is_row_identifier"]):
-                continue
-            if feature["data_type"] == "string":
-                raise ValueError(
-                    "STRING attributes are not supported for "
-                    "array representation. Try as_frame=True"
-                )
+        _validate_no_string_features(features_list)
 
-    if target_column == "default-target":
-        # determines the default target based on the data feature results
-        # (which is currently more reliable than the data description;
-        # see issue: https://github.com/openml/OpenML/issues/768)
-        target_columns = [
-            feature["name"]
-            for feature in features_list
-            if feature["is_target"] == "true"
-        ]
-    elif isinstance(target_column, str):
-        # for code-simplicity, make target_column by default a list
-        target_columns = [target_column]
-    elif target_column is None:
-        target_columns = []
-    else:
-        # target_column already is of type list
-        target_columns = target_column
+    target_columns = _resolve_target_columns(target_column, features_list)
     data_columns = _valid_data_column_names(features_list, target_columns)
 
     shape: Optional[Tuple[int, int]]
