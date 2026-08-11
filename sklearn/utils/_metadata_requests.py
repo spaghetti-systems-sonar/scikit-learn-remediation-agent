@@ -1532,16 +1532,16 @@ class _MetadataRequester:
         # The following list of defined methods mirrors the list of methods
         # in SIMPLE_METHODS.
         # fmt: off
-        def set_fit_request(self, **kwargs): pass
-        def set_partial_fit_request(self, **kwargs): pass
-        def set_predict_request(self, **kwargs): pass
-        def set_predict_proba_request(self, **kwargs): pass
-        def set_predict_log_proba_request(self, **kwargs): pass
-        def set_decision_function_request(self, **kwargs): pass
-        def set_score_request(self, **kwargs): pass
-        def set_split_request(self, **kwargs): pass
-        def set_transform_request(self, **kwargs): pass
-        def set_inverse_transform_request(self, **kwargs): pass
+        def set_fit_request(self, **kwargs): pass  # type-checking stub
+        def set_partial_fit_request(self, **kwargs): pass  # type-checking stub
+        def set_predict_request(self, **kwargs): pass  # type-checking stub
+        def set_predict_proba_request(self, **kwargs): pass  # type-checking stub
+        def set_predict_log_proba_request(self, **kwargs): pass  # type-checking stub
+        def set_decision_function_request(self, **kwargs): pass  # type-checking stub
+        def set_score_request(self, **kwargs): pass  # type-checking stub
+        def set_split_request(self, **kwargs): pass  # type-checking stub
+        def set_transform_request(self, **kwargs): pass  # type-checking stub
+        def set_inverse_transform_request(self, **kwargs): pass  # type-checking stub
         # fmt: on
 
     def __init_subclass__(cls, **kwargs):
