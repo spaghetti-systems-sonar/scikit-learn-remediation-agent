@@ -5113,11 +5113,8 @@ def check_dataframe_column_names_consistency(name, estimator_orig):
             estimator.partial_fit(X_bad, y)
 
 
-def check_transformer_get_feature_names_out(name, transformer_orig):
-    tags = get_tags(transformer_orig)
-    if not tags.input_tags.two_d_array or tags.no_validation:
-        return
-
+def _prepare_feature_names_data(name, transformer_orig):
+    """Prepare data and transformer for feature names out checks."""
     X, y = make_blobs(
         n_samples=30,
         centers=[[0, 0, 0], [1, 1, 1]],
@@ -5138,6 +5135,36 @@ def check_transformer_get_feature_names_out(name, transformer_orig):
         y_ = np.c_[np.asarray(y), np.asarray(y)]
         y_[::2, 1] *= 2
 
+    return X, y_, transformer, n_features
+
+
+def _get_n_features_out(transform_result):
+    """Get the number of output features from a transform result."""
+    if isinstance(transform_result, tuple):
+        return transform_result[0].shape[1]
+    return transform_result.shape[1]
+
+
+def _validate_feature_names_out(feature_names_out, n_features_out):
+    """Validate the output of get_feature_names_out."""
+    assert feature_names_out is not None
+    assert isinstance(feature_names_out, np.ndarray)
+    assert feature_names_out.dtype == object
+    assert all(isinstance(f, str) for f in feature_names_out)
+    assert len(feature_names_out) == n_features_out, (
+        f"Expected {n_features_out} feature names, got {len(feature_names_out)}"
+    )
+
+
+def check_transformer_get_feature_names_out(name, transformer_orig):
+    tags = get_tags(transformer_orig)
+    if not tags.input_tags.two_d_array or tags.no_validation:
+        return
+
+    X, y_, transformer, n_features = _prepare_feature_names_data(
+        name, transformer_orig
+    )
+
     X_transform = transformer.fit_transform(X, y=y_)
     input_features = [f"feature{i}" for i in range(n_features)]
 
@@ -5146,19 +5173,8 @@ def check_transformer_get_feature_names_out(name, transformer_orig):
         transformer.get_feature_names_out(input_features[::2])
 
     feature_names_out = transformer.get_feature_names_out(input_features)
-    assert feature_names_out is not None
-    assert isinstance(feature_names_out, np.ndarray)
-    assert feature_names_out.dtype == object
-    assert all(isinstance(name, str) for name in feature_names_out)
-
-    if isinstance(X_transform, tuple):
-        n_features_out = X_transform[0].shape[1]
-    else:
-        n_features_out = X_transform.shape[1]
-
-    assert len(feature_names_out) == n_features_out, (
-        f"Expected {n_features_out} feature names, got {len(feature_names_out)}"
-    )
+    n_features_out = _get_n_features_out(X_transform)
+    _validate_feature_names_out(feature_names_out, n_features_out)
 
 
 def check_transformer_get_feature_names_out_pandas(name, transformer_orig):
@@ -5173,25 +5189,9 @@ def check_transformer_get_feature_names_out_pandas(name, transformer_orig):
     if not tags.input_tags.two_d_array or tags.no_validation:
         return
 
-    X, y = make_blobs(
-        n_samples=30,
-        centers=[[0, 0, 0], [1, 1, 1]],
-        random_state=0,
-        n_features=2,
-        cluster_std=0.1,
+    X, y_, transformer, n_features = _prepare_feature_names_data(
+        name, transformer_orig
     )
-    X = StandardScaler().fit_transform(X)
-
-    transformer = clone(transformer_orig)
-    X = _enforce_estimator_tags_X(transformer, X)
-
-    n_features = X.shape[1]
-    set_random_state(transformer)
-
-    y_ = y
-    if name in CROSS_DECOMPOSITION:
-        y_ = np.c_[np.asarray(y), np.asarray(y)]
-        y_[::2, 1] *= 2
 
     feature_names_in = [f"col{i}" for i in range(n_features)]
     df = pd.DataFrame(X, columns=feature_names_in, copy=False)
@@ -5208,14 +5208,46 @@ def check_transformer_get_feature_names_out_pandas(name, transformer_orig):
     )
     assert_array_equal(feature_names_out_default, feature_names_in_explicit_names)
 
-    if isinstance(X_transform, tuple):
-        n_features_out = X_transform[0].shape[1]
-    else:
-        n_features_out = X_transform.shape[1]
-
+    n_features_out = _get_n_features_out(X_transform)
     assert len(feature_names_out_default) == n_features_out, (
         f"Expected {n_features_out} feature names, got {len(feature_names_out_default)}"
     )
+
+
+def _check_mixed_interval_constraints(constraints, param_name, name):
+    """Check that constraints don't mix Integral and Real intervals."""
+    has_integral = any(
+        isinstance(constraint, Interval) and constraint.type == Integral
+        for constraint in constraints
+    )
+    has_real = any(
+        isinstance(constraint, Interval) and constraint.type == Real
+        for constraint in constraints
+    )
+    if has_integral and has_real:
+        raise ValueError(
+            f"The constraint for parameter {param_name} of {name} can't have a mix"
+            " of intervals of Integral and Real types. Use the type RealNotInt"
+            " instead of Real."
+        )
+
+
+def _call_fit_methods(estimator, fit_methods, tags, X, y, match, err_msg):
+    """Call fit methods and check that InvalidParameterError is raised."""
+    is_label_transformer = (
+        tags.target_tags.one_d_labels or tags.target_tags.two_d_labels
+    )
+    for method in fit_methods:
+        if not hasattr(estimator, method):
+            # the method is not accessible with the current set of parameters
+            continue
+
+        with raises(InvalidParameterError, match=match, err_msg=err_msg):
+            if is_label_transformer:
+                # The estimator is a label transformer and take only `y`
+                getattr(estimator, method)(y)
+            else:
+                getattr(estimator, method)(X, y)
 
 
 def check_param_validation(name, estimator_orig):
@@ -5254,47 +5286,21 @@ def check_param_validation(name, estimator_orig):
             continue
 
         # Mixing an interval of reals and an interval of integers must be avoided.
-        if any(
-            isinstance(constraint, Interval) and constraint.type == Integral
-            for constraint in constraints
-        ) and any(
-            isinstance(constraint, Interval) and constraint.type == Real
-            for constraint in constraints
-        ):
-            raise ValueError(
-                f"The constraint for parameter {param_name} of {name} can't have a mix"
-                " of intervals of Integral and Real types. Use the type RealNotInt"
-                " instead of Real."
-            )
+        _check_mixed_interval_constraints(constraints, param_name, name)
 
         match = rf"The '{param_name}' parameter of {name} must be .* Got .* instead."
-        err_msg = (
-            f"{name} does not raise an informative error message when the "
-            f"parameter {param_name} does not have a valid type or value."
-        )
 
         estimator = clone(estimator_orig)
 
         # First, check that the error is raised if param doesn't match any valid type.
         estimator.set_params(**{param_name: param_with_bad_type})
 
-        for method in fit_methods:
-            if not hasattr(estimator, method):
-                # the method is not accessible with the current set of parameters
-                continue
-
-            err_msg = (
-                f"{name} does not raise an informative error message when the parameter"
-                f" {param_name} does not have a valid type. If any Python type is"
-                " valid, the constraint should be 'no_validation'."
-            )
-
-            with raises(InvalidParameterError, match=match, err_msg=err_msg):
-                if tags.target_tags.one_d_labels or tags.target_tags.two_d_labels:
-                    # The estimator is a label transformer and take only `y`
-                    getattr(estimator, method)(y)
-                else:
-                    getattr(estimator, method)(X, y)
+        err_msg = (
+            f"{name} does not raise an informative error message when the parameter"
+            f" {param_name} does not have a valid type. If any Python type is"
+            " valid, the constraint should be 'no_validation'."
+        )
+        _call_fit_methods(estimator, fit_methods, tags, X, y, match, err_msg)
 
         # Then, for constraints that are more than a type constraint, check that the
         # error is raised if param does match a valid type but does not match any valid
@@ -5309,27 +5315,16 @@ def check_param_validation(name, estimator_orig):
 
             estimator.set_params(**{param_name: bad_value})
 
-            for method in fit_methods:
-                if not hasattr(estimator, method):
-                    # the method is not accessible with the current set of parameters
-                    continue
-
-                err_msg = (
-                    f"{name} does not raise an informative error message when the "
-                    f"parameter {param_name} does not have a valid value.\n"
-                    "Constraints should be disjoint. For instance "
-                    "[StrOptions({'a_string'}), str] is not an acceptable set of "
-                    "constraint because generating an invalid string for the first "
-                    "constraint will always produce a valid string for the second "
-                    "constraint."
-                )
-
-                with raises(InvalidParameterError, match=match, err_msg=err_msg):
-                    if tags.target_tags.one_d_labels or tags.target_tags.two_d_labels:
-                        # The estimator is a label transformer and take only `y`
-                        getattr(estimator, method)(y)
-                    else:
-                        getattr(estimator, method)(X, y)
+            err_msg = (
+                f"{name} does not raise an informative error message when the "
+                f"parameter {param_name} does not have a valid value.\n"
+                "Constraints should be disjoint. For instance "
+                "[StrOptions({'a_string'}), str] is not an acceptable set of "
+                "constraint because generating an invalid string for the first "
+                "constraint will always produce a valid string for the second "
+                "constraint."
+            )
+            _call_fit_methods(estimator, fit_methods, tags, X, y, match, err_msg)
 
 
 def check_set_output_transform(name, transformer_orig):

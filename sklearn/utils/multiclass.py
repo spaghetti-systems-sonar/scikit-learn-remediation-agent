@@ -246,6 +246,111 @@ def check_classification_targets(y):
             )
 
 
+def _raise_unknown_or_return(raise_unknown, input_name, y):
+    """Depending on the value of raise_unknown, either raise an error or return
+    'unknown'.
+    """
+    if raise_unknown:
+        label = input_name if input_name else "data"
+        raise ValueError(f"Unknown label type for {label}: {y!r}")
+    return "unknown"
+
+
+def _validate_target_input(y, is_array_api_compliant):
+    """Validate that y is an array-like input suitable for target type detection."""
+    is_array_like = (
+        isinstance(y, Sequence) or issparse(y) or hasattr(y, "__array__")
+    ) and not isinstance(y, str)
+    if not (is_array_like or is_array_api_compliant):
+        raise ValueError(
+            "Expected array-like (array or non-string sequence), got %r" % y
+        )
+
+    # TODO(1.10): SparseSeries and SparseArray was removed in pandas 2.0.
+    if y.__class__.__name__ in ["SparseSeries", "SparseArray"]:
+        raise ValueError("y cannot be class 'SparseSeries' or 'SparseArray'")
+
+
+def _coerce_target_array(y):
+    """Coerce y into a checked array, handling ragged arrays and deprecation warnings.
+
+    Returns the coerced array. If y is sparse, it is returned unchanged.
+    """
+    if issparse(y):
+        return y
+
+    check_y_kwargs = {
+        "accept_sparse": True,
+        "allow_nd": True,
+        "ensure_all_finite": False,
+        "ensure_2d": False,
+        "ensure_min_samples": 0,
+        "ensure_min_features": 0,
+    }
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", VisibleDeprecationWarning)
+        try:
+            return check_array(y, dtype=None, **check_y_kwargs)
+        except (VisibleDeprecationWarning, ValueError) as e:
+            if str(e).startswith("Complex data not supported"):
+                raise
+            # dtype=object should be provided explicitly for ragged arrays,
+            # see NEP 34
+            return check_array(y, dtype=object, **check_y_kwargs)
+
+
+def _inspect_first_row(y):
+    """Inspect the first row or value of y for legacy formats and byte labels.
+
+    Raises TypeError for byte labels and ValueError for legacy sequence of
+    sequences format. Returns the first row or value, or None if y is empty.
+    """
+    try:
+        first_row_or_val = y[[0], :] if issparse(y) else y[0]
+    except IndexError:
+        return None
+
+    if isinstance(first_row_or_val, bytes):
+        raise TypeError(
+            "Support for labels represented as bytes is not supported. Convert "
+            "the labels to a string or integer format."
+        )
+    if (
+        not hasattr(first_row_or_val, "__array__")
+        and isinstance(first_row_or_val, Sequence)
+        and not isinstance(first_row_or_val, str)
+    ):
+        raise ValueError(
+            "You appear to be using a legacy multi-label data"
+            " representation. Sequence of sequences are no"
+            " longer supported; use a binary array or sparse"
+            " matrix instead - the MultiLabelBinarizer"
+            " transformer can convert to this format."
+        )
+    return first_row_or_val
+
+
+def _check_continuous_target(y, xp, suffix, input_name):
+    """Check if y contains non-integer float values (continuous target).
+
+    Returns the target type string if y is continuous, or None otherwise.
+    """
+    if not xp.isdtype(y.dtype, "real floating"):
+        return None
+
+    # [.1, .2, 3] or [[.1, .2, 3]] or [[1., .2]] and not [1., 2., 3.]
+    data = y.data if issparse(y) else y
+    integral_data = xp.astype(data, xp.int64)
+    # conversion back to the original float dtype of y is required to
+    # satisfy array-api-strict which does not allow a comparison between
+    # arrays having different dtypes.
+    if xp.any(data != xp.astype(integral_data, y.dtype)):
+        _assert_all_finite(data, input_name=input_name)
+        return "continuous" + suffix
+    return None
+
+
 def type_of_target(y, input_name="", raise_unknown=False):
     """Determine the type of data indicated by the target.
 
@@ -325,116 +430,34 @@ def type_of_target(y, input_name="", raise_unknown=False):
     """
     xp, is_array_api_compliant = get_namespace(y)
 
-    def _raise_or_return():
-        """Depending on the value of raise_unknown, either raise an error or return
-        'unknown'.
-        """
-        if raise_unknown:
-            input = input_name if input_name else "data"
-            raise ValueError(f"Unknown label type for {input}: {y!r}")
-        else:
-            return "unknown"
-
-    valid = (
-        (isinstance(y, Sequence) or issparse(y) or hasattr(y, "__array__"))
-        and not isinstance(y, str)
-    ) or is_array_api_compliant
-
-    if not valid:
-        raise ValueError(
-            "Expected array-like (array or non-string sequence), got %r" % y
-        )
-
-    # TODO(1.10): SparseSeries and SparseArray was removed in pandas 2.0.
-    sparse_pandas = y.__class__.__name__ in ["SparseSeries", "SparseArray"]
-    if sparse_pandas:
-        raise ValueError("y cannot be class 'SparseSeries' or 'SparseArray'")
+    _validate_target_input(y, is_array_api_compliant)
 
     if is_multilabel(y):
         return "multilabel-indicator"
 
-    # DeprecationWarning will be replaced by ValueError, see NEP 34
-    # https://numpy.org/neps/nep-0034-infer-dtype-is-object.html
-    # We therefore catch both deprecation (NumPy < 1.24) warning and
-    # value error (NumPy >= 1.24).
-    check_y_kwargs = dict(
-        accept_sparse=True,
-        allow_nd=True,
-        ensure_all_finite=False,
-        ensure_2d=False,
-        ensure_min_samples=0,
-        ensure_min_features=0,
-    )
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", VisibleDeprecationWarning)
-        if not issparse(y):
-            try:
-                y = check_array(y, dtype=None, **check_y_kwargs)
-            except (VisibleDeprecationWarning, ValueError) as e:
-                if str(e).startswith("Complex data not supported"):
-                    raise
-
-                # dtype=object should be provided explicitly for ragged arrays,
-                # see NEP 34
-                y = check_array(y, dtype=object, **check_y_kwargs)
-
-    try:
-        first_row_or_val = y[[0], :] if issparse(y) else y[0]
-        # labels in bytes format
-        if isinstance(first_row_or_val, bytes):
-            raise TypeError(
-                "Support for labels represented as bytes is not supported. Convert "
-                "the labels to a string or integer format."
-            )
-        # The old sequence of sequences format
-        if (
-            not hasattr(first_row_or_val, "__array__")
-            and isinstance(first_row_or_val, Sequence)
-            and not isinstance(first_row_or_val, str)
-        ):
-            raise ValueError(
-                "You appear to be using a legacy multi-label data"
-                " representation. Sequence of sequences are no"
-                " longer supported; use a binary array or sparse"
-                " matrix instead - the MultiLabelBinarizer"
-                " transformer can convert to this format."
-            )
-    except IndexError:
-        pass
+    y = _coerce_target_array(y)
+    first_row_or_val = _inspect_first_row(y)
 
     # Invalid inputs
     if y.ndim not in (1, 2):
         # Number of dimension greater than 2: [[[1, 2]]]
-        return _raise_or_return()
+        return _raise_unknown_or_return(raise_unknown, input_name, y)
     if not min(y.shape):
         # Empty ndarray: []/[[]]
         if y.ndim == 1:
-            # 1-D empty array: []
             return "binary"  # []
-        # 2-D empty array: [[]]
-        return _raise_or_return()
+        return _raise_unknown_or_return(raise_unknown, input_name, y)
     if not issparse(y) and y.dtype == object and not isinstance(y.flat[0], str):
         # [obj_1] and not ["label_1"]
-        return _raise_or_return()
+        return _raise_unknown_or_return(raise_unknown, input_name, y)
 
     # Check if multioutput
-    if y.ndim == 2 and y.shape[1] > 1:
-        suffix = "-multioutput"  # [[1, 2], [1, 2]]
-    else:
-        suffix = ""  # [1, 2, 3] or [[1], [2], [3]]
+    suffix = "-multioutput" if (y.ndim == 2 and y.shape[1] > 1) else ""
 
     # Check float and contains non-integer float values
-    if xp.isdtype(y.dtype, "real floating"):
-        # [.1, .2, 3] or [[.1, .2, 3]] or [[1., .2]] and not [1., 2., 3.]
-        data = y.data if issparse(y) else y
-        integral_data = xp.astype(data, xp.int64)
-        # conversion back to the original float dtype of y is required to
-        # satisfy array-api-strict which does not allow a comparison between
-        # arrays having different dtypes.
-        if xp.any(data != xp.astype(integral_data, y.dtype)):
-            _assert_all_finite(data, input_name=input_name)
-            return "continuous" + suffix
+    continuous = _check_continuous_target(y, xp, suffix, input_name)
+    if continuous is not None:
+        return continuous
 
     # Check multiclass
     if issparse(first_row_or_val):
@@ -442,8 +465,7 @@ def type_of_target(y, input_name="", raise_unknown=False):
     if cached_unique(y).shape[0] > 2 or (y.ndim == 2 and len(first_row_or_val) > 1):
         # [1, 2, 3] or [[1., 2., 3]] or [[1, 2]]
         return "multiclass" + suffix
-    else:
-        return "binary"  # [1, 2] or [["a"], ["b"]]
+    return "binary"  # [1, 2] or [["a"], ["b"]]
 
 
 def _check_partial_fit_first_call(clf, classes=None):
