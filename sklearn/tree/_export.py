@@ -564,6 +564,36 @@ class _DOTTreeExporter(_BaseTreeExporter):
         if self.rotate:
             self.out_file.write("rankdir=LR ;\n")
 
+    def _write_edge_to_parent(self, node_id, parent):
+        """Write the edge from parent to node_id in DOT format."""
+        if parent is None:
+            return
+        # Add edge to parent
+        self.out_file.write("%d -> %d" % (parent, node_id))
+        if parent == 0:
+            # Draw True/False labels if parent is root node
+            angles = np.array([45, -45]) * ((self.rotate - 0.5) * -2)
+            self.out_file.write(" [labeldistance=2.5, labelangle=")
+            if node_id == 1:
+                self.out_file.write('%d, headlabel="True"]' % angles[0])
+            else:
+                self.out_file.write('%d, headlabel="False"]' % angles[1])
+        self.out_file.write(" ;\n")
+
+    def _write_truncated_node(self, node_id, parent):
+        """Write a truncated node (beyond max_depth) in DOT format."""
+        self.ranks["leaves"].append(str(node_id))
+
+        self.out_file.write('%d [label="(...)"' % node_id)
+        if self.filled:
+            # color cropped nodes grey
+            self.out_file.write(', fillcolor="#C0C0C0"')
+        self.out_file.write("] ;\n" % node_id)
+
+        if parent is not None:
+            # Add edge to parent
+            self.out_file.write("%d -> %d ;\n" % (parent, node_id))
+
     def recurse(self, tree, node_id, criterion, parent=None, depth=0):
         if node_id == _tree.TREE_LEAF:
             raise ValueError("Invalid node_id %s" % _tree.TREE_LEAF)
@@ -591,18 +621,7 @@ class _DOTTreeExporter(_BaseTreeExporter):
                 )
             self.out_file.write("] ;\n")
 
-            if parent is not None:
-                # Add edge to parent
-                self.out_file.write("%d -> %d" % (parent, node_id))
-                if parent == 0:
-                    # Draw True/False labels if parent is root node
-                    angles = np.array([45, -45]) * ((self.rotate - 0.5) * -2)
-                    self.out_file.write(" [labeldistance=2.5, labelangle=")
-                    if node_id == 1:
-                        self.out_file.write('%d, headlabel="True"]' % angles[0])
-                    else:
-                        self.out_file.write('%d, headlabel="False"]' % angles[1])
-                self.out_file.write(" ;\n")
+            self._write_edge_to_parent(node_id, parent)
 
             if left_child != _tree.TREE_LEAF:
                 self.recurse(
@@ -621,17 +640,7 @@ class _DOTTreeExporter(_BaseTreeExporter):
                 )
 
         else:
-            self.ranks["leaves"].append(str(node_id))
-
-            self.out_file.write('%d [label="(...)"' % node_id)
-            if self.filled:
-                # color cropped nodes grey
-                self.out_file.write(', fillcolor="#C0C0C0"')
-            self.out_file.write("] ;\n" % node_id)
-
-            if parent is not None:
-                # Add edge to parent
-                self.out_file.write("%d -> %d ;\n" % (parent, node_id))
+            self._write_truncated_node(node_id, parent)
 
     def str_escape(self, string):
         # override default escaping for graphviz
@@ -749,6 +758,23 @@ class _MPLTreeExporter(_BaseTreeExporter):
 
         return anns
 
+    def _annotate_root_edge_label(self, ax, node, xy, xy_parent, common_kwargs):
+        """Draw True/False labels on edges from the root node."""
+        if node.parent.parent is not None:
+            return
+        # Adjust the position for the text to be slightly above the arrow
+        text_pos = (
+            (xy_parent[0] + xy[0]) / 2,
+            (xy_parent[1] + xy[1]) / 2,
+        )
+        # Annotate the arrow with the edge label to indicate the child
+        # where the sample-split condition is satisfied
+        if node.parent.left() == node:
+            label_text, label_ha = ("True  ", "right")
+        else:
+            label_text, label_ha = ("  False", "left")
+        ax.annotate(label_text, text_pos, ha=label_ha, **common_kwargs)
+
     def recurse(self, node, tree, ax, max_x, max_y, depth=0):
         import matplotlib.pyplot as plt
 
@@ -788,21 +814,9 @@ class _MPLTreeExporter(_BaseTreeExporter):
                     (max_y - node.parent.y - 0.5) / max_y,
                 )
                 ax.annotate(node.tree.label, xy_parent, xy, **kwargs)
-
-                # Draw True/False labels if parent is root node
-                if node.parent.parent is None:
-                    # Adjust the position for the text to be slightly above the arrow
-                    text_pos = (
-                        (xy_parent[0] + xy[0]) / 2,
-                        (xy_parent[1] + xy[1]) / 2,
-                    )
-                    # Annotate the arrow with the edge label to indicate the child
-                    # where the sample-split condition is satisfied
-                    if node.parent.left() == node:
-                        label_text, label_ha = ("True  ", "right")
-                    else:
-                        label_text, label_ha = ("  False", "left")
-                    ax.annotate(label_text, text_pos, ha=label_ha, **common_kwargs)
+                self._annotate_root_edge_label(
+                    ax, node, xy, xy_parent, common_kwargs
+                )
             for child in node.children:
                 self.recurse(child, tree, ax, max_x, max_y, depth=depth + 1)
 

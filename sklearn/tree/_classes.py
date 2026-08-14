@@ -96,7 +96,7 @@ class BaseDecisionTree(MultiOutputMixin, BaseEstimator, metaclass=ABCMeta):
 
     # "check_input" is used for optimisation and isn't something to be passed
     # around in a pipeline.
-    __metadata_request__predict = {"check_input": metadata_routing.UNUSED}
+    _metadata_request__predict = {"check_input": metadata_routing.UNUSED}
 
     _parameter_constraints: dict = {
         "splitter": [StrOptions({"best", "random"})],
@@ -1004,8 +1004,8 @@ class DecisionTreeClassifier(ClassifierMixin, BaseDecisionTree):
 
     # "check_input" is used for optimisation and isn't something to be passed
     # around in a pipeline.
-    __metadata_request__predict_proba = {"check_input": metadata_routing.UNUSED}
-    __metadata_request__fit = {"check_input": metadata_routing.UNUSED}
+    _metadata_request__predict_proba = {"check_input": metadata_routing.UNUSED}
+    _metadata_request__fit = {"check_input": metadata_routing.UNUSED}
 
     _parameter_constraints: dict = {
         **BaseDecisionTree._parameter_constraints,
