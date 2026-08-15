@@ -221,7 +221,7 @@ class NearestCentroid(
             center_mask = y_ind == cur_class
             nk[cur_class] = np.sum(center_mask)
             if is_X_sparse:
-                center_mask = np.where(center_mask)[0]
+                center_mask = np.nonzero(center_mask)[0]
 
             if self.metric == "manhattan":
                 # NumPy does not calculate median of sparse matrices.

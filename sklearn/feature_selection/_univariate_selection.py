@@ -105,7 +105,7 @@ def f_oneway(*args):
     dfwn = n_samples - n_classes
     msb = ssbn / float(dfbn)
     msw = sswn / float(dfwn)
-    constant_features_idx = np.where(msw == 0.0)[0]
+    constant_features_idx = np.nonzero(msw == 0.0)[0]
     if np.nonzero(msb)[0].size != msb.size and constant_features_idx.size:
         warnings.warn("Features %s are constant." % constant_features_idx, UserWarning)
     f = msb / msw
