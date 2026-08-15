@@ -485,7 +485,7 @@ def fast_mcd(
             # find the sample shortest halves
             X_sorted = np.sort(np.ravel(X))
             diff = X_sorted[n_support:] - X_sorted[: (n_samples - n_support)]
-            halves_start = np.where(diff == np.min(diff))[0]
+            halves_start = np.nonzero(diff == np.min(diff))[0]
             # take the middle points' mean to get the robust location estimate
             location = (
                 0.5

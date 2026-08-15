@@ -1149,7 +1149,7 @@ class RadiusNeighborsMixin:
         neigh : list of ndarray of shape (n_samples_chunk,)
             The neighbors indices.
         """
-        neigh_ind = [np.where(d <= radius)[0] for d in dist]
+        neigh_ind = [np.nonzero(d <= radius)[0] for d in dist]
 
         if return_distance:
             if self.effective_metric_ == "euclidean":

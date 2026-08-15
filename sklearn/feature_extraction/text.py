@@ -1238,7 +1238,7 @@ class CountVectorizer(_VectorizerMixin, BaseEstimator):
             tfs = np.asarray(X.sum(axis=0)).ravel()
             mask_inds = (-tfs[mask]).argsort()[:limit]
             new_mask = np.zeros(len(dfs), dtype=bool)
-            new_mask[np.where(mask)[0][mask_inds]] = True
+            new_mask[np.nonzero(mask)[0][mask_inds]] = True
             mask = new_mask
 
         new_indices = np.cumsum(mask) - 1  # maps old indices to new
@@ -1247,7 +1247,7 @@ class CountVectorizer(_VectorizerMixin, BaseEstimator):
                 vocabulary[term] = new_indices[old_index]
             else:
                 del vocabulary[term]
-        kept_indices = np.where(mask)[0]
+        kept_indices = np.nonzero(mask)[0]
         if len(kept_indices) == 0:
             raise ValueError(
                 "After pruning, no terms remain. Try a lower min_df or a higher max_df."
