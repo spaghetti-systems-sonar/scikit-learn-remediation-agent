@@ -1381,7 +1381,7 @@ class DecisionTreeRegressor(RegressorMixin, BaseDecisionTree):
 
     # "check_input" is used for optimisation and isn't something to be passed
     # around in a pipeline.
-    __metadata_request__fit = {"check_input": metadata_routing.UNUSED}
+    _metadata_request__fit = {"check_input": metadata_routing.UNUSED}
 
     _parameter_constraints: dict = {
         **BaseDecisionTree._parameter_constraints,

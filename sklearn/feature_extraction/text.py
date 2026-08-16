@@ -1133,8 +1133,8 @@ class CountVectorizer(_VectorizerMixin, BaseEstimator):
 
     # raw_documents should not be in the routing mechanism. It should have been
     # called X in the first place.
-    __metadata_request__fit = {"raw_documents": metadata_routing.UNUSED}
-    __metadata_request__transform = {"raw_documents": metadata_routing.UNUSED}
+    _metadata_request__fit = {"raw_documents": metadata_routing.UNUSED}
+    _metadata_request__transform = {"raw_documents": metadata_routing.UNUSED}
 
     _parameter_constraints: dict = {
         "input": [StrOptions({"filename", "file", "content"})],

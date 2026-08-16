@@ -106,7 +106,7 @@ class FeatureHasher(TransformerMixin, BaseEstimator):
     """
 
     # raw_X should have been called X
-    __metadata_request__transform = {"raw_X": metadata_routing.UNUSED}
+    _metadata_request__transform = {"raw_X": metadata_routing.UNUSED}
 
     _parameter_constraints: dict = {
         "n_features": [Interval(Integral, 1, np.iinfo(np.int32).max, closed="both")],
