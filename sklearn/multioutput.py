@@ -716,6 +716,82 @@ class _BaseChain(BaseEstimator, metaclass=ABCMeta):
 
         return _align_api_if_sparse(Y_output)
 
+    def _validate_order(self, n_outputs):
+        """Validate and set the chain order."""
+        random_state = check_random_state(self.random_state)
+        self.order_ = self.order
+        if isinstance(self.order_, tuple):
+            self.order_ = np.array(self.order_)
+
+        if self.order_ is None:
+            self.order_ = np.array(range(n_outputs))
+        elif isinstance(self.order_, str):
+            if self.order_ == "random":
+                self.order_ = random_state.permutation(n_outputs)
+        elif sorted(self.order_) != list(range(n_outputs)):
+            raise ValueError("invalid order")
+
+    def _build_augmented_data(self, x, y):
+        """Build the augmented data matrix for fitting."""
+        if self.cv is None:
+            pred_chain = y[:, self.order_]
+            if sp.issparse(x):
+                x_aug = sp.hstack((x, pred_chain), format="lil")
+                return x_aug.tocsr()
+            return np.hstack((x, pred_chain))
+
+        if sp.issparse(x):
+            # TODO: remove this condition check when the minimum supported
+            # scipy version doesn't support sparse matrices anymore
+            if not sp.isspmatrix(x):
+                # if `x` is a scipy sparse dok_array, we convert it to a
+                # sparse coo_array format before hstacking, it's faster; see
+                # https://github.com/scipy/scipy/issues/20060#issuecomment-1937007039:
+                if x.format == "dok":
+                    x = sp.coo_array(x)
+                # in case that `x` is a sparse array we create `pred_chain`
+                # as a sparse array format:
+                pred_chain = sp.coo_array((x.shape[0], y.shape[1]))
+            else:
+                pred_chain = sp.coo_matrix((x.shape[0], y.shape[1]))
+            return sp.hstack((x, pred_chain), format="lil")
+
+        pred_chain = np.zeros((x.shape[0], y.shape[1]))
+        return np.hstack((x, pred_chain))
+
+    def _resolve_chain_method(self):
+        """Resolve the chain method for predictions during fitting."""
+        if hasattr(self, "chain_method"):
+            chain_method = _check_response_method(
+                self.estimator,
+                self.chain_method,
+            ).__name__
+            self.chain_method_ = chain_method
+        else:
+            # `RegressorChain` does not have a `chain_method` parameter
+            chain_method = "predict"
+        return chain_method
+
+    def _update_cv_predictions(
+        self, x_aug, n_features, y_col, chain_idx, chain_method
+    ):
+        """Update augmented data with cross-validated predictions."""
+        col_idx = n_features + chain_idx
+        cv_result = cross_val_predict(
+            self.estimator,
+            x_aug[:, :col_idx],
+            y=y_col,
+            cv=self.cv,
+            method=chain_method,
+        )
+        # `predict_proba` output is 2D, we use only output for classes[-1]
+        if cv_result.ndim > 1:
+            cv_result = cv_result[:, 1]
+        if sp.issparse(x_aug):
+            x_aug[:, col_idx] = np.expand_dims(cv_result, 1)
+        else:
+            x_aug[:, col_idx] = cv_result
+
     @abstractmethod
     def fit(self, X, Y, **fit_params):
         """Fit the model to data matrix X and targets Y.
@@ -740,65 +816,16 @@ class _BaseChain(BaseEstimator, metaclass=ABCMeta):
         """
         X, Y = validate_data(self, X, Y, multi_output=True, accept_sparse=True)
 
-        random_state = check_random_state(self.random_state)
-        self.order_ = self.order
-        if isinstance(self.order_, tuple):
-            self.order_ = np.array(self.order_)
-
-        if self.order_ is None:
-            self.order_ = np.array(range(Y.shape[1]))
-        elif isinstance(self.order_, str):
-            if self.order_ == "random":
-                self.order_ = random_state.permutation(Y.shape[1])
-        elif sorted(self.order_) != list(range(Y.shape[1])):
-            raise ValueError("invalid order")
-
+        self._validate_order(Y.shape[1])
         self.estimators_ = [clone(self.estimator) for _ in range(Y.shape[1])]
-
-        if self.cv is None:
-            Y_pred_chain = Y[:, self.order_]
-            if sp.issparse(X):
-                X_aug = sp.hstack((X, Y_pred_chain), format="lil")
-                X_aug = X_aug.tocsr()
-            else:
-                X_aug = np.hstack((X, Y_pred_chain))
-
-        elif sp.issparse(X):
-            # TODO: remove this condition check when the minimum supported scipy version
-            # doesn't support sparse matrices anymore
-            if not sp.isspmatrix(X):
-                # if `X` is a scipy sparse dok_array, we convert it to a sparse
-                # coo_array format before hstacking, it's faster; see
-                # https://github.com/scipy/scipy/issues/20060#issuecomment-1937007039:
-                if X.format == "dok":
-                    X = sp.coo_array(X)
-                # in case that `X` is a sparse array we create `Y_pred_chain` as a
-                # sparse array format:
-                Y_pred_chain = sp.coo_array((X.shape[0], Y.shape[1]))
-            else:
-                Y_pred_chain = sp.coo_matrix((X.shape[0], Y.shape[1]))
-            X_aug = sp.hstack((X, Y_pred_chain), format="lil")
-
-        else:
-            Y_pred_chain = np.zeros((X.shape[0], Y.shape[1]))
-            X_aug = np.hstack((X, Y_pred_chain))
-
-        del Y_pred_chain
+        X_aug = self._build_augmented_data(X, Y)
 
         if _routing_enabled():
             routed_params = process_routing(self, "fit", **fit_params)
         else:
             routed_params = Bunch(estimator=Bunch(fit=fit_params))
 
-        if hasattr(self, "chain_method"):
-            chain_method = _check_response_method(
-                self.estimator,
-                self.chain_method,
-            ).__name__
-            self.chain_method_ = chain_method
-        else:
-            # `RegressorChain` does not have a `chain_method` parameter
-            chain_method = "predict"
+        chain_method = self._resolve_chain_method()
 
         for chain_idx, estimator in enumerate(self.estimators_):
             message = self._log_message(
@@ -815,21 +842,9 @@ class _BaseChain(BaseEstimator, metaclass=ABCMeta):
                 )
 
             if self.cv is not None and chain_idx < len(self.estimators_) - 1:
-                col_idx = X.shape[1] + chain_idx
-                cv_result = cross_val_predict(
-                    self.estimator,
-                    X_aug[:, :col_idx],
-                    y=y,
-                    cv=self.cv,
-                    method=chain_method,
+                self._update_cv_predictions(
+                    X_aug, X.shape[1], y, chain_idx, chain_method
                 )
-                # `predict_proba` output is 2D, we use only output for classes[-1]
-                if cv_result.ndim > 1:
-                    cv_result = cv_result[:, 1]
-                if sp.issparse(X_aug):
-                    X_aug[:, col_idx] = np.expand_dims(cv_result, 1)
-                else:
-                    X_aug[:, col_idx] = cv_result
 
         return self
 

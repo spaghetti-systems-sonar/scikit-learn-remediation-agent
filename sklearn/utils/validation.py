@@ -730,6 +730,404 @@ def _is_extension_array_dtype(array):
     return hasattr(array, "dtype") and hasattr(array.dtype, "na_value")
 
 
+def _detect_input_dtype(array, is_array_api_compliant):
+    """Detect the original dtype and pandas-specific properties of the input.
+
+    Returns
+    -------
+    dtype_orig : dtype, type, or None
+        The detected original dtype.
+    pandas_requires_conversion : bool
+        Whether the input requires early pandas conversion.
+    type_if_series : type or None
+        The type of the input if it is a Series-like object.
+    is_pandas_fully_sparse_df : bool
+        Whether the input is a fully sparse pandas DataFrame.
+    df_pandas : DataFrame or None
+        The native pandas DataFrame, if applicable.
+    """
+    dtype_orig = getattr(array, "dtype", None)
+    if not is_array_api_compliant and not hasattr(dtype_orig, "kind"):
+        # not a data type (e.g. a column named dtype in a pandas DataFrame)
+        dtype_orig = None
+
+    pandas_requires_conversion = False
+    type_if_series = None
+    is_pandas_fully_sparse_df = False
+    df_pandas = None
+
+    # For dataframes, use narwhals
+    if _nw_into_df_or_series(array):
+        array_df = nw.from_native(array, allow_series=True)
+    else:
+        array_df = None
+
+    if (
+        array_df is not None
+        and array_df.implementation.is_pandas()
+        and len(array_df.shape) >= 2
+    ):
+        dtype_orig, pandas_requires_conversion, is_pandas_fully_sparse_df, df_pandas = (
+            _detect_pandas_dataframe_dtype(array_df, dtype_orig)
+        )
+    elif (_is_extension_array_dtype(array) or hasattr(array, "iloc")) and hasattr(
+        array, "dtype"
+    ):
+        type_if_series, pandas_requires_conversion, dtype_orig = (
+            _detect_pandas_series_dtype(array)
+        )
+
+    return (
+        dtype_orig,
+        pandas_requires_conversion,
+        type_if_series,
+        is_pandas_fully_sparse_df,
+        df_pandas,
+    )
+
+
+def _detect_pandas_dataframe_dtype(array_df, dtype_orig):
+    """Detect dtype information from a pandas-backed narwhals DataFrame.
+
+    Returns
+    -------
+    dtype_orig : dtype, type, or None
+        The resolved original dtype.
+    pandas_requires_conversion : bool
+        Whether the DataFrame requires early conversion.
+    is_pandas_fully_sparse_df : bool
+        Whether all columns are sparse.
+    df_pandas : DataFrame
+        The native pandas DataFrame.
+    """
+    from pandas import SparseDtype
+
+    def is_pd_sparse(dtype):
+        return isinstance(dtype, SparseDtype)
+
+    df_pandas = array_df.to_native()
+    is_pandas_fully_sparse_df = False
+
+    if hasattr(df_pandas, "sparse") and df_pandas.dtypes.apply(is_pd_sparse).all():
+        is_pandas_fully_sparse_df = True
+    elif df_pandas.dtypes.apply(is_pd_sparse).any():
+        warnings.warn(
+            "pandas.DataFrame with sparse columns found."
+            "It will be converted to a dense numpy array."
+        )
+
+    dtypes_orig = list(df_pandas.dtypes)
+    pandas_requires_conversion = any(
+        _pandas_dtype_needs_early_conversion(i) for i in dtypes_orig
+    )
+    has_pandas_string = any(_is_pandas_string_dtype(d) for d in dtypes_orig)
+
+    if all(isinstance(dtype_iter, np.dtype) for dtype_iter in dtypes_orig):
+        dtype_orig = np.result_type(*dtypes_orig)
+    elif has_pandas_string:
+        # Force object if any of the dtypes is a StringDtype.
+        dtype_orig = object
+    elif pandas_requires_conversion and any(d == object for d in dtypes_orig):
+        # Force object if any of the dtypes is an object
+        dtype_orig = object
+
+    return dtype_orig, pandas_requires_conversion, is_pandas_fully_sparse_df, df_pandas
+
+
+def _detect_pandas_series_dtype(array):
+    """Detect dtype information from a pandas Series or extension array.
+
+    Returns
+    -------
+    type_if_series : type
+        The type of the Series-like object.
+    pandas_requires_conversion : bool
+        Whether the Series requires early conversion.
+    dtype_orig : dtype, type, or None
+        The resolved original dtype.
+    """
+    type_if_series = type(array)
+    pandas_requires_conversion = _pandas_dtype_needs_early_conversion(array.dtype)
+    if isinstance(array.dtype, np.dtype):
+        dtype_orig = array.dtype
+    elif _is_pandas_string_dtype(array.dtype):
+        # pandas 3 uses StringDtype for string columns instead of object.
+        # Treat as object so that dtype_numeric detection works correctly.
+        dtype_orig = object
+    else:
+        # Set to None to let array.astype work out the best dtype
+        dtype_orig = None
+    return type_if_series, pandas_requires_conversion, dtype_orig
+
+
+def _resolve_target_dtype(
+    dtype, dtype_orig, dtype_numeric, xp, pandas_requires_conversion, array
+):
+    """Resolve the target dtype and apply early pandas conversion if needed.
+
+    Returns
+    -------
+    dtype : dtype or None
+        The resolved target dtype.
+    array : array-like
+        The (possibly converted) array.
+    """
+    if dtype_numeric:
+        if dtype_orig is not None and _is_object_dtype(dtype_orig):
+            # if input is object, convert to float.
+            dtype = xp.float64
+        else:
+            dtype = None
+
+    if isinstance(dtype, (list, tuple)):
+        if dtype_orig is not None and dtype_orig in dtype:
+            # no dtype conversion required
+            dtype = None
+        else:
+            # dtype conversion required. Let's select the first element of the
+            # list of accepted types.
+            dtype = dtype[0]
+
+    if pandas_requires_conversion:
+        # pandas dataframe requires conversion earlier to handle extension dtypes with
+        # nans
+        # Use the original dtype for conversion if dtype is None
+        new_dtype = dtype_orig if dtype is None else dtype
+        array = array.astype(new_dtype)
+        # Since we converted here, we do not need to convert again later
+        dtype = None
+
+    return dtype, array
+
+
+def _is_object_dtype(dtype_orig):
+    """Check whether dtype_orig represents an object dtype."""
+    return (
+        hasattr(dtype_orig, "kind") and dtype_orig.kind == "O"
+    ) or dtype_orig == object
+
+
+def _validate_and_convert_sparse(
+    array,
+    accept_sparse,
+    dtype,
+    copy,
+    ensure_all_finite,
+    accept_large_sparse,
+    estimator_name,
+    input_name,
+    ensure_2d,
+):
+    """Validate and convert a sparse array input.
+
+    Returns
+    -------
+    array : sparse matrix
+        The validated sparse array.
+    """
+    _ensure_no_complex_data(array)
+    array = _ensure_sparse_format(
+        array,
+        accept_sparse=accept_sparse,
+        dtype=dtype,
+        copy=copy,
+        ensure_all_finite=ensure_all_finite,
+        accept_large_sparse=accept_large_sparse,
+        estimator_name=estimator_name,
+        input_name=input_name,
+    )
+    if ensure_2d and array.ndim < 2:
+        raise ValueError(
+            f"Expected 2D input, got input with shape {array.shape}.\n"
+            "Reshape your data either using array.reshape(-1, 1) if "
+            "your data has a single feature or array.reshape(1, -1) "
+            "if it contains a single sample."
+        )
+    return array
+
+
+def _convert_array_dtype(array, dtype, order, xp, estimator_name, input_name):
+    """Convert array to the target dtype, handling complex warnings.
+
+    Returns
+    -------
+    array : array-like
+        The converted array.
+    """
+    with warnings.catch_warnings():
+        try:
+            warnings.simplefilter("error", ComplexWarning)
+            if dtype is not None and xp.isdtype(dtype, "integral"):
+                # Conversion float -> int should not contain NaN or
+                # inf (numpy#14412). We cannot use casting='safe' because
+                # then conversion float -> int would be disallowed.
+                array = _asarray_with_order(array, order=order, xp=xp)
+                if xp.isdtype(array.dtype, ("real floating", "complex floating")):
+                    _assert_all_finite(
+                        array,
+                        allow_nan=False,
+                        msg_dtype=dtype,
+                        estimator_name=estimator_name,
+                        input_name=input_name,
+                    )
+                array = xp.astype(array, dtype, copy=False)
+            else:
+                array = _asarray_with_order(
+                    array, order=order, dtype=dtype, xp=xp
+                )
+        except ComplexWarning as complex_warning:
+            raise ValueError(
+                "Complex data not supported\n{}\n".format(array)
+            ) from complex_warning
+    return array
+
+
+def _check_dense_array_shape(
+    array, ensure_2d, type_if_series, dtype_numeric, allow_nd, context
+):
+    """Validate shape constraints on a dense array.
+
+    Raises ValueError if the array does not meet shape requirements.
+    """
+    if ensure_2d:
+        _check_ensure_2d(array, type_if_series)
+
+    if dtype_numeric and hasattr(array.dtype, "kind") and array.dtype.kind in "USV":
+        raise ValueError(
+            "dtype='numeric' is not compatible with arrays of bytes/strings."
+            "Convert your data to numeric values explicitly instead."
+        )
+    if not allow_nd and array.ndim >= 3:
+        raise ValueError(
+            f"Found array with dim {array.ndim},"
+            f" while dim <= 2 is required{context}."
+        )
+
+
+def _check_ensure_2d(array, type_if_series):
+    """Validate that the array is 2D, raising ValueError if not."""
+    if array.ndim == 0:
+        raise ValueError(
+            "Expected 2D array, got scalar array instead:\narray={}.\n"
+            "Reshape your data either using array.reshape(-1, 1) if "
+            "your data has a single feature or array.reshape(1, -1) "
+            "if it contains a single sample.".format(array)
+        )
+    if array.ndim == 1:
+        if type_if_series is not None:
+            msg = (
+                f"Expected a 2-dimensional container but got {type_if_series} "
+                "instead. Pass a DataFrame containing a single row (i.e. "
+                "single sample) or a single column (i.e. single feature) "
+                "instead."
+            )
+        else:
+            msg = (
+                f"Expected 2D array, got 1D array instead:\narray={array}.\n"
+                "Reshape your data either using array.reshape(-1, 1) if "
+                "your data has a single feature or array.reshape(1, -1) "
+                "if it contains a single sample."
+            )
+        raise ValueError(msg)
+
+
+def _copy_array_if_needed(array, array_orig, copy, xp, dtype, order):
+    """Copy the array if requested and necessary.
+
+    Returns
+    -------
+    array : array-like
+        The (possibly copied) array.
+    """
+    if not copy:
+        return array
+
+    if _is_numpy_namespace(xp):
+        # only make a copy if `array` and `array_orig` may share memory
+        if np.may_share_memory(array, array_orig):
+            array = _asarray_with_order(
+                array, dtype=dtype, order=order, copy=True, xp=xp
+            )
+    else:
+        # always make a copy for non-numpy arrays
+        array = _asarray_with_order(
+            array, dtype=dtype, order=order, copy=True, xp=xp
+        )
+    return array
+
+
+def _validate_array_constraints(
+    array,
+    ensure_min_samples,
+    ensure_min_features,
+    context,
+    ensure_non_negative,
+    input_name,
+    estimator_name,
+):
+    """Validate minimum samples, minimum features, and non-negativity constraints."""
+    if ensure_min_samples > 0:
+        n_samples = _num_samples(array)
+        if n_samples < ensure_min_samples:
+            raise ValueError(
+                "Found array with %d sample(s) (shape=%s) while a"
+                " minimum of %d is required%s."
+                % (n_samples, array.shape, ensure_min_samples, context)
+            )
+
+    if ensure_min_features > 0 and array.ndim == 2:
+        n_features = array.shape[1]
+        if n_features < ensure_min_features:
+            raise ValueError(
+                "Found array with %d feature(s) (shape=%s) while"
+                " a minimum of %d is required%s."
+                % (n_features, array.shape, ensure_min_features, context)
+            )
+
+    if ensure_non_negative:
+        whom = input_name
+        if estimator_name:
+            whom += f" in {estimator_name}"
+        check_non_negative(array, whom)
+
+
+def _ensure_array_writeable(array, array_orig):
+    """Ensure the array is writeable, making a copy if necessary.
+
+    Returns
+    -------
+    array : array-like
+        The writeable array.
+    """
+    # By default, array.copy() creates a C-ordered copy. We set order=K to
+    # preserve the order of the array.
+    copy_params = {"order": "K"} if not sp.issparse(array) else {}
+
+    array_data = array.data if sp.issparse(array) else array
+    flags = getattr(array_data, "flags", None)
+    if not getattr(flags, "writeable", True):
+        # This situation can only happen when copy=False, the array is read-only and
+        # a writeable output is requested. This is an ambiguous setting so we chose
+        # to always (except for one specific setting, see below) make a copy to
+        # ensure that the output is writeable, even if avoidable, to not overwrite
+        # the user's data by surprise.
+
+        if is_pandas_df_or_series(array_orig):
+            try:
+                # In pandas >= 3, np.asarray(df), called earlier in check_array,
+                # returns a read-only intermediate array. It can be made writeable
+                # safely without copy because if the original DataFrame was backed
+                # by a read-only array, trying to change the flag would raise an
+                # error, in which case we make a copy.
+                array_data.flags.writeable = True
+            except ValueError:
+                array = array.copy(**copy_params)
+        else:
+            array = array.copy(**copy_params)
+
+    return array
+
+
 def check_array(
     array,
     accept_sparse=False,
@@ -873,106 +1271,17 @@ def check_array(
     # store whether originally we wanted numeric dtype
     dtype_numeric = isinstance(dtype, str) and dtype == "numeric"
 
-    dtype_orig = getattr(array, "dtype", None)
-    if not is_array_api_compliant and not hasattr(dtype_orig, "kind"):
-        # not a data type (e.g. a column named dtype in a pandas DataFrame)
-        dtype_orig = None
+    (
+        dtype_orig,
+        pandas_requires_conversion,
+        type_if_series,
+        is_pandas_fully_sparse_df,
+        df_pandas,
+    ) = _detect_input_dtype(array, is_array_api_compliant)
 
-    # check if the object contains several dtypes (typically a pandas
-    # DataFrame), and store them. If not, store None.
-    dtypes_orig = None
-    pandas_requires_conversion = False
-    # track if we have a Series-like object to raise a better error message
-    type_if_series = None
-    # For dataframes, use narwhals
-    if _nw_into_df_or_series(array):
-        array_df = nw.from_native(array, allow_series=True)
-    else:
-        array_df = None
-
-    # pandas.DataFrame may have sparse columns
-    is_pandas_fully_sparse_df = False
-    if (
-        array_df is not None
-        and array_df.implementation.is_pandas()
-        and len(array_df.shape) >= 2
-    ):
-        # Throw warning if some columns are sparse. If all columns are sparse, then
-        # array.sparse exists and sparsity will be preserved (later).
-        from pandas import SparseDtype
-
-        def is_pd_sparse(dtype):
-            return isinstance(dtype, SparseDtype)
-
-        # Note that array may be a narhwals.DataFrame backed by a pandas.DataFrame.
-        df_pandas = array_df.to_native()
-        if hasattr(df_pandas, "sparse") and df_pandas.dtypes.apply(is_pd_sparse).all():
-            # All columns of the pandas.DataFrame are sparse. Note that the `sparse`
-            # attribute is not a guaranteed detection for all sparse columns.
-            is_pandas_fully_sparse_df = True
-        elif df_pandas.dtypes.apply(is_pd_sparse).any():
-            warnings.warn(
-                "pandas.DataFrame with sparse columns found."
-                "It will be converted to a dense numpy array."
-            )
-
-        dtypes_orig = list(df_pandas.dtypes)
-        pandas_requires_conversion = any(
-            _pandas_dtype_needs_early_conversion(i) for i in dtypes_orig
-        )
-        has_pandas_string = any(_is_pandas_string_dtype(d) for d in dtypes_orig)
-        if all(isinstance(dtype_iter, np.dtype) for dtype_iter in dtypes_orig):
-            dtype_orig = np.result_type(*dtypes_orig)
-        elif has_pandas_string:
-            # Force object if any of the dtypes is a StringDtype.
-            dtype_orig = object
-        elif pandas_requires_conversion and any(d == object for d in dtypes_orig):
-            # Force object if any of the dtypes is an object
-            dtype_orig = object
-
-    elif (_is_extension_array_dtype(array) or hasattr(array, "iloc")) and hasattr(
-        array, "dtype"
-    ):
-        # array is a pandas series or a pandas array.
-        type_if_series = type(array)
-        pandas_requires_conversion = _pandas_dtype_needs_early_conversion(array.dtype)
-        if isinstance(array.dtype, np.dtype):
-            dtype_orig = array.dtype
-        elif _is_pandas_string_dtype(array.dtype):
-            # pandas 3 uses StringDtype for string columns instead of object.
-            # Treat as object so that dtype_numeric detection works correctly.
-            dtype_orig = object
-        else:
-            # Set to None to let array.astype work out the best dtype
-            dtype_orig = None
-
-    if dtype_numeric:
-        if dtype_orig is not None and (
-            (hasattr(dtype_orig, "kind") and dtype_orig.kind == "O")
-            or dtype_orig == object
-        ):
-            # if input is object, convert to float.
-            dtype = xp.float64
-        else:
-            dtype = None
-
-    if isinstance(dtype, (list, tuple)):
-        if dtype_orig is not None and dtype_orig in dtype:
-            # no dtype conversion required
-            dtype = None
-        else:
-            # dtype conversion required. Let's select the first element of the
-            # list of accepted types.
-            dtype = dtype[0]
-
-    if pandas_requires_conversion:
-        # pandas dataframe requires conversion earlier to handle extension dtypes with
-        # nans
-        # Use the original dtype for conversion if dtype is None
-        new_dtype = dtype_orig if dtype is None else dtype
-        array = array.astype(new_dtype)
-        # Since we converted here, we do not need to convert again later
-        dtype = None
+    dtype, array = _resolve_target_dtype(
+        dtype, dtype_orig, dtype_numeric, xp, pandas_requires_conversion, array
+    )
 
     if ensure_all_finite not in (True, False, "allow-nan"):
         raise ValueError(
@@ -993,8 +1302,7 @@ def check_array(
         array = df_pandas.sparse.to_coo()
 
     if sp.issparse(array):
-        _ensure_no_complex_data(array)
-        array = _ensure_sparse_format(
+        array = _validate_and_convert_sparse(
             array,
             accept_sparse=accept_sparse,
             dtype=dtype,
@@ -1003,43 +1311,17 @@ def check_array(
             accept_large_sparse=accept_large_sparse,
             estimator_name=estimator_name,
             input_name=input_name,
+            ensure_2d=ensure_2d,
         )
-        if ensure_2d and array.ndim < 2:
-            raise ValueError(
-                f"Expected 2D input, got input with shape {array.shape}.\n"
-                "Reshape your data either using array.reshape(-1, 1) if "
-                "your data has a single feature or array.reshape(1, -1) "
-                "if it contains a single sample."
-            )
     else:
         # If np.array(..) gives ComplexWarning, then we convert the warning
         # to an error. This is needed because specifying a non complex
         # dtype to the function converts complex to real dtype,
         # thereby passing the test made in the lines following the scope
         # of warnings context manager.
-        with warnings.catch_warnings():
-            try:
-                warnings.simplefilter("error", ComplexWarning)
-                if dtype is not None and xp.isdtype(dtype, "integral"):
-                    # Conversion float -> int should not contain NaN or
-                    # inf (numpy#14412). We cannot use casting='safe' because
-                    # then conversion float -> int would be disallowed.
-                    array = _asarray_with_order(array, order=order, xp=xp)
-                    if xp.isdtype(array.dtype, ("real floating", "complex floating")):
-                        _assert_all_finite(
-                            array,
-                            allow_nan=False,
-                            msg_dtype=dtype,
-                            estimator_name=estimator_name,
-                            input_name=input_name,
-                        )
-                    array = xp.astype(array, dtype, copy=False)
-                else:
-                    array = _asarray_with_order(array, order=order, dtype=dtype, xp=xp)
-            except ComplexWarning as complex_warning:
-                raise ValueError(
-                    "Complex data not supported\n{}\n".format(array)
-                ) from complex_warning
+        array = _convert_array_dtype(
+            array, dtype, order, xp, estimator_name, input_name
+        )
 
         # It is possible that the np.array(..) gave no warning. This happens
         # when no dtype conversion happened, for example dtype = None. The
@@ -1047,44 +1329,9 @@ def check_array(
         # and we need to catch and raise exception for such cases.
         _ensure_no_complex_data(array)
 
-        if ensure_2d:
-            # If input is scalar raise error
-            if array.ndim == 0:
-                raise ValueError(
-                    "Expected 2D array, got scalar array instead:\narray={}.\n"
-                    "Reshape your data either using array.reshape(-1, 1) if "
-                    "your data has a single feature or array.reshape(1, -1) "
-                    "if it contains a single sample.".format(array)
-                )
-            # If input is 1D raise error
-            if array.ndim == 1:
-                # If input is a Series-like object (eg. pandas Series or polars Series)
-                if type_if_series is not None:
-                    msg = (
-                        f"Expected a 2-dimensional container but got {type_if_series} "
-                        "instead. Pass a DataFrame containing a single row (i.e. "
-                        "single sample) or a single column (i.e. single feature) "
-                        "instead."
-                    )
-                else:
-                    msg = (
-                        f"Expected 2D array, got 1D array instead:\narray={array}.\n"
-                        "Reshape your data either using array.reshape(-1, 1) if "
-                        "your data has a single feature or array.reshape(1, -1) "
-                        "if it contains a single sample."
-                    )
-                raise ValueError(msg)
-
-        if dtype_numeric and hasattr(array.dtype, "kind") and array.dtype.kind in "USV":
-            raise ValueError(
-                "dtype='numeric' is not compatible with arrays of bytes/strings."
-                "Convert your data to numeric values explicitly instead."
-            )
-        if not allow_nd and array.ndim >= 3:
-            raise ValueError(
-                f"Found array with dim {array.ndim},"
-                f" while dim <= 2 is required{context}."
-            )
+        _check_dense_array_shape(
+            array, ensure_2d, type_if_series, dtype_numeric, allow_nd, context
+        )
 
         if ensure_all_finite:
             _assert_all_finite(
@@ -1094,69 +1341,20 @@ def check_array(
                 allow_nan=ensure_all_finite == "allow-nan",
             )
 
-        if copy:
-            if _is_numpy_namespace(xp):
-                # only make a copy if `array` and `array_orig` may share memory`
-                if np.may_share_memory(array, array_orig):
-                    array = _asarray_with_order(
-                        array, dtype=dtype, order=order, copy=True, xp=xp
-                    )
-            else:
-                # always make a copy for non-numpy arrays
-                array = _asarray_with_order(
-                    array, dtype=dtype, order=order, copy=True, xp=xp
-                )
+        array = _copy_array_if_needed(array, array_orig, copy, xp, dtype, order)
 
-    if ensure_min_samples > 0:
-        n_samples = _num_samples(array)
-        if n_samples < ensure_min_samples:
-            raise ValueError(
-                "Found array with %d sample(s) (shape=%s) while a"
-                " minimum of %d is required%s."
-                % (n_samples, array.shape, ensure_min_samples, context)
-            )
-
-    if ensure_min_features > 0 and array.ndim == 2:
-        n_features = array.shape[1]
-        if n_features < ensure_min_features:
-            raise ValueError(
-                "Found array with %d feature(s) (shape=%s) while"
-                " a minimum of %d is required%s."
-                % (n_features, array.shape, ensure_min_features, context)
-            )
-
-    if ensure_non_negative:
-        whom = input_name
-        if estimator_name:
-            whom += f" in {estimator_name}"
-        check_non_negative(array, whom)
+    _validate_array_constraints(
+        array,
+        ensure_min_samples,
+        ensure_min_features,
+        context,
+        ensure_non_negative,
+        input_name,
+        estimator_name,
+    )
 
     if force_writeable:
-        # By default, array.copy() creates a C-ordered copy. We set order=K to
-        # preserve the order of the array.
-        copy_params = {"order": "K"} if not sp.issparse(array) else {}
-
-        array_data = array.data if sp.issparse(array) else array
-        flags = getattr(array_data, "flags", None)
-        if not getattr(flags, "writeable", True):
-            # This situation can only happen when copy=False, the array is read-only and
-            # a writeable output is requested. This is an ambiguous setting so we chose
-            # to always (except for one specific setting, see below) make a copy to
-            # ensure that the output is writeable, even if avoidable, to not overwrite
-            # the user's data by surprise.
-
-            if is_pandas_df_or_series(array_orig):
-                try:
-                    # In pandas >= 3, np.asarray(df), called earlier in check_array,
-                    # returns a read-only intermediate array. It can be made writeable
-                    # safely without copy because if the original DataFrame was backed
-                    # by a read-only array, trying to change the flag would raise an
-                    # error, in which case we make a copy.
-                    array_data.flags.writeable = True
-                except ValueError:
-                    array = array.copy(**copy_params)
-            else:
-                array = array.copy(**copy_params)
+        array = _ensure_array_writeable(array, array_orig)
 
     return array
 
@@ -2688,6 +2886,21 @@ def _check_monotonic_cst(estimator, monotonic_cst=None):
     return monotonic_cst
 
 
+def _is_valid_binary_classes(xp, classes, device):
+    """Check if classes correspond to valid binary classification labels."""
+    if _is_numpy_namespace(xp) and classes.dtype.kind in "OUS":
+        return False
+    if classes.shape[0] > 2:
+        return False
+    return bool(
+        xp.all(classes == xp.asarray([0, 1], device=device))
+        or xp.all(classes == xp.asarray([-1, 1], device=device))
+        or xp.all(classes == xp.asarray([0], device=device))
+        or xp.all(classes == xp.asarray([-1], device=device))
+        or xp.all(classes == xp.asarray([1], device=device))
+    )
+
+
 def _check_pos_label_consistency(pos_label, y_true):
     """Check if `pos_label` need to be specified or not.
 
@@ -2721,17 +2934,7 @@ def _check_pos_label_consistency(pos_label, y_true):
         # Compute classes only if pos_label is not specified:
         xp, _, device = get_namespace_and_device(y_true)
         classes = xp.unique_values(y_true)
-        if (
-            (_is_numpy_namespace(xp) and classes.dtype.kind in "OUS")
-            or classes.shape[0] > 2
-            or not (
-                xp.all(classes == xp.asarray([0, 1], device=device))
-                or xp.all(classes == xp.asarray([-1, 1], device=device))
-                or xp.all(classes == xp.asarray([0], device=device))
-                or xp.all(classes == xp.asarray([-1], device=device))
-                or xp.all(classes == xp.asarray([1], device=device))
-            )
-        ):
+        if not _is_valid_binary_classes(xp, classes, device):
             classes = move_to(classes, xp=np, device="cpu")
             classes_repr = ", ".join([repr(c) for c in classes.tolist()])
             raise ValueError(
@@ -2780,6 +2983,52 @@ def _to_object_array(sequence):
     return out
 
 
+def _check_feature_names_reset(estimator, X):
+    """Set or delete `feature_names_in_` when resetting during fit."""
+    feature_names_in = _get_feature_names(X)
+    if feature_names_in is not None:
+        estimator.feature_names_in_ = feature_names_in
+    elif hasattr(estimator, "feature_names_in_"):
+        # Delete the attribute when the estimator is fitted on a new dataset
+        # that has no feature names.
+        delattr(estimator, "feature_names_in_")
+
+
+def _format_feature_names_list(names):
+    """Format a list of feature names for display in error messages."""
+    output = ""
+    max_n_names = 5
+    for i, name in enumerate(names):
+        if i >= max_n_names:
+            output += "- ...\n"
+            break
+        output += f"- {name}\n"
+    return output
+
+
+def _raise_feature_names_mismatch(fitted_names, input_names):
+    """Raise a ValueError for mismatched feature names."""
+    message = "The feature names should match those that were passed during fit.\n"
+    fitted_names_set = set(fitted_names)
+    input_names_set = set(input_names)
+
+    unexpected_names = sorted(input_names_set - fitted_names_set)
+    missing_names = sorted(fitted_names_set - input_names_set)
+
+    if unexpected_names:
+        message += "Feature names unseen at fit time:\n"
+        message += _format_feature_names_list(unexpected_names)
+
+    if missing_names:
+        message += "Feature names seen at fit time, yet now missing:\n"
+        message += _format_feature_names_list(missing_names)
+
+    if not missing_names and not unexpected_names:
+        message += "Feature names must be in the same order as they were in fit.\n"
+
+    raise ValueError(message)
+
+
 def _check_feature_names(estimator, X, *, reset):
     """Set or check the `feature_names_in_` attribute of an estimator.
 
@@ -2814,13 +3063,7 @@ def _check_feature_names(estimator, X, *, reset):
     """
 
     if reset:
-        feature_names_in = _get_feature_names(X)
-        if feature_names_in is not None:
-            estimator.feature_names_in_ = feature_names_in
-        elif hasattr(estimator, "feature_names_in_"):
-            # Delete the attribute when the estimator is fitted on a new dataset
-            # that has no feature names.
-            delattr(estimator, "feature_names_in_")
+        _check_feature_names_reset(estimator, X)
         return
 
     fitted_feature_names = getattr(estimator, "feature_names_in_", None)
@@ -2848,35 +3091,7 @@ def _check_feature_names(estimator, X, *, reset):
     if len(fitted_feature_names) != len(X_feature_names) or np.any(
         fitted_feature_names != X_feature_names
     ):
-        message = "The feature names should match those that were passed during fit.\n"
-        fitted_feature_names_set = set(fitted_feature_names)
-        X_feature_names_set = set(X_feature_names)
-
-        unexpected_names = sorted(X_feature_names_set - fitted_feature_names_set)
-        missing_names = sorted(fitted_feature_names_set - X_feature_names_set)
-
-        def add_names(names):
-            output = ""
-            max_n_names = 5
-            for i, name in enumerate(names):
-                if i >= max_n_names:
-                    output += "- ...\n"
-                    break
-                output += f"- {name}\n"
-            return output
-
-        if unexpected_names:
-            message += "Feature names unseen at fit time:\n"
-            message += add_names(unexpected_names)
-
-        if missing_names:
-            message += "Feature names seen at fit time, yet now missing:\n"
-            message += add_names(missing_names)
-
-        if not missing_names and not unexpected_names:
-            message += "Feature names must be in the same order as they were in fit.\n"
-
-        raise ValueError(message)
+        _raise_feature_names_mismatch(fitted_feature_names, X_feature_names)
 
 
 def _check_n_features(estimator, X, reset):
@@ -2938,6 +3153,46 @@ def _check_n_features(estimator, X, reset):
             f"X has {n_features} features, but {estimator.__class__.__name__} "
             f"is expecting {estimator.n_features_in_} features as input."
         )
+
+
+def _validate_data_skip_check_array(x, y, no_val_x, no_val_y):
+    """Return ``(out, x)`` when ``skip_check_array`` is True."""
+    if not no_val_x and no_val_y:
+        return x, x
+    if no_val_x and not no_val_y:
+        return y, x
+    return (x, y), x
+
+
+def _validate_data_check_arrays(
+    x,
+    y,
+    no_val_x,
+    no_val_y,
+    validate_separately,
+    default_check_params,
+    check_params,
+):
+    """Validate arrays and return ``(out, x)`` for ``validate_data``."""
+    if not no_val_x and no_val_y:
+        return check_array(x, input_name="X", **check_params), x
+    if no_val_x and not no_val_y:
+        return _check_y(y, **check_params), x
+    if validate_separately:
+        # We need this because some estimators validate X and y
+        # separately, and in general, separately calling check_array()
+        # on X and y isn't equivalent to just calling check_X_y()
+        # :(
+        check_x_params, check_y_params = validate_separately
+        if "estimator" not in check_x_params:
+            check_x_params = {**default_check_params, **check_x_params}
+        x = check_array(x, input_name="X", **check_x_params)
+        if "estimator" not in check_y_params:
+            check_y_params = {**default_check_params, **check_y_params}
+        y = check_array(y, input_name="y", **check_y_params)
+    else:
+        x, y = check_X_y(x, y, **check_params)
+    return (x, y), x
 
 
 def validate_data(
@@ -3042,32 +3297,17 @@ def validate_data(
     check_params = {**default_check_params, **check_params}
 
     if skip_check_array:
-        if not no_val_X and no_val_y:
-            out = X
-        elif no_val_X and not no_val_y:
-            out = y
-        else:
-            out = X, y
-    elif not no_val_X and no_val_y:
-        out = check_array(X, input_name="X", **check_params)
-    elif no_val_X and not no_val_y:
-        out = _check_y(y, **check_params)
+        out, X = _validate_data_skip_check_array(X, y, no_val_X, no_val_y)
     else:
-        if validate_separately:
-            # We need this because some estimators validate X and y
-            # separately, and in general, separately calling check_array()
-            # on X and y isn't equivalent to just calling check_X_y()
-            # :(
-            check_X_params, check_y_params = validate_separately
-            if "estimator" not in check_X_params:
-                check_X_params = {**default_check_params, **check_X_params}
-            X = check_array(X, input_name="X", **check_X_params)
-            if "estimator" not in check_y_params:
-                check_y_params = {**default_check_params, **check_y_params}
-            y = check_array(y, input_name="y", **check_y_params)
-        else:
-            X, y = check_X_y(X, y, **check_params)
-        out = X, y
+        out, X = _validate_data_check_arrays(
+            X,
+            y,
+            no_val_X,
+            no_val_y,
+            validate_separately,
+            default_check_params,
+            check_params,
+        )
 
     if not no_val_X and check_params.get("ensure_2d", True):
         _check_n_features(_estimator, X, reset=reset)
