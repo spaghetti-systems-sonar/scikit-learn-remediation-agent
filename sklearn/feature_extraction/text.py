@@ -9,6 +9,7 @@ import unicodedata
 import warnings
 from collections import defaultdict
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from functools import partial
 from numbers import Integral
 from operator import itemgetter
@@ -40,13 +41,21 @@ from sklearn.utils.validation import (
 __all__ = [
     "ENGLISH_STOP_WORDS",
     "CountVectorizer",
+    "HashingOutputConfig",
     "HashingVectorizer",
     "TfidfTransformer",
     "TfidfVectorizer",
+    "VocabFilterConfig",
     "strip_accents_ascii",
     "strip_accents_unicode",
     "strip_tags",
 ]
+
+_RAW_DOCUMENT_ERROR = (
+    "Iterable over raw text documents expected, string object received."
+)
+
+_DEFAULT_TOKEN_PATTERN = r"(?u)\b\w\w+\b"
 
 
 def _preprocess(doc, accent_function=None, lower=False):
@@ -475,33 +484,43 @@ class _VectorizerMixin:
 
     def _validate_vocabulary(self):
         vocabulary = self.vocabulary
-        if vocabulary is not None:
-            if isinstance(vocabulary, set):
-                vocabulary = sorted(vocabulary)
-            if not isinstance(vocabulary, Mapping):
-                vocab = {}
-                for i, t in enumerate(vocabulary):
-                    if vocab.setdefault(t, i) != i:
-                        msg = "Duplicate term in vocabulary: %r" % t
-                        raise ValueError(msg)
-                vocabulary = vocab
-            else:
-                indices = set(vocabulary.values())
-                if len(indices) != len(vocabulary):
-                    raise ValueError("Vocabulary contains repeated indices.")
-                for i in range(len(vocabulary)):
-                    if i not in indices:
-                        msg = "Vocabulary of size %d doesn't contain index %d." % (
-                            len(vocabulary),
-                            i,
-                        )
-                        raise ValueError(msg)
-            if not vocabulary:
-                raise ValueError("empty vocabulary passed to fit")
-            self.fixed_vocabulary_ = True
-            self.vocabulary_ = dict(vocabulary)
-        else:
+        if vocabulary is None:
             self.fixed_vocabulary_ = False
+            return
+        if isinstance(vocabulary, set):
+            vocabulary = sorted(vocabulary)
+        if not isinstance(vocabulary, Mapping):
+            vocabulary = self._vocabulary_from_sequence(vocabulary)
+        else:
+            self._check_vocabulary_indices(vocabulary)
+        if not vocabulary:
+            raise ValueError("empty vocabulary passed to fit")
+        self.fixed_vocabulary_ = True
+        self.vocabulary_ = dict(vocabulary)
+
+    @staticmethod
+    def _vocabulary_from_sequence(vocabulary):
+        """Convert a vocabulary sequence to a dict, checking for duplicates."""
+        vocab = {}
+        for i, t in enumerate(vocabulary):
+            if vocab.setdefault(t, i) != i:
+                msg = "Duplicate term in vocabulary: %r" % t
+                raise ValueError(msg)
+        return vocab
+
+    @staticmethod
+    def _check_vocabulary_indices(vocabulary):
+        """Check that a vocabulary mapping has contiguous indices starting at 0."""
+        indices = set(vocabulary.values())
+        if len(indices) != len(vocabulary):
+            raise ValueError("Vocabulary contains repeated indices.")
+        for i in range(len(vocabulary)):
+            if i not in indices:
+                msg = "Vocabulary of size %d doesn't contain index %d." % (
+                    len(vocabulary),
+                    i,
+                )
+                raise ValueError(msg)
 
     def _check_vocabulary(self):
         """Check if vocabulary is empty or missing (not fitted)"""
@@ -552,7 +571,7 @@ class _VectorizerMixin:
                 )
             if (
                 self.token_pattern is not None
-                and self.token_pattern != r"(?u)\b\w\w+\b"
+                and self.token_pattern != _DEFAULT_TOKEN_PATTERN
             ):
                 warnings.warn(
                     "The parameter 'token_pattern' will not be used"
@@ -563,6 +582,35 @@ class _VectorizerMixin:
                     "The parameter 'tokenizer' will not be used"
                     " since 'analyzer' != 'word'"
                 )
+
+
+@dataclass
+class HashingOutputConfig:
+    """Configuration for hashing output in HashingVectorizer.
+
+    Parameters
+    ----------
+    n_features : int, default=(2 ** 20)
+        The number of features (columns) in the output matrices.
+
+    binary : bool, default=False
+        If True, all non zero counts are set to 1.
+
+    norm : {'l1', 'l2'} or None, default='l2'
+        Norm used to normalize term vectors. None for no normalization.
+
+    alternate_sign : bool, default=True
+        When True, an alternating sign is added to the features.
+
+    dtype : type, default=np.float64
+        Type of the matrix returned by fit_transform() or transform().
+    """
+
+    n_features: int = 2**20
+    binary: bool = False
+    norm: str = "l2"
+    alternate_sign: bool = True
+    dtype: type = field(default_factory=lambda: np.float64)
 
 
 class HashingVectorizer(
@@ -700,28 +748,11 @@ class HashingVectorizer(
             is first read from the file and then passed to the given callable
             analyzer.
 
-    n_features : int, default=(2 ** 20)
-        The number of features (columns) in the output matrices. Small numbers
-        of features are likely to cause hash collisions, but large numbers
-        will cause larger coefficient dimensions in linear learners.
-
-    binary : bool, default=False
-        If True, all non zero counts are set to 1. This is useful for discrete
-        probabilistic models that model binary events rather than integer
-        counts.
-
-    norm : {'l1', 'l2'}, default='l2'
-        Norm used to normalize term vectors. None for no normalization.
-
-    alternate_sign : bool, default=True
-        When True, an alternating sign is added to the features as to
-        approximately conserve the inner product in the hashed space even for
-        small n_features. This approach is similar to sparse random projection.
-
-        .. versionadded:: 0.19
-
-    dtype : type, default=np.float64
-        Type of the matrix returned by fit_transform() or transform().
+    output_config : HashingOutputConfig, default=HashingOutputConfig()
+        Configuration for the hashing output, grouping parameters that control
+        the output matrix: ``n_features``, ``binary``, ``norm``,
+        ``alternate_sign``, and ``dtype``. See :class:`HashingOutputConfig`
+        for details on each field.
 
     See Also
     --------
@@ -739,14 +770,18 @@ class HashingVectorizer(
 
     Examples
     --------
-    >>> from sklearn.feature_extraction.text import HashingVectorizer
+    >>> from sklearn.feature_extraction.text import (
+    ...     HashingOutputConfig, HashingVectorizer,
+    ... )
     >>> corpus = [
     ...     'This is the first document.',
     ...     'This document is the second document.',
     ...     'And this is the third one.',
     ...     'Is this the first document?',
     ... ]
-    >>> vectorizer = HashingVectorizer(n_features=2**4)
+    >>> vectorizer = HashingVectorizer(
+    ...     output_config=HashingOutputConfig(n_features=2**4),
+    ... )
     >>> X = vectorizer.fit_transform(corpus)
     >>> print(X.shape)
     (4, 16)
@@ -764,11 +799,7 @@ class HashingVectorizer(
         "token_pattern": [str, None],
         "ngram_range": [tuple],
         "analyzer": [StrOptions({"word", "char", "char_wb"}), callable],
-        "n_features": [Interval(Integral, 1, np.iinfo(np.int32).max, closed="left")],
-        "binary": ["boolean"],
-        "norm": [StrOptions({"l1", "l2"}), None],
-        "alternate_sign": ["boolean"],
-        "dtype": "no_validation",  # delegate to numpy
+        "output_config": [HashingOutputConfig],
     }
 
     def __init__(
@@ -782,14 +813,10 @@ class HashingVectorizer(
         preprocessor=None,
         tokenizer=None,
         stop_words=None,
-        token_pattern=r"(?u)\b\w\w+\b",
+        token_pattern=_DEFAULT_TOKEN_PATTERN,
         ngram_range=(1, 1),
         analyzer="word",
-        n_features=(2**20),
-        binary=False,
-        norm="l2",
-        alternate_sign=True,
-        dtype=np.float64,
+        output_config=None,
     ):
         self.input = input
         self.encoding = encoding
@@ -801,12 +828,10 @@ class HashingVectorizer(
         self.lowercase = lowercase
         self.token_pattern = token_pattern
         self.stop_words = stop_words
-        self.n_features = n_features
         self.ngram_range = ngram_range
-        self.binary = binary
-        self.norm = norm
-        self.alternate_sign = alternate_sign
-        self.dtype = dtype
+        if output_config is None:
+            output_config = HashingOutputConfig()
+        self.output_config = output_config
 
     @_fit_context(prefer_skip_nested_validation=True)
     def partial_fit(self, X, y=None):
@@ -852,9 +877,7 @@ class HashingVectorizer(
         """
         # triggers a parameter validation
         if isinstance(X, str):
-            raise ValueError(
-                "Iterable over raw text documents expected, string object received."
-            )
+            raise ValueError(_RAW_DOCUMENT_ERROR)
 
         self._warn_for_unused_params()
         self._validate_ngram_range()
@@ -878,18 +901,16 @@ class HashingVectorizer(
             Document-term matrix.
         """
         if isinstance(X, str):
-            raise ValueError(
-                "Iterable over raw text documents expected, string object received."
-            )
+            raise ValueError(_RAW_DOCUMENT_ERROR)
 
         self._validate_ngram_range()
 
         analyzer = self.build_analyzer()
         X = self._get_hasher().transform(analyzer(doc) for doc in X)
-        if self.binary:
+        if self.output_config.binary:
             X.data.fill(1)
-        if self.norm is not None:
-            X = normalize(X, norm=self.norm, copy=False)
+        if self.output_config.norm is not None:
+            X = normalize(X, norm=self.output_config.norm, copy=False)
         return _align_api_if_sparse(X)
 
     def fit_transform(self, X, y=None):
@@ -914,10 +935,10 @@ class HashingVectorizer(
 
     def _get_hasher(self):
         return FeatureHasher(
-            n_features=self.n_features,
+            n_features=self.output_config.n_features,
             input_type="string",
-            dtype=self.dtype,
-            alternate_sign=self.alternate_sign,
+            dtype=self.output_config.dtype,
+            alternate_sign=self.output_config.alternate_sign,
         )
 
     def __sklearn_tags__(self):
@@ -934,6 +955,50 @@ def _document_frequency(X):
         return np.bincount(X.indices, minlength=X.shape[1])
     else:
         return np.diff(X.indptr)
+
+
+@dataclass
+class VocabFilterConfig:
+    """Configuration for vocabulary filtering in CountVectorizer.
+
+    Parameters
+    ----------
+    max_df : float in range [0.0, 1.0] or int, default=1.0
+        When building the vocabulary ignore terms that have a document
+        frequency strictly higher than the given threshold (corpus-specific
+        stop words). If float, the parameter represents a proportion of
+        documents, integer absolute counts. This parameter is ignored if
+        vocabulary is not None.
+
+    min_df : float in range [0.0, 1.0] or int, default=1
+        When building the vocabulary ignore terms that have a document
+        frequency strictly lower than the given threshold. This value is also
+        called cut-off in the literature. If float, the parameter represents
+        a proportion of documents, integer absolute counts. This parameter
+        is ignored if vocabulary is not None.
+
+    max_features : int or None, default=None
+        If not None, build a vocabulary that only consider the top
+        `max_features` ordered by term frequency across the corpus.
+        Otherwise, all features are used. This parameter is ignored if
+        vocabulary is not None.
+
+    vocabulary : Mapping or iterable or None, default=None
+        Either a Mapping (e.g., a dict) where keys are terms and values are
+        indices in the feature matrix, or an iterable over terms. If not
+        given, a vocabulary is determined from the input documents.
+
+    binary : bool, default=False
+        If True, all non zero counts are set to 1. This is useful for
+        discrete probabilistic models that model binary events rather
+        than integer counts.
+    """
+
+    max_df: float = 1.0
+    min_df: int = 1
+    max_features: object = None
+    vocabulary: object = None
+    binary: bool = False
 
 
 class CountVectorizer(_VectorizerMixin, BaseEstimator):
@@ -1148,17 +1213,7 @@ class CountVectorizer(_VectorizerMixin, BaseEstimator):
         "token_pattern": [str, None],
         "ngram_range": [tuple],
         "analyzer": [StrOptions({"word", "char", "char_wb"}), callable],
-        "max_df": [
-            Interval(RealNotInt, 0, 1, closed="both"),
-            Interval(Integral, 1, None, closed="left"),
-        ],
-        "min_df": [
-            Interval(RealNotInt, 0, 1, closed="both"),
-            Interval(Integral, 1, None, closed="left"),
-        ],
-        "max_features": [Interval(Integral, 1, None, closed="left"), None],
-        "vocabulary": [Mapping, HasMethods("__iter__"), None],
-        "binary": ["boolean"],
+        "vocab_config": [VocabFilterConfig],
         "dtype": "no_validation",  # delegate to numpy
     }
 
@@ -1173,14 +1228,10 @@ class CountVectorizer(_VectorizerMixin, BaseEstimator):
         preprocessor=None,
         tokenizer=None,
         stop_words=None,
-        token_pattern=r"(?u)\b\w\w+\b",
+        token_pattern=_DEFAULT_TOKEN_PATTERN,
         ngram_range=(1, 1),
         analyzer="word",
-        max_df=1.0,
-        min_df=1,
-        max_features=None,
-        vocabulary=None,
-        binary=False,
+        vocab_config=None,
         dtype=np.int64,
     ):
         self.input = input
@@ -1193,13 +1244,69 @@ class CountVectorizer(_VectorizerMixin, BaseEstimator):
         self.lowercase = lowercase
         self.token_pattern = token_pattern
         self.stop_words = stop_words
-        self.max_df = max_df
-        self.min_df = min_df
-        self.max_features = max_features
         self.ngram_range = ngram_range
-        self.vocabulary = vocabulary
-        self.binary = binary
+        if vocab_config is None:
+            vocab_config = VocabFilterConfig()
+        self.vocab_config = vocab_config
         self.dtype = dtype
+
+    @property
+    def max_df(self):
+        """float or int: Max document frequency threshold."""
+        return self.vocab_config.max_df
+
+    @max_df.setter
+    def max_df(self, value):
+        self.vocab_config.max_df = value
+
+    @property
+    def min_df(self):
+        """float or int: Min document frequency threshold."""
+        return self.vocab_config.min_df
+
+    @min_df.setter
+    def min_df(self, value):
+        self.vocab_config.min_df = value
+
+    @property
+    def max_features(self):
+        """int or None: Maximum number of features."""
+        return self.vocab_config.max_features
+
+    @max_features.setter
+    def max_features(self, value):
+        self.vocab_config.max_features = value
+
+    @property
+    def vocabulary(self):
+        """Mapping or iterable or None: User-provided vocabulary."""
+        return self.vocab_config.vocabulary
+
+    @vocabulary.setter
+    def vocabulary(self, value):
+        self.vocab_config.vocabulary = value
+
+    @property
+    def binary(self):
+        """bool: Whether to use binary occurrence counts."""
+        return self.vocab_config.binary
+
+    @binary.setter
+    def binary(self, value):
+        self.vocab_config.binary = value
+
+    def _warn_for_uppercase_vocabulary(self):
+        """Warn if vocabulary contains uppercase entries while lowercase is True."""
+        if self.fixed_vocabulary_ and self.lowercase:
+            for term in self.vocabulary:
+                if any(map(str.isupper, term)):
+                    warnings.warn(
+                        "Upper case characters found in"
+                        " vocabulary while 'lowercase'"
+                        " is True. These entries will not"
+                        " be matched with any documents"
+                    )
+                    break
 
     def _sort_features(self, X, vocabulary):
         """Sort features by name
@@ -1274,10 +1381,9 @@ class CountVectorizer(_VectorizerMixin, BaseEstimator):
             for feature in analyze(doc):
                 try:
                     feature_idx = vocabulary[feature]
-                    if feature_idx not in feature_counter:
-                        feature_counter[feature_idx] = 1
-                    else:
-                        feature_counter[feature_idx] += 1
+                    feature_counter[feature_idx] = (
+                        feature_counter.get(feature_idx, 0) + 1
+                    )
                 except KeyError:
                     # Ignore out-of-vocabulary items for fixed_vocab=True
                     continue
@@ -1362,9 +1468,7 @@ class CountVectorizer(_VectorizerMixin, BaseEstimator):
         # fit_transform overridable without unwanted side effects in
         # TfidfVectorizer.
         if isinstance(raw_documents, str):
-            raise ValueError(
-                "Iterable over raw text documents expected, string object received."
-            )
+            raise ValueError(_RAW_DOCUMENT_ERROR)
 
         self._validate_ngram_range()
         self._warn_for_unused_params()
@@ -1373,16 +1477,7 @@ class CountVectorizer(_VectorizerMixin, BaseEstimator):
         min_df = self.min_df
         max_features = self.max_features
 
-        if self.fixed_vocabulary_ and self.lowercase:
-            for term in self.vocabulary:
-                if any(map(str.isupper, term)):
-                    warnings.warn(
-                        "Upper case characters found in"
-                        " vocabulary while 'lowercase'"
-                        " is True. These entries will not"
-                        " be matched with any documents"
-                    )
-                    break
+        self._warn_for_uppercase_vocabulary()
 
         vocabulary, X = self._count_vocab(raw_documents, self.fixed_vocabulary_)
 
@@ -1423,9 +1518,7 @@ class CountVectorizer(_VectorizerMixin, BaseEstimator):
             Document-term matrix.
         """
         if isinstance(raw_documents, str):
-            raise ValueError(
-                "Iterable over raw text documents expected, string object received."
-            )
+            raise ValueError(_RAW_DOCUMENT_ERROR)
         self._check_vocabulary()
 
         # use the same matrix-building strategy as fit_transform
@@ -1966,13 +2059,9 @@ class TfidfVectorizer(CountVectorizer):
         tokenizer=None,
         analyzer="word",
         stop_words=None,
-        token_pattern=r"(?u)\b\w\w+\b",
+        token_pattern=_DEFAULT_TOKEN_PATTERN,
         ngram_range=(1, 1),
-        max_df=1.0,
-        min_df=1,
-        max_features=None,
-        vocabulary=None,
-        binary=False,
+        vocab_config=None,
         dtype=np.float64,
         norm="l2",
         use_idf=True,
@@ -1991,11 +2080,7 @@ class TfidfVectorizer(CountVectorizer):
             stop_words=stop_words,
             token_pattern=token_pattern,
             ngram_range=ngram_range,
-            max_df=max_df,
-            min_df=min_df,
-            max_features=max_features,
-            vocabulary=vocabulary,
-            binary=binary,
+            vocab_config=vocab_config,
             dtype=dtype,
         )
         self.norm = norm
