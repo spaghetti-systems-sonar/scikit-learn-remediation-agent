@@ -1471,10 +1471,7 @@ def _fetch_remote(remote, dirname=None, n_retries=3, delay=1):
     file_path: Path
         Full path of the created file.
     """
-    if dirname is None:
-        folder_path = Path(".")
-    else:
-        folder_path = Path(dirname)
+    folder_path = Path("." if dirname is None else dirname)
 
     file_path = folder_path / remote.filename
 
@@ -1485,12 +1482,11 @@ def _fetch_remote(remote, dirname=None, n_retries=3, delay=1):
         checksum = _sha256(file_path)
         if checksum == remote.checksum:
             return file_path
-        else:
-            warnings.warn(
-                f"SHA256 checksum of existing local file {file_path.name} "
-                f"({checksum}) differs from expected ({remote.checksum}): "
-                f"re-downloading from {remote.url} ."
-            )
+        warnings.warn(
+            f"SHA256 checksum of existing local file {file_path.name} "
+            f"({checksum}) differs from expected ({remote.checksum}): "
+            f"re-downloading from {remote.url} ."
+        )
 
     # We create a temporary file dedicated to this particular download to avoid
     # conflicts with parallel downloads. If the download is successful, the
