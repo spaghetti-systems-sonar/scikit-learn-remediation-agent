@@ -236,6 +236,19 @@ def _open_and_load(f, dtype, multilabel, zero_based, query_id, offset=0, length=
     return data, indices, indptr, labels, query
 
 
+def _check_offset_length_params(offset, length, zero_based, n_features):
+    """Validate and adjust parameters when offset or length is specified."""
+    if (offset != 0 or length > 0) and zero_based == "auto":
+        # disable heuristic search to avoid getting inconsistent results on
+        # different segments of the file
+        zero_based = True
+
+    if (offset != 0 or length > 0) and n_features is None:
+        raise ValueError("n_features is required when offset or length is specified.")
+
+    return zero_based
+
+
 @validate_params(
     {
         "files": [
@@ -369,13 +382,7 @@ def load_svmlight_files(
 
         X_train, y_train, X_test, y_test = get_data()
     """
-    if (offset != 0 or length > 0) and zero_based == "auto":
-        # disable heuristic search to avoid getting inconsistent results on
-        # different segments of the file
-        zero_based = True
-
-    if (offset != 0 or length > 0) and n_features is None:
-        raise ValueError("n_features is required when offset or length is specified.")
+    zero_based = _check_offset_length_params(offset, length, zero_based, n_features)
 
     r = [
         _open_and_load(

@@ -986,6 +986,48 @@ def make_moons(n_samples=100, *, shuffle=True, noise=None, random_state=None):
     return X, y
 
 
+def _resolve_centers(n_samples, centers, center_box, n_features, generator):
+    """Resolve centers, n_centers, and n_features for make_blobs."""
+    if isinstance(n_samples, numbers.Integral):
+        # Set n_centers by looking at centers arg
+        if centers is None:
+            centers = 3
+
+        if isinstance(centers, numbers.Integral):
+            n_centers = centers
+            centers = generator.uniform(
+                center_box[0], center_box[1], size=(n_centers, n_features)
+            )
+        else:
+            centers = check_array(centers)
+            n_features = centers.shape[1]
+            n_centers = centers.shape[0]
+
+        return centers, n_centers, n_features
+
+    # Set n_centers by looking at [n_samples] arg
+    n_centers = len(n_samples)
+    if centers is None:
+        centers = generator.uniform(
+            center_box[0], center_box[1], size=(n_centers, n_features)
+        )
+    if not isinstance(centers, Iterable):
+        raise ValueError(
+            "Parameter `centers` must be array-like. Got {!r} instead".format(
+                centers
+            )
+        )
+    if len(centers) != n_centers:
+        raise ValueError(
+            "Length of `n_samples` not consistent with number of "
+            f"centers. Got n_samples = {n_samples} and centers = {centers}"
+        )
+    centers = check_array(centers)
+    n_features = centers.shape[1]
+
+    return centers, n_centers, n_features
+
+
 @validate_params(
     {
         "n_samples": [Interval(Integral, 1, None, closed="left"), "array-like"],
@@ -1088,42 +1130,9 @@ def make_blobs(
     """
     generator = check_random_state(random_state)
 
-    if isinstance(n_samples, numbers.Integral):
-        # Set n_centers by looking at centers arg
-        if centers is None:
-            centers = 3
-
-        if isinstance(centers, numbers.Integral):
-            n_centers = centers
-            centers = generator.uniform(
-                center_box[0], center_box[1], size=(n_centers, n_features)
-            )
-
-        else:
-            centers = check_array(centers)
-            n_features = centers.shape[1]
-            n_centers = centers.shape[0]
-
-    else:
-        # Set n_centers by looking at [n_samples] arg
-        n_centers = len(n_samples)
-        if centers is None:
-            centers = generator.uniform(
-                center_box[0], center_box[1], size=(n_centers, n_features)
-            )
-        if not isinstance(centers, Iterable):
-            raise ValueError(
-                "Parameter `centers` must be array-like. Got {!r} instead".format(
-                    centers
-                )
-            )
-        if len(centers) != n_centers:
-            raise ValueError(
-                "Length of `n_samples` not consistent with number of "
-                f"centers. Got n_samples = {n_samples} and centers = {centers}"
-            )
-        centers = check_array(centers)
-        n_features = centers.shape[1]
+    centers, n_centers, n_features = _resolve_centers(
+        n_samples, centers, center_box, n_features, generator
+    )
 
     # stds: if cluster_std is given as list, it must be consistent
     # with the n_centers

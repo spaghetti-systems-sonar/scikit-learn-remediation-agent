@@ -622,6 +622,57 @@ class GraphicalLasso(BaseGraphicalLasso):
         return self
 
 
+def _log_graphical_lasso_path_progress(verbose, x_test, alpha, this_score):
+    """Log progress during graphical_lasso_path iterations."""
+    if verbose == 1:
+        sys.stderr.write(".")
+    elif verbose > 1:
+        if x_test is not None:
+            print(
+                "[graphical_lasso_path] alpha: %.2e, score: %.2e"
+                % (alpha, this_score)
+            )
+        else:
+            print("[graphical_lasso_path] alpha: %.2e" % alpha)
+
+
+def _graphical_lasso_path_single_alpha(
+    emp_cov, alpha, covariance_, test_emp_cov, mode, tol, enet_tol,
+    max_iter, verbose, eps,
+):
+    """Fit graphical lasso for a single alpha and compute the test score.
+
+    Returns
+    -------
+    covariance_ : ndarray or nan
+        The estimated covariance matrix, or nan if convergence failed.
+    precision_ : ndarray or nan
+        The estimated precision matrix, or nan if convergence failed.
+    this_score : float
+        The log-likelihood score on the test data, or -np.inf.
+    """
+    try:
+        covariance_, precision_, _, _ = _graphical_lasso(
+            emp_cov,
+            alpha=alpha,
+            cov_init=covariance_,
+            mode=mode,
+            tol=tol,
+            enet_tol=enet_tol,
+            max_iter=max_iter,
+            verbose=verbose,
+            eps=eps,
+        )
+        this_score = -np.inf
+        if test_emp_cov is not None:
+            this_score = log_likelihood(test_emp_cov, precision_)
+    except FloatingPointError:
+        this_score = -np.inf
+        covariance_ = np.nan
+        precision_ = np.nan
+    return covariance_, precision_, this_score
+
+
 # Cross-validation with GraphicalLasso
 def graphical_lasso_path(
     X,
@@ -704,48 +755,23 @@ def graphical_lasso_path(
         covariance_ = emp_cov.copy()
     else:
         covariance_ = cov_init
-    covariances_ = list()
-    precisions_ = list()
-    scores_ = list()
-    if X_test is not None:
-        test_emp_cov = empirical_covariance(X_test)
+    covariances_ = []
+    precisions_ = []
+    scores_ = []
+    test_emp_cov = empirical_covariance(X_test) if X_test is not None else None
 
     for alpha in alphas:
-        try:
-            # Capture the errors, and move on
-            covariance_, precision_, _, _ = _graphical_lasso(
-                emp_cov,
-                alpha=alpha,
-                cov_init=covariance_,
-                mode=mode,
-                tol=tol,
-                enet_tol=enet_tol,
-                max_iter=max_iter,
-                verbose=inner_verbose,
-                eps=eps,
-            )
-            covariances_.append(covariance_)
-            precisions_.append(precision_)
-            if X_test is not None:
-                this_score = log_likelihood(test_emp_cov, precision_)
-        except FloatingPointError:
-            this_score = -np.inf
-            covariances_.append(np.nan)
-            precisions_.append(np.nan)
+        covariance_, precision_, this_score = _graphical_lasso_path_single_alpha(
+            emp_cov, alpha, covariance_, test_emp_cov, mode, tol, enet_tol,
+            max_iter, inner_verbose, eps,
+        )
+        covariances_.append(covariance_)
+        precisions_.append(precision_)
         if X_test is not None:
             if not np.isfinite(this_score):
                 this_score = -np.inf
             scores_.append(this_score)
-        if verbose == 1:
-            sys.stderr.write(".")
-        elif verbose > 1:
-            if X_test is not None:
-                print(
-                    "[graphical_lasso_path] alpha: %.2e, score: %.2e"
-                    % (alpha, this_score)
-                )
-            else:
-                print("[graphical_lasso_path] alpha: %.2e" % alpha)
+        _log_graphical_lasso_path_progress(verbose, X_test, alpha, this_score)
     if X_test is not None:
         return covariances_, precisions_, scores_
     return covariances_, precisions_

@@ -396,6 +396,56 @@ def select_candidates(
     return best_locations, best_covariances, best_supports, best_ds
 
 
+def _fast_mcd_one_dim(X, n_samples, n_support):
+    """Handle the 1-dimensional case of fast_mcd.
+
+    Parameters
+    ----------
+    X : ndarray of shape (n_samples, 1)
+        The data matrix.
+
+    n_samples : int
+        Number of samples.
+
+    n_support : int
+        Number of support points.
+
+    Returns
+    -------
+    location : ndarray of shape (1,)
+    covariance : ndarray of shape (1, 1)
+    support : ndarray of shape (n_samples,), dtype=bool
+    dist : ndarray of shape (n_samples, 1)
+    """
+    if n_support < n_samples:
+        # find the sample shortest halves
+        X_sorted = np.sort(np.ravel(X))
+        diff = X_sorted[n_support:] - X_sorted[: (n_samples - n_support)]
+        halves_start = np.nonzero(diff == np.min(diff))[0]
+        # take the middle points' mean to get the robust location estimate
+        location = (
+            0.5
+            * (X_sorted[n_support + halves_start] + X_sorted[halves_start]).mean()
+        )
+        support = np.zeros(n_samples, dtype=bool)
+        X_centered = X - location
+        support[np.argsort(np.abs(X_centered), 0)[:n_support]] = True
+        covariance = np.asarray([[np.var(X[support])]])
+        location = np.array([location])
+        # get precision matrix in an optimized way
+        precision = linalg.pinvh(covariance)
+        dist = (np.dot(X_centered, precision) * (X_centered)).sum(axis=1)
+    else:
+        support = np.ones(n_samples, dtype=bool)
+        covariance = np.asarray([[np.var(X)]])
+        location = np.asarray([np.mean(X)])
+        X_centered = X - location
+        # get precision matrix in an optimized way
+        precision = linalg.pinvh(covariance)
+        dist = (np.dot(X_centered, precision) * (X_centered)).sum(axis=1)
+    return location, covariance, support, dist
+
+
 def fast_mcd(
     X,
     support_fraction=None,
@@ -481,34 +531,10 @@ def fast_mcd(
     # (Rousseeuw, P. J. and Leroy, A. M. (2005) References, in Robust
     #  Regression and Outlier Detection, John Wiley & Sons, chapter 4)
     if n_features == 1:
-        if n_support < n_samples:
-            # find the sample shortest halves
-            X_sorted = np.sort(np.ravel(X))
-            diff = X_sorted[n_support:] - X_sorted[: (n_samples - n_support)]
-            halves_start = np.nonzero(diff == np.min(diff))[0]
-            # take the middle points' mean to get the robust location estimate
-            location = (
-                0.5
-                * (X_sorted[n_support + halves_start] + X_sorted[halves_start]).mean()
-            )
-            support = np.zeros(n_samples, dtype=bool)
-            X_centered = X - location
-            support[np.argsort(np.abs(X_centered), 0)[:n_support]] = True
-            covariance = np.asarray([[np.var(X[support])]])
-            location = np.array([location])
-            # get precision matrix in an optimized way
-            precision = linalg.pinvh(covariance)
-            dist = (np.dot(X_centered, precision) * (X_centered)).sum(axis=1)
-        else:
-            support = np.ones(n_samples, dtype=bool)
-            covariance = np.asarray([[np.var(X)]])
-            location = np.asarray([np.mean(X)])
-            X_centered = X - location
-            # get precision matrix in an optimized way
-            precision = linalg.pinvh(covariance)
-            dist = (np.dot(X_centered, precision) * (X_centered)).sum(axis=1)
+        return _fast_mcd_one_dim(X, n_samples, n_support)
+
     # Starting FastMCD algorithm for p-dimensional case
-    if (n_samples > 500) and (n_features > 1):
+    if n_samples > 500:
         # 1. Find candidate supports on subsets
         # a. split the set in subsets of size ~ 300
         n_subsets = n_samples // 300
@@ -587,7 +613,7 @@ def fast_mcd(
             covariance = covariances_full[0]
             support = supports_full[0]
             dist = d[0]
-    elif n_features > 1:
+    else:
         # 1. Find the 10 best couples (location, covariance)
         # considering two iterations
         n_trials = 30
