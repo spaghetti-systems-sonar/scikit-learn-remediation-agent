@@ -2117,6 +2117,59 @@ def check_scalar(
     return x
 
 
+def _fix_negative_eigenvalues(
+    lambdas, max_eig, significant_neg_ratio, significant_neg_value,
+    enable_warnings,
+):
+    """Check and fix negative eigenvalues in a PSD matrix spectrum.
+
+    Parameters
+    ----------
+    lambdas : ndarray
+        Real-valued eigenvalues.
+
+    max_eig : float
+        Maximum eigenvalue (must be non-negative).
+
+    significant_neg_ratio : float
+        Threshold ratio for significant negative eigenvalues.
+
+    significant_neg_value : float
+        Threshold absolute value for significant negative eigenvalues.
+
+    enable_warnings : bool
+        Whether to emit warnings when fixing eigenvalues.
+
+    Returns
+    -------
+    lambdas : ndarray
+        Eigenvalues with insignificant negatives set to zero.
+    """
+    min_eig = lambdas.min()
+    if (
+        min_eig < -significant_neg_ratio * max_eig
+        and min_eig < -significant_neg_value
+    ):
+        raise ValueError(
+            "There are significant negative eigenvalues (%g"
+            " of the maximum positive). Either the matrix is "
+            "not PSD, or there was an issue while computing "
+            "the eigendecomposition of the matrix." % (-min_eig / max_eig)
+        )
+    if min_eig < 0:
+        if enable_warnings:
+            warnings.warn(
+                "There are negative eigenvalues (%g of the "
+                "maximum positive). Either the matrix is not "
+                "PSD, or there was an issue while computing the"
+                " eigendecomposition of the matrix. Negative "
+                "eigenvalues will be replaced with 0." % (-min_eig / max_eig),
+                PositiveSpectrumWarning,
+            )
+        lambdas[lambdas < 0] = 0
+    return lambdas
+
+
 def _check_psd_eigenvalues(lambdas, enable_warnings=False):
     """Check the eigenvalues of a positive semidefinite (PSD) matrix.
 
@@ -2249,30 +2302,10 @@ def _check_psd_eigenvalues(lambdas, enable_warnings=False):
             "the matrix." % max_eig
         )
 
-    else:
-        min_eig = lambdas.min()
-        if (
-            min_eig < -significant_neg_ratio * max_eig
-            and min_eig < -significant_neg_value
-        ):
-            raise ValueError(
-                "There are significant negative eigenvalues (%g"
-                " of the maximum positive). Either the matrix is "
-                "not PSD, or there was an issue while computing "
-                "the eigendecomposition of the matrix." % (-min_eig / max_eig)
-            )
-        elif min_eig < 0:
-            # Remove all negative values and warn about it
-            if enable_warnings:
-                warnings.warn(
-                    "There are negative eigenvalues (%g of the "
-                    "maximum positive). Either the matrix is not "
-                    "PSD, or there was an issue while computing the"
-                    " eigendecomposition of the matrix. Negative "
-                    "eigenvalues will be replaced with 0." % (-min_eig / max_eig),
-                    PositiveSpectrumWarning,
-                )
-            lambdas[lambdas < 0] = 0
+    lambdas = _fix_negative_eigenvalues(
+        lambdas, max_eig, significant_neg_ratio, significant_neg_value,
+        enable_warnings,
+    )
 
     # Check for conditioning (small positive non-zeros)
     too_small_lambdas = (0 < lambdas) & (lambdas < small_pos_ratio * max_eig)
@@ -2288,6 +2321,40 @@ def _check_psd_eigenvalues(lambdas, enable_warnings=False):
         lambdas[too_small_lambdas] = 0
 
     return lambdas
+
+
+def _validate_sample_weight_array(
+    sample_weight, n_samples, dtype, force_float_dtype, float_dtypes,
+    is_array_api, ensure_same_device, xp, device, copy,
+):
+    """Validate an array-like sample_weight and return the checked array."""
+    if force_float_dtype and dtype is None:
+        dtype = float_dtypes
+    if is_array_api and ensure_same_device:
+        sample_weight = move_to(sample_weight, xp=xp, device=device)
+    sample_weight = check_array(
+        sample_weight,
+        accept_sparse=False,
+        ensure_2d=False,
+        dtype=dtype,
+        order="C",
+        copy=copy,
+        input_name="sample_weight",
+    )
+    if sample_weight.ndim != 1:
+        raise ValueError(
+            f"Sample weights must be 1D array or scalar, got "
+            f"{sample_weight.ndim}D array. Expected either a scalar value "
+            f"or a 1D array of length {n_samples}."
+        )
+
+    if sample_weight.shape != (n_samples,):
+        raise ValueError(
+            "sample_weight.shape == {}, expected {}!".format(
+                sample_weight.shape, (n_samples,)
+            )
+        )
+    return sample_weight
 
 
 def _check_sample_weight(
@@ -2368,32 +2435,10 @@ def _check_sample_weight(
     elif isinstance(sample_weight, numbers.Number):
         sample_weight = xp.full(n_samples, sample_weight, dtype=dtype, device=device)
     else:
-        if force_float_dtype and dtype is None:
-            dtype = float_dtypes
-        if is_array_api and ensure_same_device:
-            sample_weight = move_to(sample_weight, xp=xp, device=device)
-        sample_weight = check_array(
-            sample_weight,
-            accept_sparse=False,
-            ensure_2d=False,
-            dtype=dtype,
-            order="C",
-            copy=copy,
-            input_name="sample_weight",
+        sample_weight = _validate_sample_weight_array(
+            sample_weight, n_samples, dtype, force_float_dtype, float_dtypes,
+            is_array_api, ensure_same_device, xp, device, copy,
         )
-        if sample_weight.ndim != 1:
-            raise ValueError(
-                f"Sample weights must be 1D array or scalar, got "
-                f"{sample_weight.ndim}D array. Expected either a scalar value "
-                f"or a 1D array of length {n_samples}."
-            )
-
-        if sample_weight.shape != (n_samples,):
-            raise ValueError(
-                "sample_weight.shape == {}, expected {}!".format(
-                    sample_weight.shape, (n_samples,)
-                )
-            )
 
     if not allow_all_zero_weights:
         if xp.all(sample_weight == 0):
@@ -2670,6 +2715,95 @@ def _generate_get_feature_names_out(estimator, n_features_out, input_features=No
     )
 
 
+def _resolve_categorical_mask(categorical_features, n_features, feature_names_in_):
+    """Resolve categorical features into a boolean mask based on dtype.
+
+    Parameters
+    ----------
+    categorical_features : ndarray
+        Array of categorical feature indicators (str, int, or bool).
+
+    n_features : int
+        Total number of features.
+
+    feature_names_in_ : array-like or None
+        Feature names from the input data, if available.
+
+    Returns
+    -------
+    is_categorical : ndarray of shape (n_features,), dtype=bool
+        Boolean mask indicating categorical features.
+    """
+    if categorical_features.dtype.kind in ("U", "O"):
+        if feature_names_in_ is None:
+            raise ValueError(
+                "categorical_features should be passed as an array of "
+                "integers or as a boolean mask when the model is fitted "
+                "on data without feature names."
+            )
+        is_categorical = np.zeros(n_features, dtype=bool)
+        feature_names = list(feature_names_in_)
+        for feature_name in categorical_features:
+            try:
+                is_categorical[feature_names.index(feature_name)] = True
+            except ValueError as e:
+                raise ValueError(
+                    f"categorical_features has an item value '{feature_name}' "
+                    "which is not a valid feature name of the training "
+                    f"data. Observed feature names: {feature_names}"
+                ) from e
+        return is_categorical
+
+    if categorical_features.dtype.kind == "i":
+        if (
+            np.max(categorical_features) >= n_features
+            or np.min(categorical_features) < 0
+        ):
+            raise ValueError(
+                "categorical_features set as integer "
+                "indices must be in [0, n_features - 1]"
+            )
+        is_categorical = np.zeros(n_features, dtype=bool)
+        is_categorical[categorical_features] = True
+        return is_categorical
+
+    if categorical_features.shape[0] != n_features:
+        raise ValueError(
+            "categorical_features set as a boolean mask "
+            "must have shape (n_features,), got: "
+            f"{categorical_features.shape}"
+        )
+    return categorical_features
+
+
+def _validate_categorical_features_dtype(categorical_features):
+    """Validate the dtype of categorical_features array.
+
+    Parameters
+    ----------
+    categorical_features : ndarray
+        Array of categorical feature indicators.
+
+    Raises
+    ------
+    ValueError
+        If the dtype is not one of int, bool, unicode string, or object (str).
+    """
+    if categorical_features.dtype.kind not in ("i", "b", "U", "O"):
+        raise ValueError(
+            "categorical_features must be an array-like of bool, int or "
+            f"str, got: {categorical_features.dtype.name}."
+        )
+
+    if categorical_features.dtype.kind == "O":
+        types = set(type(f) for f in categorical_features)
+        if types != {str}:
+            raise ValueError(
+                "categorical_features must be an array-like of bool, int or "
+                f"str, got: {', '.join(sorted(t.__name__ for t in types))}."
+            )
+
+
 def _check_categorical_features(X, categorical_features):
     """Check and validate categorical features in X
 
@@ -2728,19 +2862,7 @@ def _check_categorical_features(X, categorical_features):
     if categorical_features.size == 0:
         return None
 
-    if categorical_features.dtype.kind not in ("i", "b", "U", "O"):
-        raise ValueError(
-            "categorical_features must be an array-like of bool, int or "
-            f"str, got: {categorical_features.dtype.name}."
-        )
-
-    if categorical_features.dtype.kind == "O":
-        types = set(type(f) for f in categorical_features)
-        if types != {str}:
-            raise ValueError(
-                "categorical_features must be an array-like of bool, int or "
-                f"str, got: {', '.join(sorted(t.__name__ for t in types))}."
-            )
+    _validate_categorical_features_dtype(categorical_features)
 
     n_features = X.shape[1]
     # At this point `validate_data` was not called yet because we use the original
@@ -2748,45 +2870,9 @@ def _check_categorical_features(X, categorical_features):
     # is not defined yet.
     feature_names_in_ = getattr(X, "columns", None)
 
-    if categorical_features.dtype.kind in ("U", "O"):
-        # check for feature names
-        if feature_names_in_ is None:
-            raise ValueError(
-                "categorical_features should be passed as an array of "
-                "integers or as a boolean mask when the model is fitted "
-                "on data without feature names."
-            )
-        is_categorical = np.zeros(n_features, dtype=bool)
-        feature_names = list(feature_names_in_)
-        for feature_name in categorical_features:
-            try:
-                is_categorical[feature_names.index(feature_name)] = True
-            except ValueError as e:
-                raise ValueError(
-                    f"categorical_features has an item value '{feature_name}' "
-                    "which is not a valid feature name of the training "
-                    f"data. Observed feature names: {feature_names}"
-                ) from e
-    elif categorical_features.dtype.kind == "i":
-        # check for categorical features as indices
-        if (
-            np.max(categorical_features) >= n_features
-            or np.min(categorical_features) < 0
-        ):
-            raise ValueError(
-                "categorical_features set as integer "
-                "indices must be in [0, n_features - 1]"
-            )
-        is_categorical = np.zeros(n_features, dtype=bool)
-        is_categorical[categorical_features] = True
-    else:
-        if categorical_features.shape[0] != n_features:
-            raise ValueError(
-                "categorical_features set as a boolean mask "
-                "must have shape (n_features,), got: "
-                f"{categorical_features.shape}"
-            )
-        is_categorical = categorical_features
+    is_categorical = _resolve_categorical_mask(
+        categorical_features, n_features, feature_names_in_
+    )
 
     if not np.any(is_categorical):
         return None

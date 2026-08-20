@@ -471,6 +471,54 @@ def _ensure_sparse_index_int32(A):
 
 # TODO: remove when SciPy 1.15 is minimal supported version
 #       (based on scipy.sparse._sputils.py function with same name)
+
+
+def _cast_csc_csr_indices(a, idx_dtype, max_value, msg):
+    """Cast CSC/CSR index arrays to `idx_dtype`."""
+    if a.indptr[-1] > max_value:
+        raise ValueError(f"indptr values too large for {msg}")
+    if max(*a.shape) > max_value:
+        if (a.indices > max_value).any():
+            raise ValueError(f"indices values too large for {msg}")
+    indices = a.indices.astype(idx_dtype, copy=False)
+    indptr = a.indptr.astype(idx_dtype, copy=False)
+    return indices, indptr
+
+
+def _cast_coo_indices(a, idx_dtype, max_value, msg):
+    """Cast COO index arrays to `idx_dtype`."""
+    coords = getattr(a, "coords", None)
+    if coords is None:
+        coords = getattr(a, "indices", None)
+    if coords is None:
+        coords = (a.row, a.col)
+    if max(*a.shape) > max_value:
+        if any((co > max_value).any() for co in coords):
+            raise ValueError(f"coords values too large for {msg}")
+    return tuple(co.astype(idx_dtype, copy=False) for co in coords)
+
+
+def _cast_dia_indices(a, idx_dtype, max_value, msg):
+    """Cast DIA index arrays to `idx_dtype`."""
+    if max(*a.shape) > max_value:
+        if (a.offsets > max_value).any():
+            raise ValueError(f"offsets values too large for {msg}")
+    return a.offsets.astype(idx_dtype, copy=False)
+
+
+def _cast_bsr_indices(a, idx_dtype, max_value, msg):
+    """Cast BSR index arrays to `idx_dtype`."""
+    r, c = a.blocksize
+    if a.indptr[-1] * r > max_value:
+        raise ValueError("indptr values too large for {msg}")
+    if max(*a.shape) > max_value:
+        if (a.indices * c > max_value).any():
+            raise ValueError(f"indices values too large for {msg}")
+    indices = a.indices.astype(idx_dtype, copy=False)
+    indptr = a.indptr.astype(idx_dtype, copy=False)
+    return indices, indptr
+
+
 def _safely_cast_index_arrays(A, idx_dtype=np.int32, msg=""):
     """Safely cast sparse array indices to `idx_dtype`.
 
@@ -489,45 +537,13 @@ def _safely_cast_index_arrays(A, idx_dtype=np.int32, msg=""):
     max_value = np.iinfo(idx_dtype).max
 
     if A.format in ("csc", "csr"):
-        if A.indptr[-1] > max_value:
-            raise ValueError(f"indptr values too large for {msg}")
-        # check shape vs dtype
-        if max(*A.shape) > max_value:
-            if (A.indices > max_value).any():
-                raise ValueError(f"indices values too large for {msg}")
-
-        indices = A.indices.astype(idx_dtype, copy=False)
-        indptr = A.indptr.astype(idx_dtype, copy=False)
-        return indices, indptr
-
+        return _cast_csc_csr_indices(A, idx_dtype, max_value, msg)
     elif A.format == "coo":
-        coords = getattr(A, "coords", None)
-        if coords is None:
-            coords = getattr(A, "indices", None)
-            if coords is None:
-                coords = (A.row, A.col)
-        if max(*A.shape) > max_value:
-            if any((co > max_value).any() for co in coords):
-                raise ValueError(f"coords values too large for {msg}")
-        return tuple(co.astype(idx_dtype, copy=False) for co in coords)
-
+        return _cast_coo_indices(A, idx_dtype, max_value, msg)
     elif A.format == "dia":
-        if max(*A.shape) > max_value:
-            if (A.offsets > max_value).any():
-                raise ValueError(f"offsets values too large for {msg}")
-        offsets = A.offsets.astype(idx_dtype, copy=False)
-        return offsets
-
+        return _cast_dia_indices(A, idx_dtype, max_value, msg)
     elif A.format == "bsr":
-        R, C = A.blocksize
-        if A.indptr[-1] * R > max_value:
-            raise ValueError("indptr values too large for {msg}")
-        if max(*A.shape) > max_value:
-            if (A.indices * C > max_value).any():
-                raise ValueError(f"indices values too large for {msg}")
-        indices = A.indices.astype(idx_dtype, copy=False)
-        indptr = A.indptr.astype(idx_dtype, copy=False)
-        return indices, indptr
+        return _cast_bsr_indices(A, idx_dtype, max_value, msg)
     # DOK and LIL formats are not associated with index arrays.
 
 

@@ -825,6 +825,39 @@ def generate_invalid_param_val(constraint):
     raise NotImplementedError
 
 
+def _generate_valid_param_instances_of(constraint):
+    """Return a valid value for an _InstancesOf constraint."""
+    if constraint.type is np.ndarray:
+        # special case for ndarray since it can't be instantiated without arguments
+        return np.array([1, 2, 3])
+
+    if constraint.type in (Integral, Real):
+        # special case for Integral and Real since they are abstract classes
+        return 1
+
+    return constraint.type()
+
+
+def _generate_valid_param_missing_values(constraint):
+    """Return a valid value for a MissingValues constraint."""
+    if constraint.numeric_only:
+        return np.nan
+    return "missing"
+
+
+def _generate_valid_param_interval(constraint):
+    """Return a valid value for an Interval constraint."""
+    if constraint.left is None and constraint.right is None:
+        return 0
+    if constraint.left is None:
+        return constraint.right - 1
+    if constraint.right is None:
+        return constraint.left + 1
+    if constraint.type is Real:
+        return (constraint.left + constraint.right) / 2
+    return constraint.left + 1
+
+
 def generate_valid_param(constraint):
     """Return a value that does satisfy a constraint.
 
@@ -856,15 +889,7 @@ def generate_valid_param(constraint):
         return None
 
     if isinstance(constraint, _InstancesOf):
-        if constraint.type is np.ndarray:
-            # special case for ndarray since it can't be instantiated without arguments
-            return np.array([1, 2, 3])
-
-        if constraint.type in (Integral, Real):
-            # special case for Integral and Real since they are abstract classes
-            return 1
-
-        return constraint.type()
+        return _generate_valid_param_instances_of(constraint)
 
     if isinstance(constraint, _Booleans):
         return True
@@ -872,11 +897,8 @@ def generate_valid_param(constraint):
     if isinstance(constraint, _VerboseHelper):
         return 1
 
-    if isinstance(constraint, MissingValues) and constraint.numeric_only:
-        return np.nan
-
-    if isinstance(constraint, MissingValues) and not constraint.numeric_only:
-        return "missing"
+    if isinstance(constraint, MissingValues):
+        return _generate_valid_param_missing_values(constraint)
 
     if isinstance(constraint, HasMethods):
         return type(
@@ -890,21 +912,9 @@ def generate_valid_param(constraint):
         return 5
 
     if isinstance(constraint, Options):  # includes StrOptions
-        for option in constraint.options:
-            return option
+        return next(iter(constraint.options))
 
     if isinstance(constraint, Interval):
-        interval = constraint
-        if interval.left is None and interval.right is None:
-            return 0
-        elif interval.left is None:
-            return interval.right - 1
-        elif interval.right is None:
-            return interval.left + 1
-        else:
-            if interval.type is Real:
-                return (interval.left + interval.right) / 2
-            else:
-                return interval.left + 1
+        return _generate_valid_param_interval(constraint)
 
     raise ValueError(f"Unknown constraint type: {constraint}")
