@@ -27,6 +27,7 @@ def _get_css_style():
 _CONTAINER_ID_COUNTER = _IDCounter("sk-container-id")
 _ESTIMATOR_ID_COUNTER = _IDCounter("sk-estimator-id")
 _CSS_STYLE = _get_css_style()
+_CLOSING_DIV = "</div>"
 
 
 class _VisualBlock:
@@ -217,7 +218,7 @@ def _write_label_html(
                 name_details = ""
             out.write(f"<pre>{name_details}</pre>")
 
-        out.write("</div>")
+        out.write(_CLOSING_DIV)
         if features is None or len(features) == 0:
             features_div = ""
         else:
@@ -430,9 +431,9 @@ def _write_serial_parallel_html(
                 is_fitted_css_class=is_fitted_css_class,
                 param_prefix=new_prefix,
             )
-            out.write("</div>")  # sk-parallel-item
+            out.write(_CLOSING_DIV)  # sk-parallel-item
 
-    out.write("</div>")
+    out.write(_CLOSING_DIV)
 
     is_column_transformer = isinstance(estimator, ColumnTransformer)
     has_single_estimator = len(est_block.estimators) == 1
@@ -451,7 +452,7 @@ def _write_serial_parallel_html(
             )
             out.write(total_output_features_item)
 
-    out.write("</div>")
+    out.write(_CLOSING_DIV)
 
 
 def _write_single_html(

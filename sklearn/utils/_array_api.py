@@ -516,6 +516,71 @@ def get_namespace_and_device(
         return xp, False, arrays_device
 
 
+def _downcast_float64_to_float32(arrays, xp, device):
+    """Downcast float64 arrays to float32 when device max precision is float32."""
+    if _max_precision_float_dtype(xp, device) != xp.float32:
+        return arrays
+
+    result = []
+    for array in arrays:
+        xp_array, _ = get_namespace(array)
+        if getattr(array, "dtype", None) == xp_array.float64:
+            result.append(xp_array.astype(array, xp_array.float32))
+        else:
+            result.append(array)
+    return result
+
+
+def _move_single_array(array, xp, device):
+    """Move a single array to the target namespace and device.
+
+    Returns the array unchanged if it is already on the target namespace and device.
+    """
+    xp_array, _, device_array = get_namespace_and_device(array)
+    if xp == xp_array and device == device_array:
+        return array
+
+    try:
+        # The dlpack protocol is the future proof and library agnostic
+        # method to transfer arrays across namespace and device boundaries
+        # hence this method is attempted first and going through NumPy is
+        # only used as fallback in case of failure.
+        # Note: copy=None is the default since array-api 2023.12. Namespace
+        # libraries should only trigger a copy automatically if needed.
+        return xp.from_dlpack(array, device=device)
+        # `AttributeError` occurs when `__dlpack__` and `__dlpack_device__`
+        # methods are not present on the input array
+        # `TypeError` and `NotImplementedError` for packages that do not
+        # yet support dlpack 1.0
+        # (i.e. the `device`/`copy` kwargs, e.g., torch <= 2.8.0)
+        # See https://github.com/data-apis/array-api/pull/741 for
+        # more details about the introduction of the `copy` and `device`
+        # kwargs in the from_dlpack method and their expected
+        # meaning by namespaces implementing the array API spec.
+        # TODO: try removing this once DLPack v1 more widely supported
+        # TODO: ValueError not needed once min NumPy >=2.4.0:
+        # https://github.com/numpy/numpy/issues/30341
+    except (
+        AttributeError,
+        TypeError,
+        NotImplementedError,
+        BufferError,
+        ValueError,
+    ):
+        # Converting to numpy is tricky, handle this via dedicated function
+        if _is_numpy_namespace(xp):
+            return _convert_to_numpy(array, xp_array)
+        # Convert from numpy, all array libraries can do this
+        if _is_numpy_namespace(xp_array):
+            return xp.asarray(array, device=device)
+        # There is no generic way to convert from namespace A to B
+        # So we first convert from A to numpy and then from numpy to B
+        # The way to avoid this round trip is to lobby for DLpack
+        # support in libraries A and B
+        array_np = _convert_to_numpy(array, xp_array)
+        return xp.asarray(array_np, device=device)
+
+
 def move_to(*arrays, xp, device):
     """Move all arrays to `xp` and `device`.
 
@@ -559,16 +624,7 @@ def move_to(*arrays, xp, device):
             "namespace is Numpy"
         )
 
-    arrays_ = arrays
-    # Down cast float64 `arrays` when highest precision of `xp`/`device` is float32
-    if _max_precision_float_dtype(xp, device) == xp.float32:
-        arrays_ = []
-        for array in arrays:
-            xp_array, _ = get_namespace(array)
-            if getattr(array, "dtype", None) == xp_array.float64:
-                arrays_.append(xp_array.astype(array, xp_array.float32))
-            else:
-                arrays_.append(array)
+    arrays_ = _downcast_float64_to_float32(arrays, xp, device)
 
     converted_arrays = []
     for array, is_sparse, is_none in zip(arrays_, sparse_mask, none_mask):
@@ -577,51 +633,7 @@ def move_to(*arrays, xp, device):
         elif is_sparse:
             converted_arrays.append(array)
         else:
-            xp_array, _, device_array = get_namespace_and_device(array)
-            if xp == xp_array and device == device_array:
-                converted_arrays.append(array)
-            else:
-                try:
-                    # The dlpack protocol is the future proof and library agnostic
-                    # method to transfer arrays across namespace and device boundaries
-                    # hence this method is attempted first and going through NumPy is
-                    # only used as fallback in case of failure.
-                    # Note: copy=None is the default since array-api 2023.12. Namespace
-                    # libraries should only trigger a copy automatically if needed.
-                    array_converted = xp.from_dlpack(array, device=device)
-                    # `AttributeError` occurs when `__dlpack__` and `__dlpack_device__`
-                    # methods are not present on the input array
-                    # `TypeError` and `NotImplementedError` for packages that do not
-                    # yet support dlpack 1.0
-                    # (i.e. the `device`/`copy` kwargs, e.g., torch <= 2.8.0)
-                    # See https://github.com/data-apis/array-api/pull/741 for
-                    # more details about the introduction of the `copy` and `device`
-                    # kwargs in the from_dlpack method and their expected
-                    # meaning by namespaces implementing the array API spec.
-                    # TODO: try removing this once DLPack v1 more widely supported
-                    # TODO: ValueError not needed once min NumPy >=2.4.0:
-                    # https://github.com/numpy/numpy/issues/30341
-                except (
-                    AttributeError,
-                    TypeError,
-                    NotImplementedError,
-                    BufferError,
-                    ValueError,
-                ):
-                    # Converting to numpy is tricky, handle this via dedicated function
-                    if _is_numpy_namespace(xp):
-                        array_converted = _convert_to_numpy(array, xp_array)
-                    # Convert from numpy, all array libraries can do this
-                    elif _is_numpy_namespace(xp_array):
-                        array_converted = xp.asarray(array, device=device)
-                    else:
-                        # There is no generic way to convert from namespace A to B
-                        # So we first convert from A to numpy and then from numpy to B
-                        # The way to avoid this round trip is to lobby for DLpack
-                        # support in libraries A and B
-                        array_np = _convert_to_numpy(array, xp_array)
-                        array_converted = xp.asarray(array_np, device=device)
-                converted_arrays.append(array_converted)
+            converted_arrays.append(_move_single_array(array, xp, device))
 
     return (
         converted_arrays[0] if len(converted_arrays) == 1 else tuple(converted_arrays)
