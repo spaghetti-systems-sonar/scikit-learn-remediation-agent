@@ -79,6 +79,21 @@ TARGETS = (
 #
 
 
+def _fetch_lfw_if_missing(
+    target, dirname, download_if_missing, n_retries, delay, log_message
+):
+    """Download a remote target if missing, or raise if downloads are disabled."""
+    filepath = join(dirname, target.filename)
+    if not exists(filepath):
+        if download_if_missing:
+            logger.info(log_message, target.url)
+            _fetch_remote(
+                target, dirname=dirname, n_retries=n_retries, delay=delay
+            )
+        else:
+            raise OSError("%s is missing" % filepath)
+
+
 def _check_fetch_lfw(
     data_home=None, funneled=True, download_if_missing=True, n_retries=3, delay=1.0
 ):
@@ -91,15 +106,14 @@ def _check_fetch_lfw(
         makedirs(lfw_home)
 
     for target in TARGETS:
-        target_filepath = join(lfw_home, target.filename)
-        if not exists(target_filepath):
-            if download_if_missing:
-                logger.info("Downloading LFW metadata: %s", target.url)
-                _fetch_remote(
-                    target, dirname=lfw_home, n_retries=n_retries, delay=delay
-                )
-            else:
-                raise OSError("%s is missing" % target_filepath)
+        _fetch_lfw_if_missing(
+            target,
+            lfw_home,
+            download_if_missing,
+            n_retries,
+            delay,
+            "Downloading LFW metadata: %s",
+        )
 
     if funneled:
         data_folder_path = join(lfw_home, "lfw_funneled")
@@ -109,18 +123,18 @@ def _check_fetch_lfw(
         archive = ARCHIVE
 
     if not exists(data_folder_path):
-        archive_path = join(lfw_home, archive.filename)
-        if not exists(archive_path):
-            if download_if_missing:
-                logger.info("Downloading LFW data (~200MB): %s", archive.url)
-                _fetch_remote(
-                    archive, dirname=lfw_home, n_retries=n_retries, delay=delay
-                )
-            else:
-                raise OSError("%s is missing" % archive_path)
+        _fetch_lfw_if_missing(
+            archive,
+            lfw_home,
+            download_if_missing,
+            n_retries,
+            delay,
+            "Downloading LFW data (~200MB): %s",
+        )
 
         import tarfile
 
+        archive_path = join(lfw_home, archive.filename)
         logger.debug("Decompressing the data archive to %s", data_folder_path)
         with tarfile.open(archive_path, "r:gz") as fp:
             tarfile_extractall(fp, path=lfw_home)
@@ -128,6 +142,26 @@ def _check_fetch_lfw(
         remove(archive_path)
 
     return lfw_home, data_folder_path
+
+
+def _get_slice_and_dims(slice_, resize):
+    """Compute the image slice bounds and the resulting dimensions."""
+    default_slice = (slice(0, 250), slice(0, 250))
+    if slice_ is None:
+        slice_ = default_slice
+    else:
+        slice_ = tuple(s or ds for s, ds in zip(slice_, default_slice))
+
+    h_slice, w_slice = slice_
+    h = (h_slice.stop - h_slice.start) // (h_slice.step or 1)
+    w = (w_slice.stop - w_slice.start) // (w_slice.step or 1)
+
+    if resize is not None:
+        resize = float(resize)
+        h = int(resize * h)
+        w = int(resize * w)
+
+    return h_slice, w_slice, h, w, resize
 
 
 def _load_imgs(file_paths, slice_, color, resize):
@@ -144,20 +178,7 @@ def _load_imgs(file_paths, slice_, color, resize):
 
     # compute the portion of the images to load to respect the slice_ parameter
     # given by the caller
-    default_slice = (slice(0, 250), slice(0, 250))
-    if slice_ is None:
-        slice_ = default_slice
-    else:
-        slice_ = tuple(s or ds for s, ds in zip(slice_, default_slice))
-
-    h_slice, w_slice = slice_
-    h = (h_slice.stop - h_slice.start) // (h_slice.step or 1)
-    w = (w_slice.stop - w_slice.start) // (w_slice.step or 1)
-
-    if resize is not None:
-        resize = float(resize)
-        h = int(resize * h)
-        w = int(resize * w)
+    h_slice, w_slice, h, w, resize = _get_slice_and_dims(slice_, resize)
 
     # allocate some contiguous memory to host the decoded image slices
     n_faces = len(file_paths)

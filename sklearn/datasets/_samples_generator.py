@@ -43,6 +43,63 @@ def _generate_hypercube(samples, dimensions, rng):
     return out
 
 
+def _validate_make_classification_params(
+    n_informative, n_redundant, n_repeated, n_features, n_classes, n_clusters_per_class
+):
+    """Validate parameters for make_classification."""
+    if n_informative + n_redundant + n_repeated > n_features:
+        raise ValueError(
+            "Number of informative, redundant and repeated "
+            "features must sum to less than the number of total"
+            " features"
+        )
+    # Use log2 to avoid overflow errors
+    if n_informative < np.log2(n_classes * n_clusters_per_class):
+        msg = "n_classes({}) * n_clusters_per_class({}) must be"
+        msg += " smaller or equal 2**n_informative({})={}"
+        raise ValueError(
+            msg.format(
+                n_classes,
+                n_clusters_per_class,
+                n_informative,
+                2**n_informative,
+            )
+        )
+
+
+def _resolve_weights(weights, n_classes):
+    """Resolve sample weights for make_classification."""
+    if weights is None:
+        return [1.0 / n_classes] * n_classes
+
+    if len(weights) not in [n_classes, n_classes - 1]:
+        raise ValueError(
+            "Weights specified but incompatible with number of classes."
+        )
+    if len(weights) == n_classes - 1:
+        if isinstance(weights, list):
+            return weights + [1.0 - sum(weights)]
+        weights_ = np.resize(weights, n_classes)
+        weights_[-1] = 1.0 - sum(weights_[:-1])
+        return weights_
+    return weights.copy()
+
+
+def _build_feature_descriptions(indices, n_informative, n_redundant, n_repeated):
+    """Build feature description list for make_classification."""
+    n_features = len(indices)
+    n_useful = n_informative + n_redundant
+    feat_desc = ["random"] * n_features
+    for i, index in enumerate(indices):
+        if index < n_informative:
+            feat_desc[i] = "informative"
+        elif index < n_useful:
+            feat_desc[i] = "redundant"
+        elif n_useful <= index < n_useful + n_repeated:
+            feat_desc[i] = "repeated"
+    return feat_desc
+
+
 @validate_params(
     {
         "n_samples": [Interval(Integral, 1, None, closed="left")],
@@ -232,36 +289,11 @@ def make_classification(
     generator = check_random_state(random_state)
 
     # Count features, clusters and samples
-    if n_informative + n_redundant + n_repeated > n_features:
-        raise ValueError(
-            "Number of informative, redundant and repeated "
-            "features must sum to less than the number of total"
-            " features"
-        )
-    # Use log2 to avoid overflow errors
-    if n_informative < np.log2(n_classes * n_clusters_per_class):
-        msg = "n_classes({}) * n_clusters_per_class({}) must be"
-        msg += " smaller or equal 2**n_informative({})={}"
-        raise ValueError(
-            msg.format(n_classes, n_clusters_per_class, n_informative, 2**n_informative)
-        )
+    _validate_make_classification_params(
+        n_informative, n_redundant, n_repeated, n_features, n_classes, n_clusters_per_class
+    )
 
-    if weights is not None:
-        # we define new variable, weight_, instead of modifying user defined parameter.
-        if len(weights) not in [n_classes, n_classes - 1]:
-            raise ValueError(
-                "Weights specified but incompatible with number of classes."
-            )
-        if len(weights) == n_classes - 1:
-            if isinstance(weights, list):
-                weights_ = weights + [1.0 - sum(weights)]
-            else:
-                weights_ = np.resize(weights, n_classes)
-                weights_[-1] = 1.0 - sum(weights_[:-1])
-        else:
-            weights_ = weights.copy()
-    else:
-        weights_ = [1.0 / n_classes] * n_classes
+    weights_ = _resolve_weights(weights, n_classes)
 
     n_random = n_features - n_informative - n_redundant - n_repeated
     n_clusters = n_classes * n_clusters_per_class
@@ -348,14 +380,9 @@ def make_classification(
         return X, y
 
     # feat_desc describes features in X
-    feat_desc = ["random"] * n_features
-    for i, index in enumerate(indices):
-        if index < n_informative:
-            feat_desc[i] = "informative"
-        elif n_informative <= index < n_informative + n_redundant:
-            feat_desc[i] = "redundant"
-        elif n <= index < n + n_repeated:
-            feat_desc[i] = "repeated"
+    feat_desc = _build_feature_descriptions(
+        indices, n_informative, n_redundant, n_repeated
+    )
 
     parameters = {
         "n_samples": n_samples,

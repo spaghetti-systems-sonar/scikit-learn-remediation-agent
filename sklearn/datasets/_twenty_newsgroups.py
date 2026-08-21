@@ -159,6 +159,25 @@ def strip_newsgroup_footer(text):
         return text
 
 
+def _load_cached_20newsgroups(cache_path):
+    """Load the 20 newsgroups dataset cache from disk.
+
+    Returns the cached data or None if loading fails or the cache does not exist.
+    """
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, "rb") as f:
+                compressed_content = f.read()
+            uncompressed_content = codecs.decode(compressed_content, "zlib_codec")
+            return pickle.loads(uncompressed_content)
+        except Exception as e:
+            print(80 * "_")
+            print("Cache loading failed")
+            print(80 * "_")
+            print(e)
+    return None
+
+
 @validate_params(
     {
         "data_home": [str, os.PathLike, None],
@@ -301,18 +320,7 @@ def fetch_20newsgroups(
     data_home = get_data_home(data_home=data_home)
     cache_path = _pkl_filepath(data_home, CACHE_NAME)
     twenty_home = os.path.join(data_home, "20news_home")
-    cache = None
-    if os.path.exists(cache_path):
-        try:
-            with open(cache_path, "rb") as f:
-                compressed_content = f.read()
-            uncompressed_content = codecs.decode(compressed_content, "zlib_codec")
-            cache = pickle.loads(uncompressed_content)
-        except Exception as e:
-            print(80 * "_")
-            print("Cache loading failed")
-            print(80 * "_")
-            print(e)
+    cache = _load_cached_20newsgroups(cache_path)
 
     if cache is None:
         if download_if_missing:

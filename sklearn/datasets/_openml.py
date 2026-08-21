@@ -82,6 +82,16 @@ def _retry_with_clean_cache(
     return decorator
 
 
+def _is_retriable_network_error(e, retry_counter):
+    """Return True if the network error should be retried."""
+    # 412 is a specific OpenML error code.
+    if isinstance(e, HTTPError) and e.code == 412:
+        return False
+    if retry_counter == 0:
+        return False
+    return True
+
+
 def _retry_on_network_error(
     n_retries: int = 3, delay: float = 1.0, url: str = ""
 ) -> Callable:
@@ -101,10 +111,7 @@ def _retry_on_network_error(
                 try:
                     return f(*args, **kwargs)
                 except (URLError, TimeoutError) as e:
-                    # 412 is a specific OpenML error code.
-                    if isinstance(e, HTTPError) and e.code == 412:
-                        raise
-                    if retry_counter == 0:
+                    if not _is_retriable_network_error(e, retry_counter):
                         raise
                     warn(
                         f"A network error occurred while downloading {url}. Retrying..."
