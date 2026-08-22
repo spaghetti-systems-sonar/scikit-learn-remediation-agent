@@ -280,7 +280,7 @@ class PolynomialFeatures(TransformerMixin, BaseEstimator):
         input_features = _check_feature_names_in(self, input_features)
         feature_names = []
         for row in powers:
-            inds = np.where(row)[0]
+            inds = np.nonzero(row)[0]
             if len(inds):
                 name = " ".join(
                     (
