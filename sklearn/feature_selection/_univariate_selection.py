@@ -682,7 +682,7 @@ class SelectPercentile(_BaseFilter):
         scores = _clean_nans(self.scores_)
         threshold = np.percentile(scores, 100 - self.percentile)
         mask = scores > threshold
-        ties = np.where(scores == threshold)[0]
+        ties = np.nonzero(scores == threshold)[0]
         if len(ties):
             max_feats = int(len(scores) * self.percentile / 100)
             kept_ties = ties[: max_feats - mask.sum()]

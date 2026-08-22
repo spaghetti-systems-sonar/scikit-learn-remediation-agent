@@ -436,7 +436,7 @@ class DictVectorizer(TransformerMixin, BaseEstimator):
         check_is_fitted(self, "feature_names_")
 
         if not indices:
-            support = np.where(support)[0]
+            support = np.nonzero(support)[0]
 
         names = self.feature_names_
         new_vocab = {}
