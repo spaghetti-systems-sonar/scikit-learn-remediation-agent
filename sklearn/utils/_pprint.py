@@ -296,6 +296,29 @@ class _EstimatorPrettyPrinter(pprint.PrettyPrinter):
                 class_(ent), stream, indent, allowance if last else 1, context, level
             )
 
+    def _format_compact_item(
+        self, ent, context, level, width, max_width, delim, delimnl, write
+    ):
+        """Format a single item in compact mode.
+
+        Returns a tuple (wrote_item, width, delim) where wrote_item is True
+        if the item was written inline and the caller should skip to the next
+        item.
+        """
+        rep = self._repr(ent, context, level)
+        w = len(rep) + 2
+        if width < w:
+            width = max_width
+            if delim:
+                delim = delimnl
+        if width >= w:
+            width -= w
+            write(delim)
+            delim = ", "
+            write(rep)
+            return True, width, delim
+        return False, width, delim
+
     def _format_items(self, items, stream, indent, allowance, context, level):
         """Format the items of an iterable (list, tuple...). Same as the
         built-in _format_items, with support for ellipsis if the number of
@@ -328,17 +351,11 @@ class _EstimatorPrettyPrinter(pprint.PrettyPrinter):
                 max_width -= allowance
                 width -= allowance
             if self._compact:
-                rep = self._repr(ent, context, level)
-                w = len(rep) + 2
-                if width < w:
-                    width = max_width
-                    if delim:
-                        delim = delimnl
-                if width >= w:
-                    width -= w
-                    write(delim)
-                    delim = ", "
-                    write(rep)
+                wrote, width, delim = self._format_compact_item(
+                    ent, context, level,
+                    width, max_width, delim, delimnl, write,
+                )
+                if wrote:
                     continue
             write(delim)
             delim = delimnl

@@ -7,6 +7,35 @@ from sklearn.utils._array_api import (
 )
 
 
+def _handle_zero_weight_columns(
+    col_indices,
+    sample_weight,
+    percentile_plus_one_in_sorted,
+    weight_cdf,
+    percentile_indices,
+    max_idx,
+    sorted_idx,
+    xp,
+):
+    """Update percentile_plus_one_in_sorted for columns with zero weight."""
+    zero_weight_cols = col_indices[
+        sample_weight[percentile_plus_one_in_sorted, col_indices] == 0
+    ]
+    for col_idx in zero_weight_cols:
+        cdf_val = weight_cdf[col_idx, percentile_indices[col_idx]]
+        # Search for next index where `weighted_cdf` is greater
+        next_index = xp.searchsorted(
+            weight_cdf[col_idx, ...], cdf_val, side="right"
+        )
+        # Handle case where there are trailing 0 sample weight samples
+        # and `percentile_indices` is already max index
+        if next_index > max_idx:
+            # use original `percentile_indices` again
+            next_index = percentile_indices[col_idx]
+
+        percentile_plus_one_in_sorted[col_idx] = sorted_idx[next_index, col_idx]
+
+
 def _weighted_percentile(
     array, sample_weight, percentile_rank=50, average=False, xp=None
 ):
@@ -181,22 +210,16 @@ def _weighted_percentile(
                 percentile_plus_one_indices, col_indices
             ]
             # Handle case when next index ('plus one') has sample weight of 0
-            zero_weight_cols = col_indices[
-                sample_weight[percentile_plus_one_in_sorted, col_indices] == 0
-            ]
-            for col_idx in zero_weight_cols:
-                cdf_val = weight_cdf[col_idx, percentile_indices[col_idx]]
-                # Search for next index where `weighted_cdf` is greater
-                next_index = xp.searchsorted(
-                    weight_cdf[col_idx, ...], cdf_val, side="right"
-                )
-                # Handle case where there are trailing 0 sample weight samples
-                # and `percentile_indices` is already max index
-                if next_index > max_idx:
-                    # use original `percentile_indices` again
-                    next_index = percentile_indices[col_idx]
-
-                percentile_plus_one_in_sorted[col_idx] = sorted_idx[next_index, col_idx]
+            _handle_zero_weight_columns(
+                col_indices,
+                sample_weight,
+                percentile_plus_one_in_sorted,
+                weight_cdf,
+                percentile_indices,
+                max_idx,
+                sorted_idx,
+                xp,
+            )
 
             result[..., p_idx] = xp.where(
                 is_fraction_above,
