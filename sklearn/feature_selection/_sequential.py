@@ -244,24 +244,7 @@ class SequentialFeatureSelector(SelectorMixin, MetaEstimatorMixin, BaseEstimator
         )
         n_features = X.shape[1]
 
-        if self.n_features_to_select == "auto":
-            if self.tol is not None:
-                # With auto feature selection, `n_features_to_select_` will be updated
-                # to `support_.sum()` after features are selected.
-                self.n_features_to_select_ = n_features - 1
-            else:
-                self.n_features_to_select_ = n_features // 2
-        elif isinstance(self.n_features_to_select, Integral):
-            if self.n_features_to_select >= n_features:
-                raise ValueError("n_features_to_select must be < n_features.")
-            self.n_features_to_select_ = self.n_features_to_select
-        elif isinstance(self.n_features_to_select, Real):
-            self.n_features_to_select_ = int(n_features * self.n_features_to_select)
-
-        if self.tol is not None and self.tol < 0 and self.direction == "forward":
-            raise ValueError(
-                "tol must be strictly positive when doing forward selection"
-            )
+        self._validate_and_set_n_features_to_select(n_features)
 
         cv = check_cv(self.cv, y, classifier=is_classifier(self.estimator))
 
@@ -302,6 +285,29 @@ class SequentialFeatureSelector(SelectorMixin, MetaEstimatorMixin, BaseEstimator
         self.n_features_to_select_ = self.support_.sum()
 
         return self
+
+    def _validate_and_set_n_features_to_select(self, n_features):
+        """Validate and set `n_features_to_select_` and check `tol`."""
+        if self.n_features_to_select == "auto":
+            if self.tol is not None:
+                # With auto feature selection, `n_features_to_select_` will be
+                # updated to `support_.sum()` after features are selected.
+                self.n_features_to_select_ = n_features - 1
+            else:
+                self.n_features_to_select_ = n_features // 2
+        elif isinstance(self.n_features_to_select, Integral):
+            if self.n_features_to_select >= n_features:
+                raise ValueError("n_features_to_select must be < n_features.")
+            self.n_features_to_select_ = self.n_features_to_select
+        elif isinstance(self.n_features_to_select, Real):
+            self.n_features_to_select_ = int(
+                n_features * self.n_features_to_select
+            )
+
+        if self.tol is not None and self.tol < 0 and self.direction == "forward":
+            raise ValueError(
+                "tol must be strictly positive when doing forward selection"
+            )
 
     def _get_best_new_feature_score(self, estimator, X, y, cv, current_mask, **params):
         # Return the best new feature and its score to add to the current_mask,

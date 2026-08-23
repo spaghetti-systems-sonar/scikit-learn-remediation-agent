@@ -146,6 +146,53 @@ class NearestCentroid(
         self.shrink_threshold = shrink_threshold
         self.priors = priors
 
+    def _validate_data_for_fit(self, X, y):
+        """Validate and return input data for fitting."""
+        if self.metric == "manhattan":
+            return validate_data(self, X, y, accept_sparse=["csc"])
+
+        ensure_all_finite = (
+            "allow-nan" if get_tags(self).input_tags.allow_nan else True
+        )
+        return validate_data(
+            self,
+            X,
+            y,
+            ensure_all_finite=ensure_all_finite,
+            accept_sparse=["csr", "csc"],
+        )
+
+    def _compute_centroids(self, X, y_ind, n_classes, n_features):
+        """Compute class centroids and per-class sample counts."""
+        self.centroids_ = np.empty((n_classes, n_features), dtype=np.float64)
+        nk = np.zeros(n_classes)
+        is_sparse = sp.issparse(X)
+
+        for cur_class in range(n_classes):
+            center_mask = y_ind == cur_class
+            nk[cur_class] = np.sum(center_mask)
+            if is_sparse:
+                center_mask = np.nonzero(center_mask)[0]
+
+            if self.metric == "manhattan":
+                if is_sparse:
+                    self.centroids_[cur_class] = csc_median_axis_0(X[center_mask])
+                else:
+                    self.centroids_[cur_class] = np.median(X[center_mask], axis=0)
+            else:  # metric == "euclidean"
+                self.centroids_[cur_class] = X[center_mask].mean(axis=0)
+
+        return nk
+
+    def _check_zero_variance(self, X):
+        """Raise if all features have zero variance."""
+        ERR_MSG = "All features have zero variance. Division by zero."
+        if sp.issparse(X):
+            if np.all((X.max(axis=0) - X.min(axis=0)).toarray() == 0):
+                raise ValueError(ERR_MSG)
+        elif np.all(np.ptp(X, axis=0) == 0):
+            raise ValueError(ERR_MSG)
+
     @_fit_context(prefer_skip_nested_validation=True)
     def fit(self, X, y):
         """
@@ -165,22 +212,7 @@ class NearestCentroid(
         self : object
             Fitted estimator.
         """
-        # If X is sparse and the metric is "manhattan", store it in a csc
-        # format is easier to calculate the median.
-        if self.metric == "manhattan":
-            X, y = validate_data(self, X, y, accept_sparse=["csc"])
-        else:
-            ensure_all_finite = (
-                "allow-nan" if get_tags(self).input_tags.allow_nan else True
-            )
-            X, y = validate_data(
-                self,
-                X,
-                y,
-                ensure_all_finite=ensure_all_finite,
-                accept_sparse=["csr", "csc"],
-            )
-        is_X_sparse = sp.issparse(X)
+        X, y = self._validate_data_for_fit(X, y)
         check_classification_targets(y)
 
         n_samples, n_features = X.shape
@@ -211,26 +243,7 @@ class NearestCentroid(
             )
             self.class_prior_ = self.class_prior_ / self.class_prior_.sum()
 
-        # Mask mapping each class to its members.
-        self.centroids_ = np.empty((n_classes, n_features), dtype=np.float64)
-
-        # Number of clusters in each class.
-        nk = np.zeros(n_classes)
-
-        for cur_class in range(n_classes):
-            center_mask = y_ind == cur_class
-            nk[cur_class] = np.sum(center_mask)
-            if is_X_sparse:
-                center_mask = np.nonzero(center_mask)[0]
-
-            if self.metric == "manhattan":
-                # NumPy does not calculate median of sparse matrices.
-                if not is_X_sparse:
-                    self.centroids_[cur_class] = np.median(X[center_mask], axis=0)
-                else:
-                    self.centroids_[cur_class] = csc_median_axis_0(X[center_mask])
-            else:  # metric == "euclidean"
-                self.centroids_[cur_class] = X[center_mask].mean(axis=0)
+        nk = self._compute_centroids(X, y_ind, n_classes, n_features)
 
         # Compute within-class std_dev with unshrunked centroids
         variance = np.array(X - self.centroids_[y_ind], copy=False) ** 2
@@ -243,11 +256,7 @@ class NearestCentroid(
                 "Inputs within the same classes for at least 1 feature are identical."
             )
 
-        err_msg = "All features have zero variance. Division by zero."
-        if is_X_sparse and np.all((X.max(axis=0) - X.min(axis=0)).toarray() == 0):
-            raise ValueError(err_msg)
-        elif not is_X_sparse and np.all(np.ptp(X, axis=0) == 0):
-            raise ValueError(err_msg)
+        self._check_zero_variance(X)
 
         dataset_centroid_ = X.mean(axis=0)
         # m parameter for determining deviation

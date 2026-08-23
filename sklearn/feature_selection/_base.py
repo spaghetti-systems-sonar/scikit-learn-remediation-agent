@@ -200,6 +200,62 @@ class SelectorMixin(TransformerMixin, metaclass=ABCMeta):
         return input_features[self.get_support()]
 
 
+def _resolve_importance_getter(estimator, getter):
+    """Resolve the importance getter into a callable."""
+    if isinstance(getter, str):
+        if getter == "auto":
+            return _resolve_auto_getter(estimator)
+        return attrgetter(getter)
+    if callable(getter):
+        return getter
+    raise ValueError("`importance_getter` has to be a string or `callable`")
+
+
+def _resolve_auto_getter(estimator):
+    """Resolve the 'auto' importance getter based on estimator attributes."""
+    if hasattr(estimator, "coef_"):
+        return attrgetter("coef_")
+    if hasattr(estimator, "feature_importances_"):
+        return attrgetter("feature_importances_")
+    raise ValueError(
+        "when `importance_getter=='auto'`, the underlying "
+        f"estimator {estimator.__class__.__name__} should have "
+        "`coef_` or `feature_importances_` attribute. Either "
+        "pass a fitted estimator to feature selector or call fit "
+        "before calling transform."
+    )
+
+
+def _apply_importance_transform(importances, transform_func, norm_order):
+    """Apply a transformation to the feature importances."""
+    if transform_func is None:
+        return importances
+    if transform_func == "norm":
+        return _apply_norm_transform(importances, norm_order)
+    if transform_func == "square":
+        return _apply_square_transform(importances)
+    raise ValueError(
+        "Valid values for `transform_func` are "
+        "None, 'norm' and 'square'. Those two "
+        "transformation are only supported now"
+    )
+
+
+def _apply_norm_transform(importances, norm_order):
+    """Apply norm transformation to feature importances."""
+    if importances.ndim == 1:
+        return np.abs(importances)
+    norm = scipy.sparse.linalg.norm if issparse(importances) else np.linalg.norm
+    return norm(importances, axis=0, ord=norm_order)
+
+
+def _apply_square_transform(importances):
+    """Apply square transformation to feature importances."""
+    if importances.ndim == 1:
+        return safe_sqr(importances)
+    return safe_sqr(importances).sum(axis=0)
+
+
 def _get_feature_importances(estimator, getter, transform_func=None, norm_order=1):
     """
     Retrieve and aggregate (ndim > 1)  the feature importances
@@ -228,48 +284,10 @@ def _get_feature_importances(estimator, getter, transform_func=None, norm_order=
     importances : ndarray of shape (n_features,)
         The features importances, optionally transformed.
     """
-    if isinstance(getter, str):
-        if getter == "auto":
-            if hasattr(estimator, "coef_"):
-                getter = attrgetter("coef_")
-            elif hasattr(estimator, "feature_importances_"):
-                getter = attrgetter("feature_importances_")
-            else:
-                raise ValueError(
-                    "when `importance_getter=='auto'`, the underlying "
-                    f"estimator {estimator.__class__.__name__} should have "
-                    "`coef_` or `feature_importances_` attribute. Either "
-                    "pass a fitted estimator to feature selector or call fit "
-                    "before calling transform."
-                )
-        else:
-            getter = attrgetter(getter)
-    elif not callable(getter):
-        raise ValueError("`importance_getter` has to be a string or `callable`")
-
+    getter = _resolve_importance_getter(estimator, getter)
     importances = getter(estimator)
 
     if issparse(importances):
         importances = _align_api_if_sparse(csr_array(importances))
 
-    if transform_func is None:
-        return importances
-    elif transform_func == "norm":
-        if importances.ndim == 1:
-            importances = np.abs(importances)
-        else:
-            norm = scipy.sparse.linalg.norm if issparse(importances) else np.linalg.norm
-            importances = norm(importances, axis=0, ord=norm_order)
-    elif transform_func == "square":
-        if importances.ndim == 1:
-            importances = safe_sqr(importances)
-        else:
-            importances = safe_sqr(importances).sum(axis=0)
-    else:
-        raise ValueError(
-            "Valid values for `transform_func` are "
-            "None, 'norm' and 'square'. Those two "
-            "transformation are only supported now"
-        )
-
-    return importances
+    return _apply_importance_transform(importances, transform_func, norm_order)
