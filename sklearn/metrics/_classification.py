@@ -62,6 +62,9 @@ from sklearn.utils.validation import (
 )
 
 
+_Y_TYPE_NOT_SUPPORTED_MSG = "%s is not supported"
+
+
 def _check_zero_division(zero_division):
     if isinstance(zero_division, str) and zero_division == "warn":
         return np.float64(0.0)
@@ -69,6 +72,22 @@ def _check_zero_division(zero_division):
         return np.float64(zero_division)
     else:  # np.isnan(zero_division)
         return np.nan
+
+
+def _squeeze_targets_to_1d(y_true, y_pred):
+    """Squeeze column vectors to 1d, raising TypeError for sparse input."""
+    try:
+        y_true = column_or_1d(y_true, input_name="y_true")
+        y_pred = column_or_1d(y_pred, input_name="y_pred")
+    except TypeError as e:
+        if "Sparse data was passed" in str(e):
+            raise TypeError(
+                "Sparse input is only supported when targets are"
+                " of multilabel type"
+            ) from e
+        else:
+            raise
+    return y_true, y_pred
 
 
 def _check_targets(y_true, y_pred, sample_weight=None):
@@ -145,16 +164,7 @@ def _check_targets(y_true, y_pred, sample_weight=None):
         raise ValueError("{0} is not supported".format(y_type))
 
     if y_type in ["binary", "multiclass"]:
-        try:
-            y_true = column_or_1d(y_true, input_name="y_true")
-            y_pred = column_or_1d(y_pred, input_name="y_pred")
-        except TypeError as e:
-            if "Sparse data was passed" in str(e):
-                raise TypeError(
-                    "Sparse input is only supported when targets are of multilabel type"
-                ) from e
-            else:
-                raise
+        y_true, y_pred = _squeeze_targets_to_1d(y_true, y_pred)
 
     unique_labels_ = unique_labels(y_true, y_pred, ys_types={y_type})
     if y_type == "binary":
@@ -415,6 +425,42 @@ def accuracy_score(y_true, y_pred, *, normalize=True, sample_weight=None):
     return float(_average(score, weights=sample_weight, normalize=normalize, xp=xp))
 
 
+def _validate_cm_labels(labels, unique_labels, y_true):
+    """Validate and resolve labels for confusion_matrix."""
+    if labels is None:
+        return unique_labels, None
+
+    labels = move_to(labels, xp=np, device="cpu")
+    n_labels = labels.size
+    if n_labels == 0:
+        raise ValueError("'labels' should contain at least one label.")
+    if y_true.size == 0:
+        return labels, np.zeros((n_labels, n_labels), dtype=int)
+    if len(np.intersect1d(y_true, labels)) == 0:
+        raise ValueError("At least one label specified must be in y_true")
+    return labels, None
+
+
+def _get_cm_dtype(sample_weight, device_):
+    """Choose the accumulator dtype for confusion_matrix."""
+    if sample_weight.dtype.kind in {"i", "u", "b"}:
+        return np.int64
+    return np.float32 if str(device_).startswith("mps") else np.float64
+
+
+def _normalize_cm(cm, normalize):
+    """Normalize the confusion matrix if requested."""
+    with np.errstate(all="ignore"):
+        if normalize == "true":
+            cm = cm / cm.sum(axis=1, keepdims=True)
+        elif normalize == "pred":
+            cm = cm / cm.sum(axis=0, keepdims=True)
+        elif normalize == "all":
+            cm = cm / cm.sum()
+        cm = xpx.nan_to_num(cm)
+    return cm
+
+
 @validate_params(
     {
         "y_true": ["array-like"],
@@ -553,19 +599,11 @@ def confusion_matrix(
 
     y_true, y_pred = attach_unique(y_true, y_pred)
     if y_type not in ("binary", "multiclass"):
-        raise ValueError("%s is not supported" % y_type)
+        raise ValueError(_Y_TYPE_NOT_SUPPORTED_MSG % y_type)
 
-    if labels is None:
-        labels = unique_labels
-    else:
-        labels = move_to(labels, xp=np, device="cpu")
-        n_labels = labels.size
-        if n_labels == 0:
-            raise ValueError("'labels' should contain at least one label.")
-        elif y_true.size == 0:
-            return np.zeros((n_labels, n_labels), dtype=int)
-        elif len(np.intersect1d(y_true, labels)) == 0:
-            raise ValueError("At least one label specified must be in y_true")
+    labels, early_result = _validate_cm_labels(labels, unique_labels, y_true)
+    if early_result is not None:
+        return early_result
 
     n_labels = labels.size
     # If labels are not consecutive integers starting from zero, then
@@ -590,10 +628,7 @@ def confusion_matrix(
         sample_weight = sample_weight[ind]
 
     # Choose the accumulator dtype to always have high precision
-    if sample_weight.dtype.kind in {"i", "u", "b"}:
-        dtype = np.int64
-    else:
-        dtype = np.float32 if str(device_).startswith("mps") else np.float64
+    dtype = _get_cm_dtype(sample_weight, device_)
 
     cm = coo_array(
         (sample_weight, (y_true, y_pred)),
@@ -601,14 +636,7 @@ def confusion_matrix(
         dtype=dtype,
     ).toarray()
 
-    with np.errstate(all="ignore"):
-        if normalize == "true":
-            cm = cm / cm.sum(axis=1, keepdims=True)
-        elif normalize == "pred":
-            cm = cm / cm.sum(axis=0, keepdims=True)
-        elif normalize == "all":
-            cm = cm / cm.sum()
-        cm = xpx.nan_to_num(cm)
+    cm = _normalize_cm(cm, normalize)
 
     if cm.shape == (1, 1):
         warnings.warn(
@@ -845,7 +873,7 @@ def multilabel_confusion_matrix(
     )
 
     if y_type not in ("binary", "multiclass", "multilabel-indicator"):
-        raise ValueError("%s is not supported" % y_type)
+        raise ValueError(_Y_TYPE_NOT_SUPPORTED_MSG % y_type)
 
     if labels is None:
         labels = present_labels
@@ -1346,7 +1374,7 @@ def matthews_corrcoef(y_true, y_pred, *, sample_weight=None):
         y_true, y_pred, sample_weight
     )
     if y_type not in {"binary", "multiclass"}:
-        raise ValueError("%s is not supported" % y_type)
+        raise ValueError(_Y_TYPE_NOT_SUPPORTED_MSG % y_type)
 
     lb = LabelEncoder()
     lb.fit(np.hstack([y_true, y_pred]))
@@ -1893,7 +1921,17 @@ def _prf_divide(
     if not xp.any(mask):
         return result
 
-    # set those with 0 denominator to `zero_division`, and 0 when "warn"
+    _apply_zero_division(
+        result, mask, metric, modifier, average, warn_for, zero_division
+    )
+
+    return result
+
+
+def _apply_zero_division(
+    result, mask, metric, modifier, average, warn_for, zero_division
+):
+    """Set zero-division values in result and warn if appropriate."""
     zero_division_value = _check_zero_division(zero_division)
     result[mask] = zero_division_value
 
@@ -1901,13 +1939,9 @@ def _prf_divide(
     # to something different than "warn". If we are computing only f-score
     # the warning will be raised only if precision and recall are ill-defined
     if zero_division != "warn" or metric not in warn_for:
-        return result
+        return
 
-    # build appropriate warning
-    if metric in warn_for:
-        _warn_prf(average, modifier, f"{metric.capitalize()} is", result.shape[0])
-
-    return result
+    _warn_prf(average, modifier, f"{metric.capitalize()} is", result.shape[0])
 
 
 def _warn_prf(average, modifier, msg_start, result_size):
@@ -1926,6 +1960,26 @@ def _warn_prf(average, modifier, msg_start, result_size):
     warnings.warn(msg, UndefinedMetricWarning, stacklevel=2)
 
 
+def _check_binary_average_labels(y_type, present_labels, pos_label):
+    """Handle label validation when average='binary'."""
+    if y_type == "binary":
+        if pos_label not in present_labels:
+            if len(present_labels) >= 2:
+                raise ValueError(
+                    f"pos_label={pos_label} is not a valid label. It "
+                    f"should be one of {present_labels}"
+                )
+        return [pos_label]
+
+    average_options = [None, "micro", "macro", "weighted", "samples"]
+    if y_type == "multiclass":
+        average_options.remove("samples")
+    raise ValueError(
+        "Target is %s but average='binary'. Please "
+        "choose another average setting, one of %r." % (y_type, average_options)
+    )
+
+
 def _check_set_wise_labels(y_true, y_pred, average, labels, pos_label):
     """Validation associated with set-wise metrics.
 
@@ -1938,22 +1992,7 @@ def _check_set_wise_labels(y_true, y_pred, average, labels, pos_label):
     y_true, y_pred = attach_unique(y_true, y_pred)
     y_type, present_labels, y_true, y_pred, _ = _check_targets(y_true, y_pred)
     if average == "binary":
-        if y_type == "binary":
-            if pos_label not in present_labels:
-                if len(present_labels) >= 2:
-                    raise ValueError(
-                        f"pos_label={pos_label} is not a valid label. It "
-                        f"should be one of {present_labels}"
-                    )
-            labels = [pos_label]
-        else:
-            average_options = list(average_options)
-            if y_type == "multiclass":
-                average_options.remove("samples")
-            raise ValueError(
-                "Target is %s but average='binary'. Please "
-                "choose another average setting, one of %r." % (y_type, average_options)
-            )
+        labels = _check_binary_average_labels(y_type, present_labels, pos_label)
     elif pos_label not in (None, 1):
         warnings.warn(
             "Note that pos_label (set to %r) is ignored when "
@@ -3035,6 +3074,9 @@ def _build_classification_report_dict(
     return report_dict
 
 
+_LABEL_COL_FMT = "{:>{width}s} "
+
+
 def _build_classification_report_text(
     rows,
     headers,
@@ -3053,10 +3095,10 @@ def _build_classification_report_text(
     longest_last_line_heading = "weighted avg"
     name_width = max(len(cn) for cn in target_names)
     width = max(name_width, len(longest_last_line_heading), digits)
-    head_fmt = "{:>{width}s} " + " {:>9}" * len(headers)
+    head_fmt = _LABEL_COL_FMT + " {:>9}" * len(headers)
     report = head_fmt.format("", *headers, width=width)
     report += "\n\n"
-    row_fmt = "{:>{width}s} " + " {:>9.{digits}f}" * 3 + " {:>9}\n"
+    row_fmt = _LABEL_COL_FMT + " {:>9.{digits}f}" * 3 + " {:>9}\n"
     for row in rows:
         report += row_fmt.format(*row, width=width, digits=digits)
     report += "\n"
@@ -3079,7 +3121,7 @@ def _build_classification_report_text(
 
         if line_heading == "accuracy":
             row_fmt_accuracy = (
-                "{:>{width}s} "
+                _LABEL_COL_FMT
                 + " {:>9.{digits}}" * 2
                 + " {:>9.{digits}f}"
                 + " {:>9}\n"
