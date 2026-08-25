@@ -18,6 +18,31 @@ from sklearn.utils._param_validation import StrOptions, validate_params
 from sklearn.utils.validation import _check_sample_weight
 
 
+def _compute_dict_class_weight(class_weight, classes, xp, device_):
+    """Compute class weights from a user-defined dictionary."""
+    weight = xp.ones(size(classes), device=device_)
+    unweighted_classes = []
+    for i, c in enumerate(classes):
+        try:
+            c = int(c)
+        except ValueError:  # `classes` contains strings
+            c = str(c)
+        if c in class_weight:
+            weight[i] = class_weight[c]
+        else:
+            unweighted_classes.append(c)
+
+    n_weighted_classes = size(classes) - len(unweighted_classes)
+    if unweighted_classes and n_weighted_classes != len(class_weight):
+        unweighted_classes_user_friendly_str = np.array(unweighted_classes).tolist()
+        raise ValueError(
+            f"The classes, {unweighted_classes_user_friendly_str}, are not in"
+            " class_weight"
+        )
+
+    return weight
+
+
 @validate_params(
     {
         "class_weight": [dict, StrOptions({"balanced"}), None],
@@ -99,27 +124,54 @@ def compute_class_weight(class_weight, *, classes, y, sample_weight=None):
         weight = recip_freq[le.transform(classes)]
     else:
         # user-defined dictionary
-        weight = xp.ones(size(classes), device=device_)
-        unweighted_classes = []
-        for i, c in enumerate(classes):
-            try:
-                c = int(c)
-            except ValueError:  # `classes` contains strings
-                c = str(c)
-            if c in class_weight:
-                weight[i] = class_weight[c]
-            else:
-                unweighted_classes.append(c)
-
-        n_weighted_classes = size(classes) - len(unweighted_classes)
-        if unweighted_classes and n_weighted_classes != len(class_weight):
-            unweighted_classes_user_friendly_str = np.array(unweighted_classes).tolist()
-            raise ValueError(
-                f"The classes, {unweighted_classes_user_friendly_str}, are not in"
-                " class_weight"
-            )
+        weight = _compute_dict_class_weight(class_weight, classes, xp, device_)
 
     return weight
+
+
+def _compute_sample_weight_for_output(class_weight, y, k, n_outputs, indices):
+    """Compute sample weights for a single output column."""
+    if sparse.issparse(y):
+        # Ok to densify a single column at a time
+        y_full = y[:, [k]].toarray().flatten()
+    else:
+        y_full = y[:, k]
+    classes_full = np.unique(y_full)
+    classes_missing = None
+
+    if class_weight == "balanced" or n_outputs == 1:
+        class_weight_k = class_weight
+    else:
+        class_weight_k = class_weight[k]
+
+    if indices is not None:
+        # Get class weights for the subsample, covering all classes in
+        # case some labels that were present in the original data are
+        # missing from the sample.
+        y_subsample = y_full[indices]
+        classes_subsample = np.unique(y_subsample)
+
+        weight_k = np.take(
+            compute_class_weight(
+                class_weight_k, classes=classes_subsample, y=y_subsample
+            ),
+            np.searchsorted(classes_subsample, classes_full),
+            mode="clip",
+        )
+
+        classes_missing = set(classes_full) - set(classes_subsample)
+    else:
+        weight_k = compute_class_weight(
+            class_weight_k, classes=classes_full, y=y_full
+        )
+
+    weight_k = weight_k[np.searchsorted(classes_full, y_full)]
+
+    if classes_missing:
+        # Make missing classes' weight zero
+        weight_k[np.isin(y_full, list(classes_missing))] = 0.0
+
+    return weight_k
 
 
 @validate_params(
@@ -203,46 +255,9 @@ def compute_sample_weight(class_weight, y, *, indices=None):
 
     expanded_class_weight = []
     for k in range(n_outputs):
-        if sparse.issparse(y):
-            # Ok to densify a single column at a time
-            y_full = y[:, [k]].toarray().flatten()
-        else:
-            y_full = y[:, k]
-        classes_full = np.unique(y_full)
-        classes_missing = None
-
-        if class_weight == "balanced" or n_outputs == 1:
-            class_weight_k = class_weight
-        else:
-            class_weight_k = class_weight[k]
-
-        if indices is not None:
-            # Get class weights for the subsample, covering all classes in
-            # case some labels that were present in the original data are
-            # missing from the sample.
-            y_subsample = y_full[indices]
-            classes_subsample = np.unique(y_subsample)
-
-            weight_k = np.take(
-                compute_class_weight(
-                    class_weight_k, classes=classes_subsample, y=y_subsample
-                ),
-                np.searchsorted(classes_subsample, classes_full),
-                mode="clip",
-            )
-
-            classes_missing = set(classes_full) - set(classes_subsample)
-        else:
-            weight_k = compute_class_weight(
-                class_weight_k, classes=classes_full, y=y_full
-            )
-
-        weight_k = weight_k[np.searchsorted(classes_full, y_full)]
-
-        if classes_missing:
-            # Make missing classes' weight zero
-            weight_k[np.isin(y_full, list(classes_missing))] = 0.0
-
+        weight_k = _compute_sample_weight_for_output(
+            class_weight, y, k, n_outputs, indices
+        )
         expanded_class_weight.append(weight_k)
 
     expanded_class_weight = np.prod(expanded_class_weight, axis=0, dtype=np.float64)
