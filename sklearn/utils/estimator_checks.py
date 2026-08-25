@@ -411,29 +411,27 @@ def _yield_all_checks(estimator, legacy: bool):
         )
         return
 
-    for check in _yield_api_checks(estimator):
-        yield check
+    yield from _yield_api_checks(estimator)
 
     if not legacy:
         return  # pragma: no cover
 
-    for check in _yield_checks(estimator):
-        yield check
+    yield from _yield_legacy_checks(estimator, tags)
+
+
+def _yield_legacy_checks(estimator, tags):
+    """Yield all legacy checks for the given estimator."""
+    yield from _yield_checks(estimator)
     if is_classifier(estimator):
-        for check in _yield_classifier_checks(estimator):
-            yield check
+        yield from _yield_classifier_checks(estimator)
     if is_regressor(estimator):
-        for check in _yield_regressor_checks(estimator):
-            yield check
+        yield from _yield_regressor_checks(estimator)
     if hasattr(estimator, "transform"):
-        for check in _yield_transformer_checks(estimator):
-            yield check
+        yield from _yield_transformer_checks(estimator)
     if isinstance(estimator, ClusterMixin):
-        for check in _yield_clustering_checks(estimator):
-            yield check
+        yield from _yield_clustering_checks(estimator)
     if is_outlier_detector(estimator):
-        for check in _yield_outliers_checks(estimator):
-            yield check
+        yield from _yield_outliers_checks(estimator)
     yield check_parameters_default_constructible
     if not tags.non_deterministic:
         yield check_methods_sample_order_invariance
@@ -732,6 +730,61 @@ def parametrize_with_checks(
     )
 
 
+def _run_check(estimator, check, expected_failed_checks, on_skip, on_fail, name):
+    """Run a single estimator check and return the result dictionary."""
+    test_can_fail, reason = _should_be_skipped_or_marked(
+        estimator, check, expected_failed_checks
+    )
+    try:
+        check(estimator)
+    except SkipTest as e:
+        check_result = {
+            "estimator": estimator,
+            "check_name": _check_name(check),
+            "exception": e,
+            "status": "skipped",
+            "expected_to_fail": test_can_fail,
+            "expected_to_fail_reason": reason,
+        }
+        if on_skip == "warn":
+            warnings.warn(
+                f"Skipping check {_check_name(check)} for {name} because it"
+                f" raised {type(e).__name__}: {e}",
+                SkipTestWarning,
+            )
+    except Exception as e:
+        if on_fail == "raise" and not test_can_fail:
+            raise
+
+        check_result = {
+            "estimator": estimator,
+            "check_name": _check_name(check),
+            "exception": e,
+            "expected_to_fail": test_can_fail,
+            "expected_to_fail_reason": reason,
+        }
+
+        if test_can_fail:
+            check_result["status"] = "xfail"
+        else:
+            check_result["status"] = "failed"
+
+        if on_fail == "warn":
+            warning = EstimatorCheckFailedWarning(**check_result)
+            warnings.warn(warning)
+    else:
+        check_result = {
+            "estimator": estimator,
+            "check_name": _check_name(check),
+            "exception": None,
+            "status": "passed",
+            "expected_to_fail": test_can_fail,
+            "expected_to_fail_reason": reason,
+        }
+
+    return check_result
+
+
 @validate_params(
     {
         "legacy": ["boolean"],
@@ -897,61 +950,9 @@ def check_estimator(
         # Not marking tests to be skipped here, we run and simulate an xfail behavior
         mark=None,
     ):
-        test_can_fail, reason = _should_be_skipped_or_marked(
-            estimator, check, expected_failed_checks
+        check_result = _run_check(
+            estimator, check, expected_failed_checks, on_skip, on_fail, name
         )
-        try:
-            check(estimator)
-        except SkipTest as e:
-            # We get here if the test raises SkipTest, which is expected in cases where
-            # the check cannot run for instance if a required dependency is not
-            # installed.
-            check_result = {
-                "estimator": estimator,
-                "check_name": _check_name(check),
-                "exception": e,
-                "status": "skipped",
-                "expected_to_fail": test_can_fail,
-                "expected_to_fail_reason": reason,
-            }
-            if on_skip == "warn":
-                warnings.warn(
-                    f"Skipping check {_check_name(check)} for {name} because it raised "
-                    f"{type(e).__name__}: {e}",
-                    SkipTestWarning,
-                )
-        except Exception as e:
-            if on_fail == "raise" and not test_can_fail:
-                raise
-
-            check_result = {
-                "estimator": estimator,
-                "check_name": _check_name(check),
-                "exception": e,
-                "expected_to_fail": test_can_fail,
-                "expected_to_fail_reason": reason,
-            }
-
-            if test_can_fail:
-                # This check failed, but could be expected to fail, therefore we mark it
-                # as xfail.
-                check_result["status"] = "xfail"
-            else:
-                check_result["status"] = "failed"
-
-            if on_fail == "warn":
-                warning = EstimatorCheckFailedWarning(**check_result)
-                warnings.warn(warning)
-        else:
-            check_result = {
-                "estimator": estimator,
-                "check_name": _check_name(check),
-                "exception": None,
-                "status": "passed",
-                "expected_to_fail": test_can_fail,
-                "expected_to_fail_reason": reason,
-            }
-
         test_results.append(check_result)
 
         if callback:
@@ -1524,6 +1525,29 @@ def check_array_api_mixed_inputs(
     )
 
 
+def _check_method_same_namespace(est, method_name, X, name):
+    """Check that a single method raises on namespace mismatch."""
+    method = getattr(est, method_name, None)
+    if method is None:
+        return
+
+    with config_context(array_api_dispatch=True):
+        try:
+            method(X)
+        except ValueError as e:
+            if "must use the same namespace" in str(
+                e
+            ) and f"{name}.{method_name}()" in str(e):
+                return
+            raise
+        raise AssertionError(
+            f"{name}.{method_name}() did not raise when called with a "
+            f"different array namespace than the one used during fit. "
+            f"Add a call to check_same_namespace() at the start of "
+            f"{method_name} to fix this."
+        )
+
+
 def check_array_api_same_namespace(
     name, estimator_orig, array_namespace, device_name=None
 ):
@@ -1560,25 +1584,7 @@ def check_array_api_same_namespace(
     )
 
     for method_name in methods:
-        method = getattr(est, method_name, None)
-        if method is None:
-            continue
-
-        with config_context(array_api_dispatch=True):
-            try:
-                method(X)
-            except ValueError as e:
-                if "must use the same namespace" in str(
-                    e
-                ) and f"{name}.{method_name}()" in str(e):
-                    continue
-                raise
-            raise AssertionError(
-                f"{name}.{method_name}() did not raise when called with a "
-                f"different array namespace than the one used during fit. "
-                f"Add a call to check_same_namespace() at the start of "
-                f"{method_name} to fix this."
-            )
+        _check_method_same_namespace(est, method_name, X, name)
 
 
 def check_estimator_sparse_tag(name, estimator_orig):
