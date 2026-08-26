@@ -26,6 +26,11 @@ from sklearn.utils.validation import (
 )
 
 
+_PREFIT_ERR_MSG = (
+    "When `prefit=True`, `estimator` is expected to be a fitted estimator."
+)
+
+
 def _calculate_threshold(estimator, importances, threshold):
     """Interpret the threshold value"""
 
@@ -280,10 +285,7 @@ class SelectFromModel(MetaEstimatorMixin, SelectorMixin, BaseEstimator):
             try:
                 check_is_fitted(self.estimator)
             except NotFittedError as exc:
-                raise NotFittedError(
-                    "When `prefit=True`, `estimator` is expected to be a fitted "
-                    "estimator."
-                ) from exc
+                raise NotFittedError(_PREFIT_ERR_MSG) from exc
         if callable(max_features):
             # This branch is executed when `transform` is called directly and thus
             # `max_features_` is not set and we fallback using `self.max_features`
@@ -369,10 +371,7 @@ class SelectFromModel(MetaEstimatorMixin, SelectorMixin, BaseEstimator):
             try:
                 check_is_fitted(self.estimator)
             except NotFittedError as exc:
-                raise NotFittedError(
-                    "When `prefit=True`, `estimator` is expected to be a fitted "
-                    "estimator."
-                ) from exc
+                raise NotFittedError(_PREFIT_ERR_MSG) from exc
             self.estimator_ = deepcopy(self.estimator)
         else:
             if _routing_enabled():
@@ -450,10 +449,7 @@ class SelectFromModel(MetaEstimatorMixin, SelectorMixin, BaseEstimator):
                 try:
                     check_is_fitted(self.estimator)
                 except NotFittedError as exc:
-                    raise NotFittedError(
-                        "When `prefit=True`, `estimator` is expected to be a fitted "
-                        "estimator."
-                    ) from exc
+                    raise NotFittedError(_PREFIT_ERR_MSG) from exc
                 self.estimator_ = deepcopy(self.estimator)
             return self
 
