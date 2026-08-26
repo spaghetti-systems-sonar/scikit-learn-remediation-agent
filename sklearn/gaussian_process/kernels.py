@@ -43,6 +43,7 @@ from sklearn.utils.validation import _num_samples
 signature = lru_cache(maxsize=32)(inspect.signature)
 
 _GRADIENT_EVAL_ERROR_MSG = "Gradient can only be evaluated when Y is None."
+_FLOAT_FORMAT = "{0:.3g}"
 
 
 def _check_length_scale(X, length_scale):
@@ -398,7 +399,7 @@ class Kernel(metaclass=ABCMeta):
 
     def __repr__(self):
         return "{0}({1})".format(
-            self.__class__.__name__, ", ".join(map("{0:.3g}".format, self.theta))
+            self.__class__.__name__, ", ".join(map(_FLOAT_FORMAT.format, self.theta))
         )
 
     @abstractmethod
@@ -1592,7 +1593,7 @@ class RBF(StationaryKernelMixin, NormalizedKernelMixin, Kernel):
         if self.anisotropic:
             return "{0}(length_scale=[{1}])".format(
                 self.__class__.__name__,
-                ", ".join(map("{0:.3g}".format, self.length_scale)),
+                ", ".join(map(_FLOAT_FORMAT.format, self.length_scale)),
             )
         else:  # isotropic
             return "{0}(length_scale={1:.3g})".format(
@@ -1791,7 +1792,7 @@ class Matern(RBF):
         if self.anisotropic:
             return "{0}(length_scale=[{1}], nu={2:.3g})".format(
                 self.__class__.__name__,
-                ", ".join(map("{0:.3g}".format, self.length_scale)),
+                ", ".join(map(_FLOAT_FORMAT.format, self.length_scale)),
                 self.nu,
             )
         else:

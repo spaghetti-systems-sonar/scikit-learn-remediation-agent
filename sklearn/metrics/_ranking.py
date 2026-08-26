@@ -45,6 +45,8 @@ from sklearn.utils.validation import (
     _deprecate_positional_args,
 )
 
+_UNSUPPORTED_FORMAT_MSG = "{0} format is not supported"
+
 
 @validate_params(
     {"x": ["array-like"], "y": ["array-like"]},
@@ -1007,7 +1009,7 @@ def confusion_matrix_at_thresholds(
     # Check to make sure y_true is valid
     y_type = type_of_target(y_true, input_name="y_true")
     if not (y_type == "binary" or (y_type == "multiclass" and pos_label is not None)):
-        raise ValueError("{0} format is not supported".format(y_type))
+        raise ValueError(_UNSUPPORTED_FORMAT_MSG.format(y_type))
 
     xp, _, device = get_namespace_and_device(y_score)
     pos_label = _check_pos_label_consistency(pos_label, y_true)
@@ -1373,6 +1375,9 @@ def roc_curve(
     return fpr, tpr, thresholds
 
 
+_SHAPE_MISMATCH_ERR_MSG = "y_true and y_score have different shape"
+
+
 @validate_params(
     {
         "y_true": ["array-like", "sparse matrix"],
@@ -1432,14 +1437,14 @@ def label_ranking_average_precision_score(y_true, y_score, *, sample_weight=None
     y_score = check_array(y_score, ensure_2d=False)
 
     if y_true.shape != y_score.shape:
-        raise ValueError("y_true and y_score have different shape")
+        raise ValueError(_SHAPE_MISMATCH_ERR_MSG)
 
     # Handle badly formatted array and the degenerate case with one label
     y_type = type_of_target(y_true, input_name="y_true")
     if y_type != "multilabel-indicator" and not (
         y_type == "binary" and y_true.ndim == 2
     ):
-        raise ValueError("{0} format is not supported".format(y_type))
+        raise ValueError(_UNSUPPORTED_FORMAT_MSG.format(y_type))
 
     if not issparse(y_true):
         y_true = csr_array(y_true)
@@ -1538,10 +1543,10 @@ def coverage_error(y_true, y_score, *, sample_weight=None):
 
     y_type = type_of_target(y_true, input_name="y_true")
     if y_type != "multilabel-indicator":
-        raise ValueError("{0} format is not supported".format(y_type))
+        raise ValueError(_UNSUPPORTED_FORMAT_MSG.format(y_type))
 
     if y_true.shape != y_score.shape:
-        raise ValueError("y_true and y_score have different shape")
+        raise ValueError(_SHAPE_MISMATCH_ERR_MSG)
 
     y_score_mask = np.ma.masked_array(y_score, mask=np.logical_not(y_true))
     y_min_relevant = y_score_mask.min(axis=1).reshape((-1, 1))
@@ -1617,10 +1622,10 @@ def label_ranking_loss(y_true, y_score, *, sample_weight=None):
 
     y_type = type_of_target(y_true, input_name="y_true")
     if y_type not in ("multilabel-indicator",):
-        raise ValueError("{0} format is not supported".format(y_type))
+        raise ValueError(_UNSUPPORTED_FORMAT_MSG.format(y_type))
 
     if y_true.shape != y_score.shape:
-        raise ValueError("y_true and y_score have different shape")
+        raise ValueError(_SHAPE_MISMATCH_ERR_MSG)
 
     n_samples, n_labels = y_true.shape
 

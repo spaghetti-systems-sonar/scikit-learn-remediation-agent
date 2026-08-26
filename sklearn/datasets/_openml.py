@@ -37,6 +37,7 @@ _SEARCH_NAME = "https://www.openml.org/api/v1/json/data/list/data_name/{}/limit/
 _DATA_INFO = "https://www.openml.org/api/v1/json/data/{}"
 _DATA_FEATURES = "https://www.openml.org/api/v1/json/data/features/{}"
 _DATA_QUALITIES = "https://www.openml.org/api/v1/json/data/qualities/{}"
+_DATASET_NOT_FOUND_MSG = "Dataset with data_id {} not found."
 
 OpenmlQualitiesType = List[Dict[str, str]]
 OpenmlFeaturesType = List[Dict[str, str]]
@@ -371,7 +372,7 @@ def _get_data_description_by_id(
 ) -> Dict[str, Any]:
     # OpenML API function: https://www.openml.org/api_docs#!/data/get_data_id
     url = _DATA_INFO.format(data_id)
-    error_message = "Dataset with data_id {} not found.".format(data_id)
+    error_message = _DATASET_NOT_FOUND_MSG.format(data_id)
     json_data = _get_json_content_from_openml_api(
         url,
         error_message,
@@ -391,7 +392,7 @@ def _get_data_features(
     # OpenML function:
     # https://www.openml.org/api_docs#!/data/get_data_features_id
     url = _DATA_FEATURES.format(data_id)
-    error_message = "Dataset with data_id {} not found.".format(data_id)
+    error_message = _DATASET_NOT_FOUND_MSG.format(data_id)
     json_data = _get_json_content_from_openml_api(
         url,
         error_message,
@@ -411,7 +412,7 @@ def _get_data_qualities(
     # OpenML API function:
     # https://www.openml.org/api_docs#!/data/get_data_qualities_id
     url = _DATA_QUALITIES.format(data_id)
-    error_message = "Dataset with data_id {} not found.".format(data_id)
+    error_message = _DATASET_NOT_FOUND_MSG.format(data_id)
     json_data = _get_json_content_from_openml_api(
         url,
         error_message,
