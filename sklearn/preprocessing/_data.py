@@ -2513,8 +2513,8 @@ class KernelCenterer(ClassNamePrefixFeaturesOutMixin, TransformerMixin, BaseEsti
     """
 
     # X is called K in these methods.
-    __metadata_request__transform = {"K": metadata_routing.UNUSED}
-    __metadata_request__fit = {"K": metadata_routing.UNUSED}
+    _metadata_request__transform = {"K": metadata_routing.UNUSED}
+    _metadata_request__fit = {"K": metadata_routing.UNUSED}
 
     def fit(self, K, y=None):
         """Fit KernelCenterer.

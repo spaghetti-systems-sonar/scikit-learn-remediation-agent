@@ -92,7 +92,7 @@ class DictVectorizer(TransformerMixin, BaseEstimator):
     """
 
     # This isn't something that people should be routing / using in a pipeline.
-    __metadata_request__inverse_transform = {"dict_type": metadata_routing.UNUSED}
+    _metadata_request__inverse_transform = {"dict_type": metadata_routing.UNUSED}
 
     _parameter_constraints: dict = {
         "dtype": "no_validation",  # validation delegated to numpy,
