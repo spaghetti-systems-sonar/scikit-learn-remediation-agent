@@ -1639,6 +1639,23 @@ def check_estimator_sparse_tag(name, estimator_orig):
         )
 
 
+def _check_sparse_predict_output(estimator, X, tags):
+    """Check predict and predict_proba output shapes on sparse data."""
+    if hasattr(estimator, "predict"):
+        pred = estimator.predict(X)
+        if tags.target_tags.multi_output and not tags.target_tags.single_output:
+            assert pred.shape == (X.shape[0], 1)
+        else:
+            assert pred.shape == (X.shape[0],)
+    if hasattr(estimator, "predict_proba"):
+        probs = estimator.predict_proba(X)
+        if not tags.classifier_tags.multi_class:
+            expected_probs_shape = (X.shape[0], 2)
+        else:
+            expected_probs_shape = (X.shape[0], 4)
+        assert probs.shape == expected_probs_shape
+
+
 def _check_estimator_sparse_container(name, estimator_orig, sparse_type):
     rng = np.random.RandomState(0)
     X = rng.uniform(size=(40, 3))
@@ -1678,19 +1695,7 @@ def _check_estimator_sparse_container(name, estimator_orig, sparse_type):
         ):
             with ignore_warnings(category=FutureWarning):
                 estimator.fit(X, y)
-            if hasattr(estimator, "predict"):
-                pred = estimator.predict(X)
-                if tags.target_tags.multi_output and not tags.target_tags.single_output:
-                    assert pred.shape == (X.shape[0], 1)
-                else:
-                    assert pred.shape == (X.shape[0],)
-            if hasattr(estimator, "predict_proba"):
-                probs = estimator.predict_proba(X)
-                if not tags.classifier_tags.multi_class:
-                    expected_probs_shape = (X.shape[0], 2)
-                else:
-                    expected_probs_shape = (X.shape[0], 4)
-                assert probs.shape == expected_probs_shape
+            _check_sparse_predict_output(estimator, X, tags)
 
 
 def check_estimator_sparse_matrix(name, estimator_orig):
@@ -2418,20 +2423,80 @@ def check_transformers_unfitted_stateless(name, transformer):
     assert X_trans.shape[0] == X.shape[0]
 
 
+def _prepare_cross_decomposition_y(name, X, y):
+    """Prepare y for cross-decomposition estimators."""
+    if name in CROSS_DECOMPOSITION:
+        y_ = np.c_[np.asarray(y), np.asarray(y)]
+        y_[::2, 1] *= 2
+        if isinstance(X, _NotAnArray):
+            y_ = _NotAnArray(y_)
+        return y_
+    return y
+
+
+def _check_transform_consistency(fit_pred, trans_pred, refit_pred, transformer,
+                                 n_samples):
+    """Check that fit_transform and transform outcomes are consistent."""
+    if isinstance(fit_pred, tuple) and isinstance(trans_pred, tuple):
+        for fp, tp, rp in zip(fit_pred, trans_pred, refit_pred):
+            assert_allclose_dense_sparse(
+                fp,
+                tp,
+                atol=1e-2,
+                err_msg="fit_transform and transform outcomes not consistent in %s"
+                % transformer,
+            )
+            assert_allclose_dense_sparse(
+                fp,
+                rp,
+                atol=1e-2,
+                err_msg="consecutive fit_transform outcomes not consistent in %s"
+                % transformer,
+            )
+    else:
+        assert_allclose_dense_sparse(
+            fit_pred,
+            trans_pred,
+            err_msg="fit_transform and transform outcomes not consistent in %s"
+            % transformer,
+            atol=1e-2,
+        )
+        assert_allclose_dense_sparse(
+            fit_pred,
+            refit_pred,
+            atol=1e-2,
+            err_msg="consecutive fit_transform outcomes not consistent in %s"
+            % transformer,
+        )
+        assert _num_samples(trans_pred) == n_samples
+        assert _num_samples(refit_pred) == n_samples
+
+
+def _check_transformer_malformed_input(name, transformer, X):
+    """Check that transformer raises error on malformed input for transform."""
+    has_shape = hasattr(X, "shape")
+    if not has_shape or not get_tags(transformer).requires_fit:
+        return
+    if X.ndim != 2 or X.shape[1] <= 1:
+        return
+    with raises(
+        ValueError,
+        err_msg=(
+            f"The transformer {name} does not raise an error "
+            "when the number of features in transform is different from "
+            "the number of features in fit."
+        ),
+    ):
+        transformer.transform(X[:, :-1])
+
+
 def _check_transformer(name, transformer_orig, X, y):
     n_samples, n_features = np.asarray(X).shape
     transformer = clone(transformer_orig)
     set_random_state(transformer)
 
     # fit
-
-    if name in CROSS_DECOMPOSITION:
-        y_ = np.c_[np.asarray(y), np.asarray(y)]
-        y_[::2, 1] *= 2
-        if isinstance(X, _NotAnArray):
-            y_ = _NotAnArray(y_)
-    else:
-        y_ = y
+    y_ = _prepare_cross_decomposition_y(name, X, y)
 
     transformer.fit(X, y_)
     # fit_transform method should work on non fitted estimator
@@ -2445,68 +2510,24 @@ def _check_transformer(name, transformer_orig, X, y):
         # check for consistent n_samples
         assert X_pred.shape[0] == n_samples
 
-    if hasattr(transformer, "transform"):
-        if name in CROSS_DECOMPOSITION:
-            X_pred2 = transformer.transform(X, y_)
-            X_pred3 = transformer.fit_transform(X, y=y_)
-        else:
-            X_pred2 = transformer.transform(X)
-            X_pred3 = transformer.fit_transform(X, y=y_)
+    if not hasattr(transformer, "transform"):
+        return
 
-        if get_tags(transformer_orig).non_deterministic:
-            msg = name + " is non deterministic"
-            raise SkipTest(msg)
-        if isinstance(X_pred, tuple) and isinstance(X_pred2, tuple):
-            for x_pred, x_pred2, x_pred3 in zip(X_pred, X_pred2, X_pred3):
-                assert_allclose_dense_sparse(
-                    x_pred,
-                    x_pred2,
-                    atol=1e-2,
-                    err_msg="fit_transform and transform outcomes not consistent in %s"
-                    % transformer,
-                )
-                assert_allclose_dense_sparse(
-                    x_pred,
-                    x_pred3,
-                    atol=1e-2,
-                    err_msg="consecutive fit_transform outcomes not consistent in %s"
-                    % transformer,
-                )
-        else:
-            assert_allclose_dense_sparse(
-                X_pred,
-                X_pred2,
-                err_msg="fit_transform and transform outcomes not consistent in %s"
-                % transformer,
-                atol=1e-2,
-            )
-            assert_allclose_dense_sparse(
-                X_pred,
-                X_pred3,
-                atol=1e-2,
-                err_msg="consecutive fit_transform outcomes not consistent in %s"
-                % transformer,
-            )
-            assert _num_samples(X_pred2) == n_samples
-            assert _num_samples(X_pred3) == n_samples
+    if name in CROSS_DECOMPOSITION:
+        X_pred2 = transformer.transform(X, y_)
+        X_pred3 = transformer.fit_transform(X, y=y_)
+    else:
+        X_pred2 = transformer.transform(X)
+        X_pred3 = transformer.fit_transform(X, y=y_)
 
-        # raises error on malformed input for transform
-        if (
-            hasattr(X, "shape")
-            and get_tags(transformer).requires_fit
-            and X.ndim == 2
-            and X.shape[1] > 1
-        ):
-            # If it's not an array, it does not have a 'T' property
-            with raises(
-                ValueError,
-                err_msg=(
-                    f"The transformer {name} does not raise an error "
-                    "when the number of features in transform is different from "
-                    "the number of features in fit."
-                ),
-            ):
-                transformer.transform(X[:, :-1])
+    if get_tags(transformer_orig).non_deterministic:
+        msg = name + " is non deterministic"
+        raise SkipTest(msg)
+
+    _check_transform_consistency(X_pred, X_pred2, X_pred3, transformer, n_samples)
+
+    # raises error on malformed input for transform
+    _check_transformer_malformed_input(name, transformer, X)
 
 
 @ignore_warnings
@@ -3743,6 +3764,14 @@ def _choose_check_classifiers_labels(name, y, y_names):
     )
 
 
+def _check_classifiers_class_predictions(name, classifier_orig, problems):
+    """Run classifier predictions for each problem and label type."""
+    for X, y, y_names in problems:
+        for y_names_i in [y_names, y_names.astype("O")]:
+            y_ = _choose_check_classifiers_labels(name, y, y_names_i)
+            check_classifiers_predictions(X, y_, name, classifier_orig)
+
+
 def check_classifiers_classes(name, classifier_orig):
     X_multiclass, y_multiclass = make_blobs(
         n_samples=30, random_state=0, cluster_std=0.1
@@ -3766,10 +3795,7 @@ def check_classifiers_classes(name, classifier_orig):
     if get_tags(classifier_orig).classifier_tags.multi_class:
         problems.append((X_multiclass, y_multiclass, y_names_multiclass))
 
-    for X, y, y_names in problems:
-        for y_names_i in [y_names, y_names.astype("O")]:
-            y_ = _choose_check_classifiers_labels(name, y, y_names_i)
-            check_classifiers_predictions(X, y_, name, classifier_orig)
+    _check_classifiers_class_predictions(name, classifier_orig, problems)
 
     labels_binary = [-1, 1]
     y_names_binary = np.take(labels_binary, y_binary)
@@ -4178,6 +4204,90 @@ def check_estimator_repr(name, estimator_orig):
         raise AssertionError(f"Repr of {name} failed with error: {e}.") from e
 
 
+def _param_has_default_value(p):
+    """Identify hyper parameters of an estimator with a default value."""
+    return (
+        p.name != "self"
+        and p.kind != p.VAR_KEYWORD
+        and p.kind != p.VAR_POSITIONAL
+        # and it should have a default value for this test
+        and p.default != p.empty
+    )
+
+
+def _param_is_required(p):
+    """Identify required hyper parameters of an estimator."""
+    return (
+        p.name != "self"
+        and p.kind != p.VAR_KEYWORD
+        # technically VAR_POSITIONAL is also required, but we don't have a
+        # nice way to check for it. We assume there's no VAR_POSITIONAL in
+        # the constructor parameters.
+        #
+        # TODO(devtools): separately check that the constructor doesn't
+        # have *args.
+        and p.kind != p.VAR_POSITIONAL
+        # these are parameters that don't have a default value and are
+        # required to construct the estimator.
+        and p.default == p.empty
+    )
+
+
+def _check_init_param_value(init_param, params, estimator_name):
+    """Validate a single init parameter's default value and consistency."""
+    allowed_types = {
+        str,
+        int,
+        float,
+        bool,
+        tuple,
+        type(None),
+        type,
+    }
+    # Any numpy numeric such as np.int32.
+    allowed_types.update(np.sctypeDict.values())
+
+    allowed_value = (
+        type(init_param.default) in allowed_types
+        or
+        # Although callables are mutable, we accept them as argument
+        # default value and trust that neither the implementation of
+        # the callable nor of the estimator changes the state of the
+        # callable.
+        callable(init_param.default)
+    )
+
+    assert allowed_value, (
+        f"Parameter '{init_param.name}' of estimator "
+        f"'{estimator_name}' is of type "
+        f"{type(init_param.default).__name__} which is not allowed. "
+        f"'{init_param.name}' must be a callable or must be of type "
+        f"{set(type.__name__ for type in allowed_types)}."
+    )
+    if init_param.name not in params.keys():
+        # deprecated parameter, not in get_params
+        assert init_param.default is None, (
+            f"Estimator parameter '{init_param.name}' of estimator "
+            f"'{estimator_name}' is not returned by get_params. "
+            "If it is deprecated, set its default value to None."
+        )
+        return
+
+    param_value = params[init_param.name]
+    if isinstance(param_value, np.ndarray):
+        assert_array_equal(param_value, init_param.default)
+    else:
+        failure_text = (
+            f"Parameter {init_param.name} was mutated on init. All "
+            "parameters must be stored unchanged."
+        )
+        if is_scalar_nan(param_value):
+            # Allows to set default parameters to np.nan
+            assert param_value is init_param.default, failure_text
+        else:
+            assert param_value == init_param.default, failure_text
+
+
 def check_parameters_default_constructible(name, estimator_orig):
     # test default-constructibility
     # get rid of deprecation warnings
@@ -4198,40 +4308,16 @@ def check_parameters_default_constructible(name, estimator_orig):
         init = estimator.__init__
 
         try:
-
-            def param_default_value(p):
-                """Identify hyper parameters of an estimator."""
-                return (
-                    p.name != "self"
-                    and p.kind != p.VAR_KEYWORD
-                    and p.kind != p.VAR_POSITIONAL
-                    # and it should have a default value for this test
-                    and p.default != p.empty
-                )
-
-            def param_required(p):
-                """Identify hyper parameters of an estimator."""
-                return (
-                    p.name != "self"
-                    and p.kind != p.VAR_KEYWORD
-                    # technically VAR_POSITIONAL is also required, but we don't have a
-                    # nice way to check for it. We assume there's no VAR_POSITIONAL in
-                    # the constructor parameters.
-                    #
-                    # TODO(devtools): separately check that the constructor doesn't
-                    # have *args.
-                    and p.kind != p.VAR_POSITIONAL
-                    # these are parameters that don't have a default value and are
-                    # required to construct the estimator.
-                    and p.default == p.empty
-                )
-
             required_params_names = [
-                p.name for p in signature(init).parameters.values() if param_required(p)
+                p.name
+                for p in signature(init).parameters.values()
+                if _param_is_required(p)
             ]
 
             default_value_params = [
-                p for p in signature(init).parameters.values() if param_default_value(p)
+                p
+                for p in signature(init).parameters.values()
+                if _param_has_default_value(p)
             ]
 
         except (TypeError, ValueError):
@@ -4251,57 +4337,7 @@ def check_parameters_default_constructible(name, estimator_orig):
         params = estimator.get_params()
 
         for init_param in default_value_params:
-            allowed_types = {
-                str,
-                int,
-                float,
-                bool,
-                tuple,
-                type(None),
-                type,
-            }
-            # Any numpy numeric such as np.int32.
-            allowed_types.update(np.sctypeDict.values())
-
-            allowed_value = (
-                type(init_param.default) in allowed_types
-                or
-                # Although callables are mutable, we accept them as argument
-                # default value and trust that neither the implementation of
-                # the callable nor of the estimator changes the state of the
-                # callable.
-                callable(init_param.default)
-            )
-
-            assert allowed_value, (
-                f"Parameter '{init_param.name}' of estimator "
-                f"'{Estimator.__name__}' is of type "
-                f"{type(init_param.default).__name__} which is not allowed. "
-                f"'{init_param.name}' must be a callable or must be of type "
-                f"{set(type.__name__ for type in allowed_types)}."
-            )
-            if init_param.name not in params.keys():
-                # deprecated parameter, not in get_params
-                assert init_param.default is None, (
-                    f"Estimator parameter '{init_param.name}' of estimator "
-                    f"'{Estimator.__name__}' is not returned by get_params. "
-                    "If it is deprecated, set its default value to None."
-                )
-                continue
-
-            param_value = params[init_param.name]
-            if isinstance(param_value, np.ndarray):
-                assert_array_equal(param_value, init_param.default)
-            else:
-                failure_text = (
-                    f"Parameter {init_param.name} was mutated on init. All "
-                    "parameters must be stored unchanged."
-                )
-                if is_scalar_nan(param_value):
-                    # Allows to set default parameters to np.nan
-                    assert param_value is init_param.default, failure_text
-                else:
-                    assert param_value == init_param.default, failure_text
+            _check_init_param_value(init_param, params, Estimator.__name__)
 
 
 def _enforce_estimator_tags_y(estimator, y):
@@ -4350,8 +4386,15 @@ def _enforce_estimator_tags_X(estimator, X, X_test=None, kernel=linear_kernel):
         if X_test is not None:
             X_test = X_test - X_test.min()  # pragma: no cover
 
-    X_res = X
+    X_res, X_test = _enforce_pairwise_tags(estimator, X, X_test, kernel)
+    if X_test is not None:
+        return X_res, X_test
+    return X_res
 
+
+def _enforce_pairwise_tags(estimator, X, X_test=None, kernel=linear_kernel):
+    """Enforce pairwise tag constraints on X and X_test."""
+    X_res = X
     # Pairwise estimators only accept
     # X of shape (`n_samples`, `n_samples`)
     if _is_pairwise_metric(estimator):
@@ -4364,9 +4407,7 @@ def _enforce_estimator_tags_X(estimator, X, X_test=None, kernel=linear_kernel):
         X_res = kernel(X, X)
         if X_test is not None:
             X_test = kernel(X_test, X)  # pragma: no cover
-    if X_test is not None:
-        return X_res, X_test
-    return X_res
+    return X_res, X_test
 
 
 @ignore_warnings(category=FutureWarning)
@@ -4804,6 +4845,71 @@ def check_requires_y_none(name, estimator_orig):
             )
 
 
+def _check_methods_n_features_in(name, estimator, x_bad, y, n_features):
+    """Check that estimator methods validate n_features_in_ consistency."""
+    check_methods = [
+        "predict",
+        "transform",
+        "decision_function",
+        "predict_proba",
+        "score",
+    ]
+
+    err_msg = """\
+        `{name}.{method}()` does not check for consistency between input number
+        of features with {name}.fit(), via the `n_features_in_` attribute.
+        You might want to use `sklearn.utils.validation.validate_data` instead
+        of `check_array` in `{name}.fit()` and {name}.{method}()`. This can be done
+        like the following:
+        from sklearn.utils.validation import validate_data
+        ...
+        class MyEstimator(BaseEstimator):
+            ...
+            def fit(self, X, y):
+                X, y = validate_data(self, X, y, ...)
+                ...
+                return self
+            ...
+            def {method}(self, X):
+                X = validate_data(self, X, ..., reset=False)
+                ...
+            return X
+    """
+    err_msg = textwrap.dedent(err_msg)
+
+    msg = f"X has 1 features, but \\w+ is expecting {n_features} features as input"
+    for method in check_methods:
+        if not hasattr(estimator, method):
+            continue
+
+        callable_method = getattr(estimator, method)
+        if method == "score":
+            callable_method = partial(callable_method, y=y)
+
+        with raises(
+            ValueError, match=msg, err_msg=err_msg.format(name=name, method=method)
+        ):
+            callable_method(x_bad)
+
+    return msg
+
+
+def _check_partial_fit_n_features_in(estimator_orig, x_data, x_bad, y, msg):
+    """Check that partial_fit validates n_features_in_ consistency."""
+    if not hasattr(estimator_orig, "partial_fit"):
+        return
+
+    estimator = clone(estimator_orig)
+    if is_classifier(estimator):
+        estimator.partial_fit(x_data, y, classes=np.unique(y))
+    else:
+        estimator.partial_fit(x_data, y)
+    assert estimator.n_features_in_ == x_data.shape[1]
+
+    with raises(ValueError, match=msg):
+        estimator.partial_fit(x_bad, y)
+
+
 @ignore_warnings(category=FutureWarning)
 def check_n_features_in_after_fitting(name, estimator_orig):
     # Make sure that n_features_in are checked after fitting
@@ -4842,65 +4948,9 @@ def check_n_features_in_after_fitting(name, estimator_orig):
     assert hasattr(estimator, "n_features_in_"), err_msg
     assert estimator.n_features_in_ == X.shape[1], err_msg
 
-    # check methods will check n_features_in_
-    check_methods = [
-        "predict",
-        "transform",
-        "decision_function",
-        "predict_proba",
-        "score",
-    ]
     X_bad = X[:, [1]]
-
-    err_msg = """\
-        `{name}.{method}()` does not check for consistency between input number
-        of features with {name}.fit(), via the `n_features_in_` attribute.
-        You might want to use `sklearn.utils.validation.validate_data` instead
-        of `check_array` in `{name}.fit()` and {name}.{method}()`. This can be done
-        like the following:
-        from sklearn.utils.validation import validate_data
-        ...
-        class MyEstimator(BaseEstimator):
-            ...
-            def fit(self, X, y):
-                X, y = validate_data(self, X, y, ...)
-                ...
-                return self
-            ...
-            def {method}(self, X):
-                X = validate_data(self, X, ..., reset=False)
-                ...
-            return X
-    """
-    err_msg = textwrap.dedent(err_msg)
-
-    msg = f"X has 1 features, but \\w+ is expecting {X.shape[1]} features as input"
-    for method in check_methods:
-        if not hasattr(estimator, method):
-            continue
-
-        callable_method = getattr(estimator, method)
-        if method == "score":
-            callable_method = partial(callable_method, y=y)
-
-        with raises(
-            ValueError, match=msg, err_msg=err_msg.format(name=name, method=method)
-        ):
-            callable_method(X_bad)
-
-    # partial_fit will check in the second call
-    if not hasattr(estimator, "partial_fit"):
-        return
-
-    estimator = clone(estimator_orig)
-    if is_classifier(estimator):
-        estimator.partial_fit(X, y, classes=np.unique(y))
-    else:
-        estimator.partial_fit(X, y)
-    assert estimator.n_features_in_ == X.shape[1]
-
-    with raises(ValueError, match=msg):
-        estimator.partial_fit(X_bad, y)
+    msg = _check_methods_n_features_in(name, estimator, X_bad, y, X.shape[1])
+    _check_partial_fit_n_features_in(estimator_orig, X, X_bad, y, msg)
 
 
 def check_valid_tag_types(name, estimator):
