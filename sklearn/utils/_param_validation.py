@@ -114,12 +114,8 @@ def make_constraint(constraint):
     constraint : instance of _Constraint
         The converted constraint.
     """
-    if isinstance(constraint, str) and constraint == "array-like":
-        return _ArrayLikes()
-    if isinstance(constraint, str) and constraint == "sparse matrix":
-        return _SparseMatrices()
-    if isinstance(constraint, str) and constraint == "random_state":
-        return _RandomStates()
+    if isinstance(constraint, str):
+        return _make_string_constraint(constraint)
     if constraint is callable:
         return _Callables()
     if constraint is None:
@@ -130,19 +126,11 @@ def make_constraint(constraint):
         constraint, (Interval, StrOptions, Options, HasMethods, MissingValues)
     ):
         return constraint
-    if isinstance(constraint, str) and constraint == "boolean":
-        return _Booleans()
-    if isinstance(constraint, str) and constraint == "verbose":
-        return _VerboseHelper()
-    if isinstance(constraint, str) and constraint == "cv_object":
-        return _CVObjects()
     if isinstance(constraint, Hidden):
         constraint = make_constraint(constraint.constraint)
         constraint.hidden = True
         return constraint
-    if (isinstance(constraint, str) and constraint == "nan") or (
-        isinstance(constraint, float) and np.isnan(constraint)
-    ):
+    if isinstance(constraint, float) and np.isnan(constraint):
         return _NanConstraint()
     raise ValueError(f"Unknown constraint type: {constraint}")
 
@@ -458,30 +446,36 @@ class Interval(_Constraint):
             )
 
         if self.type is Integral:
-            suffix = "for an interval over the integers."
-            if self.left is not None and not isinstance(self.left, Integral):
-                raise TypeError(f"Expecting left to be an int {suffix}")
-            if self.right is not None and not isinstance(self.right, Integral):
-                raise TypeError(f"Expecting right to be an int {suffix}")
-            if self.left is None and self.closed in ("left", "both"):
-                raise ValueError(
-                    f"left can't be None when closed == {self.closed} {suffix}"
-                )
-            if self.right is None and self.closed in ("right", "both"):
-                raise ValueError(
-                    f"right can't be None when closed == {self.closed} {suffix}"
-                )
+            self._check_integral_bounds()
         else:
-            if self.left is not None and not isinstance(self.left, Real):
-                raise TypeError("Expecting left to be a real number.")
-            if self.right is not None and not isinstance(self.right, Real):
-                raise TypeError("Expecting right to be a real number.")
+            self._check_real_bounds()
 
         if self.right is not None and self.left is not None and self.right <= self.left:
             raise ValueError(
                 f"right can't be less than left. Got left={self.left} and "
                 f"right={self.right}"
             )
+
+    def _check_integral_bounds(self):
+        suffix = "for an interval over the integers."
+        if self.left is not None and not isinstance(self.left, Integral):
+            raise TypeError(f"Expecting left to be an int {suffix}")
+        if self.right is not None and not isinstance(self.right, Integral):
+            raise TypeError(f"Expecting right to be an int {suffix}")
+        if self.left is None and self.closed in ("left", "both"):
+            raise ValueError(
+                f"left can't be None when closed == {self.closed} {suffix}"
+            )
+        if self.right is None and self.closed in ("right", "both"):
+            raise ValueError(
+                f"right can't be None when closed == {self.closed} {suffix}"
+            )
+
+    def _check_real_bounds(self):
+        if self.left is not None and not isinstance(self.left, Real):
+            raise TypeError("Expecting left to be a real number.")
+        if self.right is not None and not isinstance(self.right, Real):
+            raise TypeError("Expecting right to be a real number.")
 
     def __contains__(self, val):
         if not isinstance(val, Integral) and np.isnan(val):
@@ -763,6 +757,57 @@ class Hidden:
         self.constraint = constraint
 
 
+_STRING_CONSTRAINT_FACTORIES = {
+    "array-like": _ArrayLikes,
+    "sparse matrix": _SparseMatrices,
+    "random_state": _RandomStates,
+    "boolean": _Booleans,
+    "verbose": _VerboseHelper,
+    "cv_object": _CVObjects,
+    "nan": _NanConstraint,
+}
+
+
+def _make_string_constraint(constraint):
+    """Convert a string constraint into the appropriate Constraint object."""
+    factory = _STRING_CONSTRAINT_FACTORIES.get(constraint)
+    if factory is not None:
+        return factory()
+    raise ValueError(f"Unknown constraint type: {constraint}")
+
+
+def _generate_invalid_param_val_interval(constraint):
+    """Return a value outside the given Interval constraint.
+
+    Raises a NotImplementedError if there exists no invalid value for this constraint.
+    """
+    if constraint.type is Integral:
+        if constraint.left is not None:
+            return constraint.left - 1
+        if constraint.right is not None:
+            return constraint.right + 1
+
+        # There's no integer outside (-inf, +inf)
+        raise NotImplementedError
+
+    if constraint.type in (Real, RealNotInt):
+        if constraint.left is not None:
+            return constraint.left - 1e-6
+        if constraint.right is not None:
+            return constraint.right + 1e-6
+
+        # bounds are -inf, +inf
+        if constraint.closed in ("right", "neither"):
+            return -np.inf
+        if constraint.closed in ("left", "neither"):
+            return np.inf
+
+        # interval is [-inf, +inf]
+        return np.nan
+
+    raise NotImplementedError
+
+
 def generate_invalid_param_val(constraint):
     """Return a value that does not satisfy the constraint.
 
@@ -798,29 +843,8 @@ def generate_invalid_param_val(constraint):
     if isinstance(constraint, _CVObjects):
         return "not a cv object"
 
-    if isinstance(constraint, Interval) and constraint.type is Integral:
-        if constraint.left is not None:
-            return constraint.left - 1
-        if constraint.right is not None:
-            return constraint.right + 1
-
-        # There's no integer outside (-inf, +inf)
-        raise NotImplementedError
-
-    if isinstance(constraint, Interval) and constraint.type in (Real, RealNotInt):
-        if constraint.left is not None:
-            return constraint.left - 1e-6
-        if constraint.right is not None:
-            return constraint.right + 1e-6
-
-        # bounds are -inf, +inf
-        if constraint.closed in ("right", "neither"):
-            return -np.inf
-        if constraint.closed in ("left", "neither"):
-            return np.inf
-
-        # interval is [-inf, +inf]
-        return np.nan
+    if isinstance(constraint, Interval):
+        return _generate_invalid_param_val_interval(constraint)
 
     raise NotImplementedError
 
