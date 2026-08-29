@@ -135,6 +135,34 @@ def _is_integral_float(y):
     )
 
 
+def _check_y_for_multilabel(y):
+    """Convert ``y`` to an array if needed for multilabel checks."""
+    xp, is_array_api_compliant = get_namespace(y)
+    if hasattr(y, "__array__") or isinstance(y, Sequence) or is_array_api_compliant:
+        # DeprecationWarning will be replaced by ValueError, see NEP 34
+        # https://numpy.org/neps/nep-0034-infer-dtype-is-object.html
+        check_y_kwargs = dict(
+            accept_sparse=True,
+            allow_nd=True,
+            ensure_all_finite=False,
+            ensure_2d=False,
+            ensure_min_samples=0,
+            ensure_min_features=0,
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", VisibleDeprecationWarning)
+            try:
+                y = check_array(y, dtype=None, **check_y_kwargs)
+            except (VisibleDeprecationWarning, ValueError) as e:
+                if str(e).startswith("Complex data not supported"):
+                    raise
+
+                # dtype=object should be provided explicitly for ragged arrays,
+                # see NEP 34
+                y = check_array(y, dtype=object, **check_y_kwargs)
+    return y, xp
+
+
 def is_multilabel(y):
     """Check if ``y`` is in a multilabel format.
 
@@ -163,29 +191,7 @@ def is_multilabel(y):
     >>> is_multilabel(np.array([[1, 0, 0]]))
     True
     """
-    xp, is_array_api_compliant = get_namespace(y)
-    if hasattr(y, "__array__") or isinstance(y, Sequence) or is_array_api_compliant:
-        # DeprecationWarning will be replaced by ValueError, see NEP 34
-        # https://numpy.org/neps/nep-0034-infer-dtype-is-object.html
-        check_y_kwargs = dict(
-            accept_sparse=True,
-            allow_nd=True,
-            ensure_all_finite=False,
-            ensure_2d=False,
-            ensure_min_samples=0,
-            ensure_min_features=0,
-        )
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", VisibleDeprecationWarning)
-            try:
-                y = check_array(y, dtype=None, **check_y_kwargs)
-            except (VisibleDeprecationWarning, ValueError) as e:
-                if str(e).startswith("Complex data not supported"):
-                    raise
-
-                # dtype=object should be provided explicitly for ragged arrays,
-                # see NEP 34
-                y = check_array(y, dtype=object, **check_y_kwargs)
+    y, xp = _check_y_for_multilabel(y)
 
     if not (hasattr(y, "shape") and y.ndim == 2 and y.shape[1] > 1):
         return False
@@ -503,6 +509,48 @@ def _check_partial_fit_first_call(clf, classes=None):
     return False
 
 
+def _class_distribution_sparse(y, sample_weight, n_outputs):
+    """Compute class distribution for sparse matrices."""
+    classes = []
+    n_classes = []
+    class_prior = []
+
+    y = y.tocsc()
+    y_nnz = np.diff(y.indptr)
+
+    for k in range(n_outputs):
+        col_nonzero = y.indices[y.indptr[k] : y.indptr[k + 1]]
+        # separate sample weights for zero and non-zero elements
+        if sample_weight is not None:
+            nz_samp_weight = sample_weight[col_nonzero]
+            zeros_samp_weight_sum = np.sum(sample_weight) - np.sum(nz_samp_weight)
+        else:
+            nz_samp_weight = None
+            zeros_samp_weight_sum = y.shape[0] - y_nnz[k]
+
+        classes_k, y_k = np.unique(
+            y.data[y.indptr[k] : y.indptr[k + 1]], return_inverse=True
+        )
+        class_prior_k = np.bincount(y_k, weights=nz_samp_weight)
+
+        # An explicit zero was found, combine its weight with the weight
+        # of the implicit zeros
+        if 0 in classes_k:
+            class_prior_k[classes_k == 0] += zeros_samp_weight_sum
+
+        # If there is an implicit zero and it is not in classes and
+        # class_prior, make an entry for it
+        if 0 not in classes_k and y_nnz[k] < y.shape[0]:
+            classes_k = np.insert(classes_k, 0, 0)
+            class_prior_k = np.insert(class_prior_k, 0, zeros_samp_weight_sum)
+
+        classes.append(classes_k)
+        n_classes.append(classes_k.shape[0])
+        class_prior.append(class_prior_k / class_prior_k.sum())
+
+    return classes, n_classes, class_prior
+
+
 def class_distribution(y, sample_weight=None):
     """Compute class priors from multioutput-multiclass target data.
 
@@ -525,54 +573,22 @@ def class_distribution(y, sample_weight=None):
     class_prior : list of size n_outputs of ndarray of size (n_classes,)
         Class distribution of each column.
     """
-    classes = []
-    n_classes = []
-    class_prior = []
-
     n_samples, n_outputs = y.shape
     if sample_weight is not None:
         sample_weight = np.asarray(sample_weight)
 
     if issparse(y):
-        y = y.tocsc()
-        y_nnz = np.diff(y.indptr)
+        return _class_distribution_sparse(y, sample_weight, n_outputs)
 
-        for k in range(n_outputs):
-            col_nonzero = y.indices[y.indptr[k] : y.indptr[k + 1]]
-            # separate sample weights for zero and non-zero elements
-            if sample_weight is not None:
-                nz_samp_weight = sample_weight[col_nonzero]
-                zeros_samp_weight_sum = np.sum(sample_weight) - np.sum(nz_samp_weight)
-            else:
-                nz_samp_weight = None
-                zeros_samp_weight_sum = y.shape[0] - y_nnz[k]
-
-            classes_k, y_k = np.unique(
-                y.data[y.indptr[k] : y.indptr[k + 1]], return_inverse=True
-            )
-            class_prior_k = np.bincount(y_k, weights=nz_samp_weight)
-
-            # An explicit zero was found, combine its weight with the weight
-            # of the implicit zeros
-            if 0 in classes_k:
-                class_prior_k[classes_k == 0] += zeros_samp_weight_sum
-
-            # If there is an implicit zero and it is not in classes and
-            # class_prior, make an entry for it
-            if 0 not in classes_k and y_nnz[k] < y.shape[0]:
-                classes_k = np.insert(classes_k, 0, 0)
-                class_prior_k = np.insert(class_prior_k, 0, zeros_samp_weight_sum)
-
-            classes.append(classes_k)
-            n_classes.append(classes_k.shape[0])
-            class_prior.append(class_prior_k / class_prior_k.sum())
-    else:
-        for k in range(n_outputs):
-            classes_k, y_k = np.unique(y[:, k], return_inverse=True)
-            classes.append(classes_k)
-            n_classes.append(classes_k.shape[0])
-            class_prior_k = np.bincount(y_k, weights=sample_weight)
-            class_prior.append(class_prior_k / class_prior_k.sum())
+    classes = []
+    n_classes = []
+    class_prior = []
+    for k in range(n_outputs):
+        classes_k, y_k = np.unique(y[:, k], return_inverse=True)
+        classes.append(classes_k)
+        n_classes.append(classes_k.shape[0])
+        class_prior_k = np.bincount(y_k, weights=sample_weight)
+        class_prior.append(class_prior_k / class_prior_k.sum())
 
     return (classes, n_classes, class_prior)
 
