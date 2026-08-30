@@ -97,6 +97,7 @@ def remove_from(alist, to_remove):
 
 
 GITHUB_FOLDER = "build_tools/github"
+BLAS_OPENBLAS_CONSTRAINT = "[build=openblas]"
 
 build_metadata_list = [
     {
@@ -185,7 +186,7 @@ build_metadata_list = [
         "pip_dependencies": ["pandas"],
         "package_constraints": {
             "python": "3.11",
-            "blas": "[build=openblas]",
+            "blas": BLAS_OPENBLAS_CONSTRAINT,
             "numpy": "min",
             "scipy": "min",
             "matplotlib": "min",
@@ -215,7 +216,7 @@ build_metadata_list = [
         ),
         "package_constraints": {
             "python": "3.11",
-            "blas": "[build=openblas]",
+            "blas": BLAS_OPENBLAS_CONSTRAINT,
         },
     },
     {
@@ -316,7 +317,7 @@ build_metadata_list = [
         ],
         "package_constraints": {
             "python": "3.11",
-            "blas": "[build=openblas]",
+            "blas": BLAS_OPENBLAS_CONSTRAINT,
         },
     },
     {
@@ -431,7 +432,7 @@ build_metadata_list = [
             "python": "3.11",
             # The following is needed to avoid getting libnvpl build for blas for some
             # reason.
-            "blas": "[build=openblas]",
+            "blas": BLAS_OPENBLAS_CONSTRAINT,
         },
     },
     {
