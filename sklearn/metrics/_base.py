@@ -20,6 +20,26 @@ from sklearn.utils._array_api import (
 from sklearn.utils.multiclass import type_of_target
 
 
+def _apply_micro_average(y_true, y_score, score_weight, xp):
+    """Apply micro-averaging to multilabel inputs."""
+    if score_weight is not None:
+        score_weight = xp.repeat(score_weight, y_true.shape[1])
+    y_true = _ravel(y_true)
+    y_score = _ravel(y_score)
+    return y_true, y_score, score_weight
+
+
+def _weighted_average_weight(y_true, score_weight, xp):
+    """Compute average_weight for weighted averaging."""
+    if score_weight is not None:
+        #  Mixed integer and float type promotion not defined in array standard
+        y_true = xp.asarray(y_true, dtype=score_weight.dtype)
+        return xp.sum(
+            xp.multiply(y_true, xp.reshape(score_weight, (-1, 1))), axis=0
+        )
+    return xp.sum(y_true, axis=0)
+
+
 def _average_binary_score(binary_metric, y_true, y_score, average, sample_weight=None):
     """Average a binary metric for multilabel classification.
 
@@ -85,20 +105,12 @@ def _average_binary_score(binary_metric, y_true, y_score, average, sample_weight
     average_weight = None
 
     if average == "micro":
-        if score_weight is not None:
-            score_weight = xp.repeat(score_weight, y_true.shape[1])
-        y_true = _ravel(y_true)
-        y_score = _ravel(y_score)
+        y_true, y_score, score_weight = _apply_micro_average(
+            y_true, y_score, score_weight, xp
+        )
 
     elif average == "weighted":
-        if score_weight is not None:
-            #  Mixed integer and float type promotion not defined in array standard
-            y_true = xp.asarray(y_true, dtype=score_weight.dtype)
-            average_weight = xp.sum(
-                xp.multiply(y_true, xp.reshape(score_weight, (-1, 1))), axis=0
-            )
-        else:
-            average_weight = xp.sum(y_true, axis=0)
+        average_weight = _weighted_average_weight(y_true, score_weight, xp)
         if xpx.isclose(
             xp.sum(average_weight),
             xp.asarray(0, dtype=average_weight.dtype, device=_device),

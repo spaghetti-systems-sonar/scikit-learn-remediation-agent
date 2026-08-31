@@ -205,6 +205,59 @@ class PrecisionRecallDisplay(_BinaryClassifierCurveDisplayMixin):
         )
         return precision, recall, average_precision, name, prevalence_pos_label
 
+    def _plot_chance_level_line(
+        self, n_curves, prevalence_pos_label, chance_level_kw
+    ):
+        """Plot the chance level line and set `self.chance_level_`."""
+        if self.prevalence_pos_label is None:
+            raise ValueError(
+                "You must provide prevalence_pos_label when constructing the "
+                "PrecisionRecallDisplay object in order to plot the chance "
+                "level line. Alternatively, you may use "
+                "PrecisionRecallDisplay.from_estimator or "
+                "PrecisionRecallDisplay.from_predictions "
+                "to automatically set prevalence_pos_label"
+            )
+
+        default_chance_level_kwargs = {
+            "color": "k",
+            "linestyle": "--",
+        }
+        if n_curves > 1:
+            default_chance_level_kwargs["alpha"] = 0.3
+
+        if chance_level_kw is None:
+            chance_level_kw = {}
+
+        chance_level_kw = _validate_style_kwargs(
+            default_chance_level_kwargs, chance_level_kw
+        )
+        self.chance_level_ = []
+        for prevalence in prevalence_pos_label:
+            self.chance_level_.extend(
+                self.ax_.plot(
+                    (0, 1),
+                    (prevalence, prevalence),
+                    **chance_level_kw,
+                )
+            )
+
+        if "label" not in chance_level_kw:
+            label = (
+                f"Chance level (AP = {prevalence_pos_label[0]:0.2f})"
+                if n_curves == 1
+                else f"Chance level (AP = {np.mean(prevalence_pos_label):0.2f} "
+                f"+/- {np.std(prevalence_pos_label):0.2f})"
+            )
+            # Only label first curve with mean AP, to get single legend entry
+            self.chance_level_[0].set_label(label)
+
+        if n_curves == 1:
+            # Return single artist if only one curve is plotted
+            self.chance_level_ = self.chance_level_[0]
+
+        return chance_level_kw
+
     def plot(
         self,
         ax=None,
@@ -342,52 +395,9 @@ class PrecisionRecallDisplay(_BinaryClassifierCurveDisplayMixin):
         )
 
         if plot_chance_level:
-            if self.prevalence_pos_label is None:
-                raise ValueError(
-                    "You must provide prevalence_pos_label when constructing the "
-                    "PrecisionRecallDisplay object in order to plot the chance "
-                    "level line. Alternatively, you may use "
-                    "PrecisionRecallDisplay.from_estimator or "
-                    "PrecisionRecallDisplay.from_predictions "
-                    "to automatically set prevalence_pos_label"
-                )
-
-            default_chance_level_kwargs = {
-                "color": "k",
-                "linestyle": "--",
-            }
-            if n_curves > 1:
-                default_chance_level_kwargs["alpha"] = 0.3
-
-            if chance_level_kw is None:
-                chance_level_kw = {}
-
-            chance_level_kw = _validate_style_kwargs(
-                default_chance_level_kwargs, chance_level_kw
+            chance_level_kw = self._plot_chance_level_line(
+                n_curves, prevalence_pos_label, chance_level_kw
             )
-            self.chance_level_ = []
-            for prevalence in prevalence_pos_label:
-                self.chance_level_.extend(
-                    self.ax_.plot(
-                        (0, 1),
-                        (prevalence, prevalence),
-                        **chance_level_kw,
-                    )
-                )
-
-            if "label" not in chance_level_kw:
-                label = (
-                    f"Chance level (AP = {prevalence_pos_label[0]:0.2f})"
-                    if n_curves == 1
-                    else f"Chance level (AP = {np.mean(prevalence_pos_label):0.2f} "
-                    f"+/- {np.std(prevalence_pos_label):0.2f})"
-                )
-                # Only label first curve with mean AP, to get single legend entry
-                self.chance_level_[0].set_label(label)
-
-            if n_curves == 1:
-                # Return single artist if only one curve is plotted
-                self.chance_level_ = self.chance_level_[0]
         else:
             self.chance_level_ = None
 

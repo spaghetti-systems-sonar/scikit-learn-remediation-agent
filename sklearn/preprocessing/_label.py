@@ -860,6 +860,36 @@ def _inverse_binarize_multiclass(y, classes, xp=None):
         return classes[indices]
 
 
+def _apply_threshold(y, threshold, dtype_, int_dtype_, xp, device_):
+    """Apply thresholding to binarize y."""
+    if sp.issparse(y):
+        if threshold > 0:
+            if y.format not in ("csr", "csc"):
+                y = y.tocsr()
+            y.data = np.array(y.data > threshold, dtype=int)
+            y.eliminate_zeros()
+        else:
+            y = xp.asarray(y.toarray() > threshold, dtype=int_dtype_, device=device_)
+    else:
+        y = xp.asarray(
+            xp.asarray(y, dtype=dtype_, device=device_) > threshold,
+            dtype=int_dtype_,
+            device=device_,
+        )
+    return y
+
+
+def _inverse_binarize_binary(y, classes, xp):
+    """Inverse binarization for binary output type."""
+    if sp.issparse(y):
+        y = y.toarray()
+    if y.ndim == 2 and y.shape[1] == 2:
+        return classes[y[:, 1]]
+    if classes.shape[0] == 1:
+        return xp.repeat(classes[0], len(y))
+    return classes[xp.reshape(y, (-1,))]
+
+
 def _inverse_binarize_thresholding(y, output_type, classes, threshold, xp=None):
     """Inverse label binarization transformation using thresholding."""
 
@@ -880,39 +910,16 @@ def _inverse_binarize_thresholding(y, output_type, classes, threshold, xp=None):
     else:
         int_dtype_ = indexing_dtype(xp)
 
-    # Perform thresholding
-    if sp.issparse(y):
-        if threshold > 0:
-            if y.format not in ("csr", "csc"):
-                y = y.tocsr()
-            y.data = np.array(y.data > threshold, dtype=int)
-            y.eliminate_zeros()
-        else:
-            y = xp.asarray(y.toarray() > threshold, dtype=int_dtype_, device=device_)
-    else:
-        y = xp.asarray(
-            xp.asarray(y, dtype=dtype_, device=device_) > threshold,
-            dtype=int_dtype_,
-            device=device_,
-        )
+    y = _apply_threshold(y, threshold, dtype_, int_dtype_, xp, device_)
 
     # Inverse transform data
     if output_type == "binary":
-        if sp.issparse(y):
-            y = y.toarray()
-        if y.ndim == 2 and y.shape[1] == 2:
-            return classes[y[:, 1]]
-        else:
-            if classes.shape[0] == 1:
-                return xp.repeat(classes[0], len(y))
-            else:
-                return classes[xp.reshape(y, (-1,))]
+        return _inverse_binarize_binary(y, classes, xp)
 
-    elif output_type == "multilabel-indicator":
+    if output_type == "multilabel-indicator":
         return y
 
-    else:
-        raise ValueError("{0} format is not supported".format(output_type))
+    raise ValueError("{0} format is not supported".format(output_type))
 
 
 class MultiLabelBinarizer(TransformerMixin, BaseEstimator, auto_wrap_output_keys=None):
