@@ -2286,6 +2286,49 @@ def precision_recall_fscore_support(
     return precision, recall, f_score, true_sum
 
 
+def _check_replace_undefined_by(replace_undefined_by):
+    """Validate and normalize ``replace_undefined_by`` to a dict.
+
+    Returns a dict ``{"LR+": value, "LR-": value}`` regardless of the
+    input form so that callers can use it uniformly.
+    """
+    if isinstance(replace_undefined_by, float) and np.isnan(replace_undefined_by):
+        return {"LR+": np.nan, "LR-": np.nan}
+
+    if replace_undefined_by == 1.0:
+        return {"LR+": 1.0, "LR-": 1.0}
+
+    msg = (
+        "The dictionary passed as `replace_undefined_by` needs to be in the form "
+        "`{'LR+': `value_1`, 'LR-': `value_2`}` where the value for `LR+` ranges "
+        "from `1.0` to `np.inf` or is `np.nan` and the value for `LR-` ranges from "
+        f"`0.0` to `1.0` or is `np.nan`; got `{replace_undefined_by}`."
+    )
+    if "LR+" not in replace_undefined_by or "LR-" not in replace_undefined_by:
+        raise ValueError(msg)
+
+    try:
+        check_scalar(
+            replace_undefined_by["LR+"],
+            "positive_likelihood_ratio",
+            target_type=(Real),
+            min_val=1.0,
+            include_boundaries="left",
+        )
+        check_scalar(
+            replace_undefined_by["LR-"],
+            "negative_likelihood_ratio",
+            target_type=(Real),
+            min_val=0.0,
+            max_val=1.0,
+            include_boundaries="both",
+        )
+    except Exception as e:
+        raise ValueError(msg) from e
+
+    return replace_undefined_by
+
+
 @validate_params(
     {
         "y_true": ["array-like", "sparse matrix"],
@@ -2437,39 +2480,7 @@ def class_likelihood_ratios(
             f"problems, got targets of type: {y_type}"
         )
 
-    if replace_undefined_by == 1.0:
-        replace_undefined_by = {"LR+": 1.0, "LR-": 1.0}
-
-    if isinstance(replace_undefined_by, dict):
-        msg = (
-            "The dictionary passed as `replace_undefined_by` needs to be in the form "
-            "`{'LR+': `value_1`, 'LR-': `value_2`}` where the value for `LR+` ranges "
-            "from `1.0` to `np.inf` or is `np.nan` and the value for `LR-` ranges from "
-            f"`0.0` to `1.0` or is `np.nan`; got `{replace_undefined_by}`."
-        )
-        if ("LR+" in replace_undefined_by) and ("LR-" in replace_undefined_by):
-            try:
-                desired_lr_pos = replace_undefined_by.get("LR+", None)
-                check_scalar(
-                    desired_lr_pos,
-                    "positive_likelihood_ratio",
-                    target_type=(Real),
-                    min_val=1.0,
-                    include_boundaries="left",
-                )
-                desired_lr_neg = replace_undefined_by.get("LR-", None)
-                check_scalar(
-                    desired_lr_neg,
-                    "negative_likelihood_ratio",
-                    target_type=(Real),
-                    min_val=0.0,
-                    max_val=1.0,
-                    include_boundaries="both",
-                )
-            except Exception as e:
-                raise ValueError(msg) from e
-        else:
-            raise ValueError(msg)
+    replace_undefined_by = _check_replace_undefined_by(replace_undefined_by)
 
     cm = confusion_matrix(
         y_true,
@@ -2486,7 +2497,7 @@ def class_likelihood_ratios(
     neg_num = fn * support_neg
     neg_denom = tn * support_pos
 
-    # if `support_pos == 0`a division by zero will occur
+    # if `support_pos == 0` a division by zero will occur
     if support_pos == 0:
         msg = (
             "No samples of the positive class are present in `y_true`. "
@@ -2496,10 +2507,9 @@ def class_likelihood_ratios(
             "`warnings` module and `warnings.catch_warnings()`."
         )
         warnings.warn(msg, UndefinedMetricWarning, stacklevel=2)
-        positive_likelihood_ratio = np.nan
-        negative_likelihood_ratio = np.nan
+        return np.nan, np.nan
 
-    # if `fp == 0`a division by zero will occur
+    # if `fp == 0` a division by zero will occur
     if fp == 0:
         if tp == 0:
             msg_beginning = (
@@ -2512,17 +2522,11 @@ def class_likelihood_ratios(
         "control this behavior. To suppress this warning or turn it into an error, "
         "see Python's `warnings` module and `warnings.catch_warnings()`."
         warnings.warn(msg_beginning + msg_end, UndefinedMetricWarning, stacklevel=2)
-        if isinstance(replace_undefined_by, float) and np.isnan(replace_undefined_by):
-            positive_likelihood_ratio = replace_undefined_by
-        else:
-            # replace_undefined_by is a dict and
-            # isinstance(replace_undefined_by.get("LR+", None), Real); this includes
-            # `np.inf` and `np.nan`
-            positive_likelihood_ratio = desired_lr_pos
+        positive_likelihood_ratio = replace_undefined_by["LR+"]
     else:
         positive_likelihood_ratio = pos_num / pos_denom
 
-    # if `tn == 0`a division by zero will occur
+    # if `tn == 0` a division by zero will occur
     if tn == 0:
         msg = (
             "`negative_likelihood_ratio` is ill-defined and set to `np.nan`. "
@@ -2531,13 +2535,7 @@ def class_likelihood_ratios(
             "`warnings` module and `warnings.catch_warnings()`."
         )
         warnings.warn(msg, UndefinedMetricWarning, stacklevel=2)
-        if isinstance(replace_undefined_by, float) and np.isnan(replace_undefined_by):
-            negative_likelihood_ratio = replace_undefined_by
-        else:
-            # replace_undefined_by is a dict and
-            # isinstance(replace_undefined_by.get("LR-", None), Real); this includes
-            # `np.nan`
-            negative_likelihood_ratio = desired_lr_neg
+        negative_likelihood_ratio = replace_undefined_by["LR-"]
     else:
         negative_likelihood_ratio = neg_num / neg_denom
 

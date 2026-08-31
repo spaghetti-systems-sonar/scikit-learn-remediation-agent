@@ -750,6 +750,33 @@ def roc_auc_score(
         )
 
 
+def _validate_multiclass_roc_auc_labels(y_true, y_score, labels):
+    """Validate and resolve labels for multiclass ROC AUC computation."""
+    if labels is None:
+        classes = _unique(y_true)
+        if len(classes) != y_score.shape[1]:
+            raise ValueError(
+                "Number of classes in y_true not equal to the number of "
+                "columns in 'y_score'"
+            )
+        return classes
+
+    labels = column_or_1d(labels)
+    classes = _unique(labels)
+    if len(classes) != len(labels):
+        raise ValueError("Parameter 'labels' must be unique")
+    if not np.array_equal(classes, labels):
+        raise ValueError("Parameter 'labels' must be ordered")
+    if len(classes) != y_score.shape[1]:
+        raise ValueError(
+            "Number of given labels, {0}, not equal to the number "
+            "of columns in 'y_score', {1}".format(len(classes), y_score.shape[1])
+        )
+    if len(np.setdiff1d(y_true, classes)):
+        raise ValueError("'y_true' contains labels not in parameter 'labels'")
+    return classes
+
+
 def _multiclass_roc_auc_score(
     y_true, y_score, labels, multi_class, average, sample_weight
 ):
@@ -832,27 +859,7 @@ def _multiclass_roc_auc_score(
             "average=None is not implemented for multi_class='ovo'."
         )
 
-    if labels is not None:
-        labels = column_or_1d(labels)
-        classes = _unique(labels)
-        if len(classes) != len(labels):
-            raise ValueError("Parameter 'labels' must be unique")
-        if not np.array_equal(classes, labels):
-            raise ValueError("Parameter 'labels' must be ordered")
-        if len(classes) != y_score.shape[1]:
-            raise ValueError(
-                "Number of given labels, {0}, not equal to the number "
-                "of columns in 'y_score', {1}".format(len(classes), y_score.shape[1])
-            )
-        if len(np.setdiff1d(y_true, classes)):
-            raise ValueError("'y_true' contains labels not in parameter 'labels'")
-    else:
-        classes = _unique(y_true)
-        if len(classes) != y_score.shape[1]:
-            raise ValueError(
-                "Number of classes in y_true not equal to the number of "
-                "columns in 'y_score'"
-            )
+    classes = _validate_multiclass_roc_auc_labels(y_true, y_score, labels)
 
     if multi_class == "ovo":
         if sample_weight is not None:
