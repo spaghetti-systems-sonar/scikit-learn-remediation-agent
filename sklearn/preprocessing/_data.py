@@ -133,6 +133,72 @@ def _handle_zeros_in_scale(scale, copy=True, constant_mask=None):
         return scale
 
 
+def _scale_sparse(X, with_mean, with_std, axis):
+    """Scale a sparse matrix in place along the given axis."""
+    if with_mean:
+        raise ValueError(
+            "Cannot center sparse matrices: pass `with_mean=False` instead"
+            " See docstring for motivation and alternatives."
+        )
+    if axis != 0:
+        raise ValueError(
+            "Can only scale sparse matrix on axis=0,  got axis=%d" % axis
+        )
+    if with_std:
+        _, var = mean_variance_axis(X, axis=0)
+        var = _handle_zeros_in_scale(var, copy=False)
+        inplace_column_scale(X, 1 / np.sqrt(var))
+
+
+def _scale_dense(X, with_mean, with_std, axis):
+    """Scale a dense array in place along the given axis."""
+    X = np.asarray(X)
+    if with_mean:
+        mean_ = np.nanmean(X, axis)
+    if with_std:
+        scale_ = np.nanstd(X, axis)
+    # Xr is a view on the original array that enables easy use of
+    # broadcasting on the axis in which we are interested in
+    Xr = np.rollaxis(X, axis)
+    if with_mean:
+        Xr -= mean_
+        mean_1 = np.nanmean(Xr, axis=0)
+        # Verify that mean_1 is 'close to zero'. If X contains very
+        # large values, mean_1 can also be very large, due to a lack of
+        # precision of mean_. In this case, a pre-scaling of the
+        # concerned feature is efficient, for instance by its mean or
+        # maximum.
+        if not np.allclose(mean_1, 0):
+            warnings.warn(
+                "Numerical issues were encountered "
+                "when centering the data "
+                "and might not be solved. Dataset may "
+                "contain too large values. You may need "
+                "to prescale your features."
+            )
+            Xr -= mean_1
+    if with_std:
+        scale_ = _handle_zeros_in_scale(scale_, copy=False)
+        Xr /= scale_
+        if with_mean:
+            mean_2 = np.nanmean(Xr, axis=0)
+            # If mean_2 is not 'close to zero', it comes from the fact that
+            # scale_ is very small so that mean_2 = mean_1/scale_ > 0, even
+            # if mean_1 was close to zero. The problem is thus essentially
+            # due to the lack of precision of mean_. A solution is then to
+            # subtract the mean again:
+            if not np.allclose(mean_2, 0):
+                warnings.warn(
+                    "Numerical issues were encountered "
+                    "when scaling the data "
+                    "and might not be solved. The standard "
+                    "deviation of the data is probably "
+                    "very close to 0. "
+                )
+                Xr -= mean_2
+    return X
+
+
 @validate_params(
     {
         "X": ["array-like", "sparse matrix"],
@@ -241,64 +307,9 @@ def scale(X, *, axis=0, with_mean=True, with_std=True, copy=True):
         input_name="X",
     )
     if sparse.issparse(X):
-        if with_mean:
-            raise ValueError(
-                "Cannot center sparse matrices: pass `with_mean=False` instead"
-                " See docstring for motivation and alternatives."
-            )
-        if axis != 0:
-            raise ValueError(
-                "Can only scale sparse matrix on axis=0,  got axis=%d" % axis
-            )
-        if with_std:
-            _, var = mean_variance_axis(X, axis=0)
-            var = _handle_zeros_in_scale(var, copy=False)
-            inplace_column_scale(X, 1 / np.sqrt(var))
+        _scale_sparse(X, with_mean, with_std, axis)
     else:
-        X = np.asarray(X)
-        if with_mean:
-            mean_ = np.nanmean(X, axis)
-        if with_std:
-            scale_ = np.nanstd(X, axis)
-        # Xr is a view on the original array that enables easy use of
-        # broadcasting on the axis in which we are interested in
-        Xr = np.rollaxis(X, axis)
-        if with_mean:
-            Xr -= mean_
-            mean_1 = np.nanmean(Xr, axis=0)
-            # Verify that mean_1 is 'close to zero'. If X contains very
-            # large values, mean_1 can also be very large, due to a lack of
-            # precision of mean_. In this case, a pre-scaling of the
-            # concerned feature is efficient, for instance by its mean or
-            # maximum.
-            if not np.allclose(mean_1, 0):
-                warnings.warn(
-                    "Numerical issues were encountered "
-                    "when centering the data "
-                    "and might not be solved. Dataset may "
-                    "contain too large values. You may need "
-                    "to prescale your features."
-                )
-                Xr -= mean_1
-        if with_std:
-            scale_ = _handle_zeros_in_scale(scale_, copy=False)
-            Xr /= scale_
-            if with_mean:
-                mean_2 = np.nanmean(Xr, axis=0)
-                # If mean_2 is not 'close to zero', it comes from the fact that
-                # scale_ is very small so that mean_2 = mean_1/scale_ > 0, even
-                # if mean_1 was close to zero. The problem is thus essentially
-                # due to the lack of precision of mean_. A solution is then to
-                # subtract the mean again:
-                if not np.allclose(mean_2, 0):
-                    warnings.warn(
-                        "Numerical issues were encountered "
-                        "when scaling the data "
-                        "and might not be solved. The standard "
-                        "deviation of the data is probably "
-                        "very close to 0. "
-                    )
-                    Xr -= mean_2
+        X = _scale_dense(X, with_mean, with_std, axis)
     return X
 
 
@@ -1965,6 +1976,41 @@ def robust_scale(
     return X
 
 
+def _normalize_sparse(X, norm, return_norm):
+    """Normalize sparse matrix X in-place and return norms if applicable."""
+    if return_norm and norm in ("l1", "l2"):
+        raise NotImplementedError(
+            "return_norm=True is not implemented "
+            "for sparse matrices with norm 'l1' "
+            "or norm 'l2'"
+        )
+    if norm == "l1":
+        inplace_csr_row_normalize_l1(X)
+    elif norm == "l2":
+        inplace_csr_row_normalize_l2(X)
+    elif norm == "max":
+        mins, maxes = min_max_axis(X, 1)
+        norms = np.maximum(abs(mins), maxes)
+        norms_elementwise = norms.repeat(np.diff(X.indptr))
+        mask = norms_elementwise != 0
+        X.data[mask] /= norms_elementwise[mask]
+        return norms
+    return None
+
+
+def _normalize_dense(X, norm, xp):
+    """Normalize dense array X in-place and return norms."""
+    if norm == "l1":
+        norms = xp.sum(xp.abs(X), axis=1)
+    elif norm == "l2":
+        norms = row_norms(X)
+    elif norm == "max":
+        norms = xp.max(xp.abs(X), axis=1)
+    norms = _handle_zeros_in_scale(norms, copy=False)
+    X /= norms[:, None]
+    return norms
+
+
 @validate_params(
     {
         "X": ["array-like", "sparse matrix"],
@@ -2054,39 +2100,16 @@ def normalize(X, norm="l2", *, axis=1, copy=True, return_norm=False):
         X = X.T
 
     if sparse.issparse(X):
-        if return_norm and norm in ("l1", "l2"):
-            raise NotImplementedError(
-                "return_norm=True is not implemented "
-                "for sparse matrices with norm 'l1' "
-                "or norm 'l2'"
-            )
-        if norm == "l1":
-            inplace_csr_row_normalize_l1(X)
-        elif norm == "l2":
-            inplace_csr_row_normalize_l2(X)
-        elif norm == "max":
-            mins, maxes = min_max_axis(X, 1)
-            norms = np.maximum(abs(mins), maxes)
-            norms_elementwise = norms.repeat(np.diff(X.indptr))
-            mask = norms_elementwise != 0
-            X.data[mask] /= norms_elementwise[mask]
+        norms = _normalize_sparse(X, norm, return_norm)
     else:
-        if norm == "l1":
-            norms = xp.sum(xp.abs(X), axis=1)
-        elif norm == "l2":
-            norms = row_norms(X)
-        elif norm == "max":
-            norms = xp.max(xp.abs(X), axis=1)
-        norms = _handle_zeros_in_scale(norms, copy=False)
-        X /= norms[:, None]
+        norms = _normalize_dense(X, norm, xp)
 
     if axis == 0:
         X = X.T
 
     if return_norm:
         return X, norms
-    else:
-        return X
+    return X
 
 
 class Normalizer(OneToOneFeatureMixin, TransformerMixin, BaseEstimator):
@@ -2831,6 +2854,44 @@ class QuantileTransformer(OneToOneFeatureMixin, TransformerMixin, BaseEstimator)
 
         self.quantiles_ = np.nanpercentile(X, references, axis=0)
 
+    def _sparse_column_data(
+        self, column_nnz_data, n_samples, dtype, random_state
+    ):
+        """Build the data array for a single sparse feature column.
+
+        Parameters
+        ----------
+        column_nnz_data : ndarray
+            Non-zero data for the column.
+        n_samples : int
+            Total number of samples.
+        dtype : dtype
+            Data type for the output array.
+        random_state : RandomState
+            Random state for subsampling.
+
+        Returns
+        -------
+        column_data : ndarray
+            Array representing the column, possibly subsampled.
+        """
+        if self.subsample is not None and len(column_nnz_data) > self.subsample:
+            column_subsample = self.subsample * len(column_nnz_data) // n_samples
+            if self.ignore_implicit_zeros:
+                column_data = np.zeros(shape=column_subsample, dtype=dtype)
+            else:
+                column_data = np.zeros(shape=self.subsample, dtype=dtype)
+            column_data[:column_subsample] = random_state.choice(
+                column_nnz_data, size=column_subsample, replace=False
+            )
+        else:
+            if self.ignore_implicit_zeros:
+                column_data = np.zeros(shape=len(column_nnz_data), dtype=dtype)
+            else:
+                column_data = np.zeros(shape=n_samples, dtype=dtype)
+            column_data[: len(column_nnz_data)] = column_nnz_data
+        return column_data
+
     def _sparse_fit(self, X, random_state):
         """Compute percentiles for sparse matrices.
 
@@ -2847,21 +2908,9 @@ class QuantileTransformer(OneToOneFeatureMixin, TransformerMixin, BaseEstimator)
         self.quantiles_ = []
         for feature_idx in range(n_features):
             column_nnz_data = X.data[X.indptr[feature_idx] : X.indptr[feature_idx + 1]]
-            if self.subsample is not None and len(column_nnz_data) > self.subsample:
-                column_subsample = self.subsample * len(column_nnz_data) // n_samples
-                if self.ignore_implicit_zeros:
-                    column_data = np.zeros(shape=column_subsample, dtype=X.dtype)
-                else:
-                    column_data = np.zeros(shape=self.subsample, dtype=X.dtype)
-                column_data[:column_subsample] = random_state.choice(
-                    column_nnz_data, size=column_subsample, replace=False
-                )
-            else:
-                if self.ignore_implicit_zeros:
-                    column_data = np.zeros(shape=len(column_nnz_data), dtype=X.dtype)
-                else:
-                    column_data = np.zeros(shape=n_samples, dtype=X.dtype)
-                column_data[: len(column_nnz_data)] = column_nnz_data
+            column_data = self._sparse_column_data(
+                column_nnz_data, n_samples, X.dtype, random_state
+            )
 
             if not column_data.size:
                 # if no nnz, an error will be raised for computing the

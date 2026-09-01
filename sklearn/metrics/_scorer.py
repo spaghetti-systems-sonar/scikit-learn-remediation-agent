@@ -144,22 +144,7 @@ class _MultimetricScorer:
         if _routing_enabled():
             routed_params = process_routing(self, "score", **kwargs)
         else:
-            # Scorers all get the same args, and get all of them except sample_weight.
-            # Only the ones having `sample_weight` in their signature will receive it.
-            # This does not work for metadata other than sample_weight, and for those
-            # users have to enable metadata routing.
-            common_kwargs = {
-                arg: value for arg, value in kwargs.items() if arg != "sample_weight"
-            }
-            routed_params = Bunch(
-                **{name: Bunch(score=common_kwargs.copy()) for name in self._scorers}
-            )
-            if "sample_weight" in kwargs:
-                for name, scorer in self._scorers.items():
-                    if scorer._accept_sample_weight():
-                        routed_params[name].score["sample_weight"] = kwargs[
-                            "sample_weight"
-                        ]
+            routed_params = self._build_routed_params(**kwargs)
 
         for name, scorer in self._scorers.items():
             try:
@@ -176,6 +161,28 @@ class _MultimetricScorer:
                 else:
                     scores[name] = format_exc()
         return scores
+
+    def _build_routed_params(self, **kwargs):
+        """Build routed parameters for each scorer when routing is not enabled.
+
+        Scorers all get the same args, and get all of them except sample_weight.
+        Only the ones having `sample_weight` in their signature will receive it.
+        This does not work for metadata other than sample_weight, and for those
+        users have to enable metadata routing.
+        """
+        common_kwargs = {
+            arg: value for arg, value in kwargs.items() if arg != "sample_weight"
+        }
+        routed_params = Bunch(
+            **{name: Bunch(score=common_kwargs.copy()) for name in self._scorers}
+        )
+        if "sample_weight" in kwargs:
+            for name, scorer in self._scorers.items():
+                if scorer._accept_sample_weight():
+                    routed_params[name].score["sample_weight"] = kwargs[
+                        "sample_weight"
+                    ]
+        return routed_params
 
     def __repr__(self):
         scorers = ", ".join([f'"{s}"' for s in self._scorers])
@@ -557,6 +564,40 @@ class _PassthroughScorer(_MetadataRequester):
         return get_routing_for_object(self._estimator)
 
 
+def _check_multimetric_scoring_sequence(estimator, scoring):
+    """Validate and build scorers from a sequence (list, tuple, or set) of scoring."""
+    err_msg = (
+        "The list/tuple elements must be unique strings of predefined scorers. "
+    )
+    try:
+        keys = set(scoring)
+    except TypeError as e:
+        raise ValueError(err_msg) from e
+
+    if len(keys) != len(scoring):
+        raise ValueError(
+            f"{err_msg} Duplicate elements were found in"
+            f" the given list. {scoring!r}"
+        )
+    if len(keys) == 0:
+        raise ValueError(f"{err_msg} Empty list was given. {scoring!r}")
+    if not all(isinstance(k, str) for k in keys):
+        if any(callable(k) for k in keys):
+            raise ValueError(
+                f"{err_msg} One or more of the elements "
+                "were callables. Use a dict of score "
+                "name mapped to the scorer callable. "
+                f"Got {scoring!r}"
+            )
+        raise ValueError(
+            f"{err_msg} Non-string types were found "
+            f"in the given list. Got {scoring!r}"
+        )
+    return {
+        scorer: check_scoring(estimator, scoring=scorer) for scorer in scoring
+    }
+
+
 def _check_multimetric_scoring(estimator, scoring):
     """Check the scoring parameter in cases when multiple metrics are allowed.
 
@@ -594,39 +635,7 @@ def _check_multimetric_scoring(estimator, scoring):
     )
 
     if isinstance(scoring, (list, tuple, set)):
-        err_msg = (
-            "The list/tuple elements must be unique strings of predefined scorers. "
-        )
-        try:
-            keys = set(scoring)
-        except TypeError as e:
-            raise ValueError(err_msg) from e
-
-        if len(keys) != len(scoring):
-            raise ValueError(
-                f"{err_msg} Duplicate elements were found in"
-                f" the given list. {scoring!r}"
-            )
-        elif len(keys) > 0:
-            if not all(isinstance(k, str) for k in keys):
-                if any(callable(k) for k in keys):
-                    raise ValueError(
-                        f"{err_msg} One or more of the elements "
-                        "were callables. Use a dict of score "
-                        "name mapped to the scorer callable. "
-                        f"Got {scoring!r}"
-                    )
-                else:
-                    raise ValueError(
-                        f"{err_msg} Non-string types were found "
-                        f"in the given list. Got {scoring!r}"
-                    )
-            scorers = {
-                scorer: check_scoring(estimator, scoring=scorer) for scorer in scoring
-            }
-        else:
-            raise ValueError(f"{err_msg} Empty list was given. {scoring!r}")
-
+        scorers = _check_multimetric_scoring_sequence(estimator, scoring)
     elif isinstance(scoring, dict):
         keys = set(scoring)
         if not all(isinstance(k, str) for k in keys):
