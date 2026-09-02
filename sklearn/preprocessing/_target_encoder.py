@@ -280,6 +280,23 @@ class TargetEncoder(OneToOneFeatureMixin, _BaseEncoder):
         self._fit_encodings_all(X, y)
         return self
 
+    def _get_check_cv_kwargs(self):
+        """Get kwargs for check_cv, handling deprecated shuffle/random_state."""
+        # TODO(1.11): remove this method
+        if self.shuffle != "deprecated" or self.random_state != "deprecated":
+            warnings.warn(
+                "`TargetEncoder.shuffle` and `TargetEncoder.random_state` are "
+                "deprecated in version 1.9 and will be removed in version 1.11. Pass a "
+                "cross-validation generator as `cv` argument to specify the shuffling "
+                "behaviour instead.",
+                FutureWarning,
+            )
+        shuffle = True if self.shuffle == "deprecated" else self.shuffle
+        cv_kwargs = {"shuffle": shuffle}
+        if self.random_state != "deprecated":
+            cv_kwargs["random_state"] = self.random_state
+        return cv_kwargs
+
     @_fit_context(prefer_skip_nested_validation=True)
     def fit_transform(self, X, y, **params):
         """Fit :class:`TargetEncoder` and transform `X` with the target encoding.
@@ -336,19 +353,7 @@ class TargetEncoder(OneToOneFeatureMixin, _BaseEncoder):
 
         X_ordinal, X_known_mask, y_encoded, n_categories = self._fit_encodings_all(X, y)
 
-        # TODO(1.11): remove code block
-        if self.shuffle != "deprecated" or self.random_state != "deprecated":
-            warnings.warn(
-                "`TargetEncoder.shuffle` and `TargetEncoder.random_state` are "
-                "deprecated in version 1.9 and will be removed in version 1.11. Pass a "
-                "cross-validation generator as `cv` argument to specify the shuffling "
-                "behaviour instead.",
-                FutureWarning,
-            )
-        shuffle = True if self.shuffle == "deprecated" else self.shuffle
-        cv_kwargs = {"shuffle": shuffle}
-        if self.random_state != "deprecated":
-            cv_kwargs["random_state"] = self.random_state
+        cv_kwargs = self._get_check_cv_kwargs()
 
         # TODO(1.11): pass shuffle=True to keep backwards compatibility for default
         # inputs (will be ignored in `check_cv` if a cv object is passed);

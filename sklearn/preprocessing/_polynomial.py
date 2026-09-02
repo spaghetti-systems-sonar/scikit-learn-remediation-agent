@@ -295,26 +295,8 @@ class PolynomialFeatures(TransformerMixin, BaseEstimator):
             feature_names.append(name)
         return np.asarray(feature_names, dtype=object)
 
-    @_fit_context(prefer_skip_nested_validation=True)
-    def fit(self, X, y=None):
-        """
-        Compute number of output features.
-
-        Parameters
-        ----------
-        X : {array-like, sparse matrix} of shape (n_samples, n_features)
-            The data.
-
-        y : Ignored
-            Not used, present here for API consistency by convention.
-
-        Returns
-        -------
-        self : object
-            Fitted transformer.
-        """
-        _, n_features = validate_data(self, X, accept_sparse=True).shape
-
+    def _validate_degree(self):
+        """Validate the degree parameter and set _min_degree, _max_degree."""
         if isinstance(self.degree, Integral):
             if self.degree == 0 and not self.include_bias:
                 raise ValueError(
@@ -351,6 +333,28 @@ class PolynomialFeatures(TransformerMixin, BaseEstimator):
                 "(min_degree, max_degree), got "
                 f"{self.degree}."
             )
+
+    @_fit_context(prefer_skip_nested_validation=True)
+    def fit(self, X, y=None):
+        """
+        Compute number of output features.
+
+        Parameters
+        ----------
+        X : {array-like, sparse matrix} of shape (n_samples, n_features)
+            The data.
+
+        y : Ignored
+            Not used, present here for API consistency by convention.
+
+        Returns
+        -------
+        self : object
+            Fitted transformer.
+        """
+        _, n_features = validate_data(self, X, accept_sparse=True).shape
+
+        self._validate_degree()
 
         self.n_output_features_ = self._num_combinations(
             n_features=n_features,
@@ -832,6 +836,31 @@ class SplineTransformer(TransformerMixin, BaseEstimator):
                 feature_names.append(f"{input_features[i]}_sp_{j}")
         return np.asarray(feature_names, dtype=object)
 
+    def _validate_input(self, X):
+        """Validate input data, handling missing values according to config."""
+        try:
+            X = validate_data(
+                self,
+                X,
+                reset=True,
+                accept_sparse=False,
+                ensure_min_samples=2,
+                ensure_2d=True,
+                ensure_all_finite=(self.handle_missing != "zeros"),
+            )
+        except ValueError as e:
+            if "Input X contains NaN." in str(e) and self.handle_missing == "error":
+                raise ValueError(
+                    "Input X contains NaN values and `SplineTransformer`"
+                    " is configured to error in this case"
+                    " (handle_missing='error'). To avoid this error, set"
+                    " handle_missing='zeros' to encode missing values as"
+                    " splines with value 0 or ensure no missing values"
+                    " in X."
+                ) from e
+            raise e
+        return X
+
     @_fit_context(prefer_skip_nested_validation=True)
     def fit(self, X, y=None, sample_weight=None):
         """Compute knot positions of splines.
@@ -854,25 +883,7 @@ class SplineTransformer(TransformerMixin, BaseEstimator):
         self : object
             Fitted transformer.
         """
-        try:
-            X = validate_data(
-                self,
-                X,
-                reset=True,
-                accept_sparse=False,
-                ensure_min_samples=2,
-                ensure_2d=True,
-                ensure_all_finite=(self.handle_missing != "zeros"),
-            )
-        except ValueError as e:
-            if "Input X contains NaN." in str(e) and self.handle_missing == "error":
-                raise ValueError(
-                    "Input X contains NaN values and `SplineTransformer` is configured "
-                    "to error in this case (handle_missing='error'). To avoid this "
-                    "error, set handle_missing='zeros' to encode missing values as "
-                    "splines with value 0 or ensure no missing values in X."
-                ) from e
-            raise e
+        X = self._validate_input(X)
 
         if sample_weight is not None:
             sample_weight = _check_sample_weight(sample_weight, X, dtype=X.dtype)

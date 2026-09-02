@@ -1006,71 +1006,9 @@ class StandardScaler(
             self.n_samples_seen_ = xp.astype(self.n_samples_seen_, dtype, copy=False)
 
         if sparse.issparse(X):
-            if self.with_mean:
-                raise ValueError(
-                    "Cannot center sparse matrices: pass `with_mean=False` "
-                    "instead. See docstring for motivation and alternatives."
-                )
-            sparse_constructor = (
-                sparse.csr_array if X.format == "csr" else sparse.csc_array
-            )
-
-            if self.with_std:
-                # First pass
-                if not hasattr(self, "scale_"):
-                    self.mean_, self.var_, self.n_samples_seen_ = mean_variance_axis(
-                        X, axis=0, weights=sample_weight, return_sum_weights=True
-                    )
-                # Next passes
-                else:
-                    (
-                        self.mean_,
-                        self.var_,
-                        self.n_samples_seen_,
-                    ) = incr_mean_variance_axis(
-                        X,
-                        axis=0,
-                        last_mean=self.mean_,
-                        last_var=self.var_,
-                        last_n=self.n_samples_seen_,
-                        weights=sample_weight,
-                    )
-                # We force the mean and variance to float64 for large arrays
-                # See https://github.com/scikit-learn/scikit-learn/pull/12338
-                self.mean_ = self.mean_.astype(np.float64, copy=False)
-                self.var_ = self.var_.astype(np.float64, copy=False)
-            else:
-                self.mean_ = None  # as with_mean must be False for sparse
-                self.var_ = None
-                weights = _check_sample_weight(sample_weight, X)
-                sum_weights_nan = weights @ sparse_constructor(
-                    (np.isnan(X.data), X.indices, X.indptr), shape=X.shape
-                )
-                self.n_samples_seen_ += (np.sum(weights) - sum_weights_nan).astype(
-                    dtype
-                )
+            self._partial_fit_sparse(X, sample_weight, dtype)
         else:
-            # First pass
-            if not hasattr(self, "scale_"):
-                self.mean_ = 0.0
-                if self.with_std:
-                    self.var_ = 0.0
-                else:
-                    self.var_ = None
-
-            if not self.with_mean and not self.with_std:
-                self.mean_ = None
-                self.var_ = None
-                self.n_samples_seen_ += X.shape[0] - xp.isnan(X).sum(axis=0)
-
-            else:
-                self.mean_, self.var_, self.n_samples_seen_ = _incremental_mean_and_var(
-                    X,
-                    self.mean_,
-                    self.var_,
-                    self.n_samples_seen_,
-                    sample_weight=sample_weight,
-                )
+            self._partial_fit_dense(X, sample_weight, dtype, xp)
 
         # for backward-compatibility, reduce n_samples_seen_ to an integer
         # if the number of samples is the same for each feature (i.e. no
@@ -1099,6 +1037,75 @@ class StandardScaler(
         )
 
         return self
+
+    def _partial_fit_sparse(self, X, sample_weight, dtype):
+        """Handle the sparse matrix case for partial_fit."""
+        if self.with_mean:
+            raise ValueError(
+                "Cannot center sparse matrices: pass `with_mean=False` "
+                "instead. See docstring for motivation and alternatives."
+            )
+        sparse_constructor = (
+            sparse.csr_array if X.format == "csr" else sparse.csc_array
+        )
+
+        if self.with_std:
+            # First pass
+            if not hasattr(self, "scale_"):
+                self.mean_, self.var_, self.n_samples_seen_ = mean_variance_axis(
+                    X, axis=0, weights=sample_weight, return_sum_weights=True
+                )
+            # Next passes
+            else:
+                (
+                    self.mean_,
+                    self.var_,
+                    self.n_samples_seen_,
+                ) = incr_mean_variance_axis(
+                    X,
+                    axis=0,
+                    last_mean=self.mean_,
+                    last_var=self.var_,
+                    last_n=self.n_samples_seen_,
+                    weights=sample_weight,
+                )
+            # We force the mean and variance to float64 for large arrays
+            # See https://github.com/scikit-learn/scikit-learn/pull/12338
+            self.mean_ = self.mean_.astype(np.float64, copy=False)
+            self.var_ = self.var_.astype(np.float64, copy=False)
+        else:
+            self.mean_ = None  # as with_mean must be False for sparse
+            self.var_ = None
+            weights = _check_sample_weight(sample_weight, X)
+            sum_weights_nan = weights @ sparse_constructor(
+                (np.isnan(X.data), X.indices, X.indptr), shape=X.shape
+            )
+            self.n_samples_seen_ += (np.sum(weights) - sum_weights_nan).astype(
+                dtype
+            )
+
+    def _partial_fit_dense(self, X, sample_weight, dtype, xp):
+        """Handle the dense matrix case for partial_fit."""
+        # First pass
+        if not hasattr(self, "scale_"):
+            self.mean_ = 0.0
+            if self.with_std:
+                self.var_ = 0.0
+            else:
+                self.var_ = None
+
+        if not self.with_mean and not self.with_std:
+            self.mean_ = None
+            self.var_ = None
+            self.n_samples_seen_ += X.shape[0] - xp.isnan(X).sum(axis=0)
+        else:
+            self.mean_, self.var_, self.n_samples_seen_ = _incremental_mean_and_var(
+                X,
+                self.mean_,
+                self.var_,
+                self.n_samples_seen_,
+                sample_weight=sample_weight,
+            )
 
     def transform(self, X, copy=None):
         """Perform standardization by centering and scaling.

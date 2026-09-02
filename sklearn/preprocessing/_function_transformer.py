@@ -296,20 +296,25 @@ class FunctionTransformer(TransformerMixin, BaseEstimator):
                         "are set to the names provided by `get_feature_names_out`."
                     )
 
-        if self.feature_names_out is None:
-            warn_msg = (
-                "When `set_output` is configured to be '{0}', `func` should return "
-                "a {0} DataFrame to follow the `set_output` API  or `feature_names_out`"
-                " should be defined."
-            )
-            if output_config == "pandas" and not nw.dependencies.is_pandas_dataframe(
-                out
-            ):
-                warnings.warn(warn_msg.format("pandas"))
-            elif output_config == "polars" and not is_polars_df(out):
-                warnings.warn(warn_msg.format("polars"))
+        self._check_output_config_warning(out, output_config)
 
         return out
+
+    def _check_output_config_warning(self, out, output_config):
+        """Warn if output format doesn't match set_output configuration."""
+        if self.feature_names_out is not None:
+            return
+        warn_msg = (
+            "When `set_output` is configured to be '{0}', `func` should return "
+            "a {0} DataFrame to follow the `set_output` API  or `feature_names_out`"
+            " should be defined."
+        )
+        if output_config == "pandas" and not nw.dependencies.is_pandas_dataframe(
+            out
+        ):
+            warnings.warn(warn_msg.format("pandas"))
+        elif output_config == "polars" and not is_polars_df(out):
+            warnings.warn(warn_msg.format("polars"))
 
     def inverse_transform(self, X):
         """Transform X using the inverse function.
