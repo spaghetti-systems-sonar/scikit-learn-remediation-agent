@@ -216,6 +216,41 @@ class _BaseEncoder(TransformerMixin, BaseEstimator):
                 missing_indices[feature_idx] = categories_for_idx.size - 1
         return missing_indices
 
+    @staticmethod
+    def _adjust_column_dtype(x_col, categories):
+        """Cast x_col to a compatible dtype for encoding with the given categories."""
+        if (
+            categories.dtype.kind in ("U", "S")
+            and categories.itemsize > x_col.itemsize
+        ):
+            return x_col.astype(categories.dtype)
+        if categories.dtype.kind == "O" and x_col.dtype.kind == "U":
+            # categories are objects and x_col are numpy strings.
+            # Cast x_col to an object dtype to prevent truncation
+            # when setting invalid values.
+            return x_col.astype("O")
+        return x_col.copy()
+
+    @staticmethod
+    def _warn_unknown_columns(columns_with_unknown, handle_unknown):
+        """Warn about unknown categories found during transform."""
+        if not columns_with_unknown:
+            return
+        if handle_unknown == "infrequent_if_exist":
+            msg = (
+                "Found unknown categories in columns "
+                f"{columns_with_unknown} during transform. These "
+                "unknown categories will be encoded as the "
+                "infrequent category."
+            )
+        else:
+            msg = (
+                "Found unknown categories in columns "
+                f"{columns_with_unknown} during transform. These "
+                "unknown categories will be encoded as all zeros"
+            )
+        warnings.warn(msg, UserWarning)
+
     def _transform(
         self,
         X,
@@ -251,41 +286,13 @@ class _BaseEncoder(TransformerMixin, BaseEstimator):
                     # continue `The rows are marked `X_mask` and will be
                     # removed later.
                     X_mask[:, i] = valid_mask
-                    # cast Xi into the largest string type necessary
-                    # to handle different lengths of numpy strings
-                    if (
-                        self.categories_[i].dtype.kind in ("U", "S")
-                        and self.categories_[i].itemsize > Xi.itemsize
-                    ):
-                        Xi = Xi.astype(self.categories_[i].dtype)
-                    elif self.categories_[i].dtype.kind == "O" and Xi.dtype.kind == "U":
-                        # categories are objects and Xi are numpy strings.
-                        # Cast Xi to an object dtype to prevent truncation
-                        # when setting invalid values.
-                        Xi = Xi.astype("O")
-                    else:
-                        Xi = Xi.copy()
-
+                    Xi = self._adjust_column_dtype(Xi, self.categories_[i])
                     Xi[~valid_mask] = self.categories_[i][0]
             # We use check_unknown=False, since _check_unknown was
             # already called above.
             X_int[:, i] = _encode(Xi, uniques=self.categories_[i], check_unknown=False)
-        if columns_with_unknown:
-            if handle_unknown == "infrequent_if_exist":
-                msg = (
-                    "Found unknown categories in columns "
-                    f"{columns_with_unknown} during transform. These "
-                    "unknown categories will be encoded as the "
-                    "infrequent category."
-                )
-            else:
-                msg = (
-                    "Found unknown categories in columns "
-                    f"{columns_with_unknown} during transform. These "
-                    "unknown categories will be encoded as all zeros"
-                )
-            warnings.warn(msg, UserWarning)
 
+        self._warn_unknown_columns(columns_with_unknown, handle_unknown)
         self._map_infrequent_categories(X_int, X_mask, ignore_category_indices)
         return X_int, X_mask
 
@@ -1748,6 +1755,42 @@ class OrdinalEncoder(OneToOneFeatureMixin, _BaseEncoder):
             X_trans[~X_mask] = self.unknown_value
         return X_trans
 
+    def _inverse_transform_column(
+        self, i, labels, infrequent_indices, found_unknown, infrequent_masks
+    ):
+        """Inverse transform a single column and return (rows_to_update, categories)."""
+        # replace values of X[:, i] that were nan with actual indices
+        if i in self._missing_indices:
+            X_i_mask = _get_mask(labels, self.encoded_missing_value)
+            labels[X_i_mask] = self._missing_indices[i]
+
+        rows_to_update = slice(None)
+        categories = self.categories_[i]
+
+        if infrequent_indices is not None and infrequent_indices[i] is not None:
+            # Compute mask for frequent categories
+            infrequent_encoding_value = len(categories) - len(infrequent_indices[i])
+            infrequent_masks[i] = labels == infrequent_encoding_value
+            rows_to_update = ~infrequent_masks[i]
+
+            # Remap categories to be only frequent categories. The infrequent
+            # categories will be mapped to "infrequent_sklearn" later
+            frequent_categories_mask = np.ones_like(categories, dtype=bool)
+            frequent_categories_mask[infrequent_indices[i]] = False
+            categories = categories[frequent_categories_mask]
+
+        if self.handle_unknown == "use_encoded_value":
+            unknown_labels = _get_mask(labels, self.unknown_value)
+            found_unknown[i] = unknown_labels
+
+            known_labels = ~unknown_labels
+            if isinstance(rows_to_update, np.ndarray):
+                rows_to_update &= known_labels
+            else:
+                rows_to_update = known_labels
+
+        return rows_to_update, categories
+
     def inverse_transform(self, X):
         """
         Convert the data back to the original representation.
@@ -1786,37 +1829,9 @@ class OrdinalEncoder(OneToOneFeatureMixin, _BaseEncoder):
 
         for i in range(n_features):
             labels = X[:, i]
-
-            # replace values of X[:, i] that were nan with actual indices
-            if i in self._missing_indices:
-                X_i_mask = _get_mask(labels, self.encoded_missing_value)
-                labels[X_i_mask] = self._missing_indices[i]
-
-            rows_to_update = slice(None)
-            categories = self.categories_[i]
-
-            if infrequent_indices is not None and infrequent_indices[i] is not None:
-                # Compute mask for frequent categories
-                infrequent_encoding_value = len(categories) - len(infrequent_indices[i])
-                infrequent_masks[i] = labels == infrequent_encoding_value
-                rows_to_update = ~infrequent_masks[i]
-
-                # Remap categories to be only frequent categories. The infrequent
-                # categories will be mapped to "infrequent_sklearn" later
-                frequent_categories_mask = np.ones_like(categories, dtype=bool)
-                frequent_categories_mask[infrequent_indices[i]] = False
-                categories = categories[frequent_categories_mask]
-
-            if self.handle_unknown == "use_encoded_value":
-                unknown_labels = _get_mask(labels, self.unknown_value)
-                found_unknown[i] = unknown_labels
-
-                known_labels = ~unknown_labels
-                if isinstance(rows_to_update, np.ndarray):
-                    rows_to_update &= known_labels
-                else:
-                    rows_to_update = known_labels
-
+            rows_to_update, categories = self._inverse_transform_column(
+                i, labels, infrequent_indices, found_unknown, infrequent_masks
+            )
             labels_int = labels[rows_to_update].astype("int64", copy=False)
             X_tr[rows_to_update, i] = categories[labels_int]
 

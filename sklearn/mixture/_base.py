@@ -199,6 +199,67 @@ class BaseMixture(DensityMixin, BaseEstimator, metaclass=ABCMeta):
         self.fit_predict(X, y)
         return self
 
+    def _fit_single_init(self, X, do_init, random_state, xp):
+        """Run EM algorithm for a single initialization.
+
+        Parameters
+        ----------
+        X : array-like of shape (n_samples, n_features)
+            Data points.
+
+        do_init : bool
+            Whether to initialize parameters.
+
+        random_state : RandomState
+            A random number generator instance.
+
+        xp : module
+            Array API namespace.
+
+        Returns
+        -------
+        lower_bound : float
+            Log-likelihood lower bound after fitting.
+
+        params : tuple
+            Model parameters.
+
+        n_iter : int
+            Number of iterations performed.
+
+        lower_bounds : list
+            Lower bounds at each iteration.
+
+        converged : bool
+            Whether the EM algorithm converged.
+        """
+        if do_init:
+            self._initialize_parameters(X, random_state, xp=xp)
+
+        if self.max_iter == 0:
+            return -xp.inf, self._get_parameters(), 0, [], False
+
+        lower_bound = -xp.inf if do_init else self.lower_bound_
+        current_lower_bounds = []
+        converged = False
+        for n_iter in range(1, self.max_iter + 1):
+            prev_lower_bound = lower_bound
+
+            log_prob_norm, log_resp = self._e_step(X, xp=xp)
+            self._m_step(X, log_resp, xp=xp)
+            lower_bound = self._compute_lower_bound(log_resp, log_prob_norm)
+            current_lower_bounds.append(lower_bound)
+
+            change = lower_bound - prev_lower_bound
+            self._print_verbose_msg_iter_end(n_iter, change)
+
+            if abs(change) < self.tol:
+                converged = True
+                break
+
+        self._print_verbose_msg_init_end(lower_bound, converged)
+        return lower_bound, self._get_parameters(), n_iter, current_lower_bounds, converged
+
     @_fit_context(prefer_skip_nested_validation=True)
     def fit_predict(self, X, y=None):
         """Estimate model parameters using X and predict the labels for X.
@@ -228,7 +289,9 @@ class BaseMixture(DensityMixin, BaseEstimator, metaclass=ABCMeta):
             Component labels.
         """
         xp, _ = get_namespace(X)
-        X = validate_data(self, X, dtype=[xp.float64, xp.float32], ensure_min_samples=2)
+        X = validate_data(
+            self, X, dtype=[xp.float64, xp.float32], ensure_min_samples=2
+        )
         if X.shape[0] < self.n_components:
             raise ValueError(
                 "Expected n_samples >= n_components "
@@ -251,40 +314,16 @@ class BaseMixture(DensityMixin, BaseEstimator, metaclass=ABCMeta):
         for init in range(n_init):
             self._print_verbose_msg_init_beg(init)
 
-            if do_init:
-                self._initialize_parameters(X, random_state, xp=xp)
+            lower_bound, params, n_iter, lower_bounds, converged = (
+                self._fit_single_init(X, do_init, random_state, xp)
+            )
 
-            lower_bound = -xp.inf if do_init else self.lower_bound_
-            current_lower_bounds = []
-
-            if self.max_iter == 0:
-                best_params = self._get_parameters()
-                best_n_iter = 0
-            else:
-                converged = False
-                for n_iter in range(1, self.max_iter + 1):
-                    prev_lower_bound = lower_bound
-
-                    log_prob_norm, log_resp = self._e_step(X, xp=xp)
-                    self._m_step(X, log_resp, xp=xp)
-                    lower_bound = self._compute_lower_bound(log_resp, log_prob_norm)
-                    current_lower_bounds.append(lower_bound)
-
-                    change = lower_bound - prev_lower_bound
-                    self._print_verbose_msg_iter_end(n_iter, change)
-
-                    if abs(change) < self.tol:
-                        converged = True
-                        break
-
-                self._print_verbose_msg_init_end(lower_bound, converged)
-
-                if lower_bound > max_lower_bound or max_lower_bound == -xp.inf:
-                    max_lower_bound = lower_bound
-                    best_params = self._get_parameters()
-                    best_n_iter = n_iter
-                    best_lower_bounds = current_lower_bounds
-                    self.converged_ = converged
+            if lower_bound > max_lower_bound or max_lower_bound == -xp.inf:
+                max_lower_bound = lower_bound
+                best_params = params
+                best_n_iter = n_iter
+                best_lower_bounds = lower_bounds
+                self.converged_ = converged
 
         # Should only warn about convergence if max_iter > 0, otherwise
         # the user is assumed to have used 0-iters initialization
