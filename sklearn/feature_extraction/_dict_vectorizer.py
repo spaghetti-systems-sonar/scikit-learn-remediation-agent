@@ -192,6 +192,41 @@ class DictVectorizer(TransformerMixin, BaseEstimator):
 
         return self
 
+    def _get_feature_name_and_value(self, f, v):
+        """Determine the feature name and value for a single feature entry."""
+        if isinstance(v, str):
+            return "%s%s%s" % (f, self.separator, v), 1
+        if isinstance(v, Number) or (v is None):
+            return f, v
+        if not isinstance(v, Mapping) and isinstance(v, Iterable):
+            return None, v
+        raise TypeError(
+            f"Unsupported value Type {type(v)} "
+            f"for {f}: {v}.\n"
+            f"{type(v)} objects are not supported."
+        )
+
+    def _update_vocab_and_values(
+        self, feature_name, v, feature_names, vocab, fitting, indices, values
+    ):
+        """Update vocab, indices, and values for a resolved feature name."""
+        if fitting and feature_name not in vocab:
+            vocab[feature_name] = len(feature_names)
+            feature_names.append(feature_name)
+
+        if feature_name in vocab:
+            indices.append(vocab[feature_name])
+            values.append(self.dtype(v))
+
+    def _sort_feature_names(self, feature_names, vocab, result_matrix):
+        """Sort feature names and reorder the result matrix accordingly."""
+        feature_names.sort()
+        map_index = np.empty(len(feature_names), dtype=np.int32)
+        for new_val, f in enumerate(feature_names):
+            map_index[new_val] = vocab[f]
+            vocab[f] = new_val
+        return result_matrix[:, map_index]
+
     def _transform(self, X, fitting):
         # Sanity check: Python's array has no way of explicitly requesting the
         # signed 32-bit integers that scipy.sparse needs, so we use the next
@@ -211,8 +246,6 @@ class DictVectorizer(TransformerMixin, BaseEstimator):
             feature_names = self.feature_names_
             vocab = self.vocabulary_
 
-        transforming = True
-
         # Process everything as sparse regardless of setting
         X = [X] if isinstance(X, Mapping) else X
 
@@ -226,38 +259,23 @@ class DictVectorizer(TransformerMixin, BaseEstimator):
         # same time
         for x in X:
             for f, v in x.items():
-                if isinstance(v, str):
-                    feature_name = "%s%s%s" % (f, self.separator, v)
-                    v = 1
-                elif isinstance(v, Number) or (v is None):
-                    feature_name = f
-                elif not isinstance(v, Mapping) and isinstance(v, Iterable):
-                    feature_name = None
-                    self._add_iterable_element(
-                        f,
-                        v,
-                        feature_names,
-                        vocab,
-                        fitting=fitting,
-                        transforming=transforming,
-                        indices=indices,
-                        values=values,
-                    )
-                else:
-                    raise TypeError(
-                        f"Unsupported value Type {type(v)} "
-                        f"for {f}: {v}.\n"
-                        f"{type(v)} objects are not supported."
-                    )
-
+                feature_name, v = self._get_feature_name_and_value(f, v)
                 if feature_name is not None:
-                    if fitting and feature_name not in vocab:
-                        vocab[feature_name] = len(feature_names)
-                        feature_names.append(feature_name)
-
-                    if feature_name in vocab:
-                        indices.append(vocab[feature_name])
-                        values.append(self.dtype(v))
+                    self._update_vocab_and_values(
+                        feature_name, v, feature_names, vocab, fitting,
+                        indices, values,
+                    )
+                    continue
+                self._add_iterable_element(
+                    f,
+                    v,
+                    feature_names,
+                    vocab,
+                    fitting=fitting,
+                    transforming=True,
+                    indices=indices,
+                    values=values,
+                )
 
             indptr.append(len(indices))
 
@@ -273,12 +291,9 @@ class DictVectorizer(TransformerMixin, BaseEstimator):
 
         # Sort everything if asked
         if fitting and self.sort:
-            feature_names.sort()
-            map_index = np.empty(len(feature_names), dtype=np.int32)
-            for new_val, f in enumerate(feature_names):
-                map_index[new_val] = vocab[f]
-                vocab[f] = new_val
-            result_matrix = result_matrix[:, map_index]
+            result_matrix = self._sort_feature_names(
+                feature_names, vocab, result_matrix
+            )
 
         if self.sparse:
             result_matrix.sort_indices()
