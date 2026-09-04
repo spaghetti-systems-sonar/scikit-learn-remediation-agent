@@ -95,7 +95,7 @@ class ReutersParser(HTMLParser):
             self.topic_d += data
 
     def start_reuters(self, attributes):
-        pass
+        pass  # Opening tag handled implicitly; processing occurs in end_reuters
 
     def end_reuters(self):
         self.body = re.sub(r"\s+", r" ", self.body)

@@ -135,7 +135,7 @@ class ScoringMonitor:
         self._estimator_scorers.pop(estimator, None)
 
     def on_fit_task_begin(self, estimator, context):
-        pass
+        pass  # Scoring only happens at task end; nothing to do at task begin.
 
     def on_fit_task_end(
         self,

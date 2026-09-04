@@ -578,7 +578,7 @@ class _BaseFilter(SelectorMixin, BaseEstimator):
         return self
 
     def _check_params(self, X, y):
-        pass
+        """Subclasses can override this to validate extra parameters."""
 
     def __sklearn_tags__(self):
         tags = super().__sklearn_tags__()
