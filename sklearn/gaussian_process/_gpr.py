@@ -246,7 +246,7 @@ class GaussianProcessRegressor(MultiOutputMixin, RegressorMixin, BaseEstimator):
         self : object
             GaussianProcessRegressor class instance.
         """
-        self.kernel_ = C() * RBF() if self.kernel is None else clone(self.kernel)
+        self.kernel_ = clone(self.kernel) if self.kernel is not None else C() * RBF()
 
         self._rng = check_random_state(self.random_state)
 
@@ -264,84 +264,14 @@ class GaussianProcessRegressor(MultiOutputMixin, RegressorMixin, BaseEstimator):
             dtype=dtype,
         )
 
-        n_targets_seen = y.shape[1] if y.ndim > 1 else 1
-        if self.n_targets is not None and n_targets_seen != self.n_targets:
-            raise ValueError(
-                "The number of targets seen in `y` is different from the parameter "
-                f"`n_targets`. Got {n_targets_seen} != {self.n_targets}."
-            )
-
-        # Normalize target value
-        if self.normalize_y:
-            self._y_train_mean = np.mean(y, axis=0)
-            self._y_train_std = _handle_zeros_in_scale(np.std(y, axis=0), copy=False)
-
-            # Remove mean and make unit variance
-            y = (y - self._y_train_mean) / self._y_train_std
-
-        else:
-            shape_y_stats = (y.shape[1],) if y.ndim == 2 else 1
-            self._y_train_mean = np.zeros(shape=shape_y_stats)
-            self._y_train_std = np.ones(shape=shape_y_stats)
-
-        if np.iterable(self.alpha) and self.alpha.shape[0] != y.shape[0]:
-            if self.alpha.shape[0] == 1:
-                self.alpha = self.alpha[0]
-            else:
-                raise ValueError(
-                    "alpha must be a scalar or an array with same number of "
-                    f"entries as y. ({self.alpha.shape[0]} != {y.shape[0]})"
-                )
+        self._check_n_targets(y)
+        y = self._normalize_targets(y)
+        self._validate_alpha(y)
 
         self.X_train_ = np.copy(X) if self.copy_X_train else X
         self.y_train_ = np.copy(y) if self.copy_X_train else y
 
-        if self.optimizer is not None and self.kernel_.n_dims > 0:
-            # Choose hyperparameters based on maximizing the log-marginal
-            # likelihood (potentially starting from several initial values)
-            def obj_func(theta, eval_gradient=True):
-                if eval_gradient:
-                    lml, grad = self.log_marginal_likelihood(
-                        theta, eval_gradient=True, clone_kernel=False
-                    )
-                    return -lml, -grad
-                else:
-                    return -self.log_marginal_likelihood(theta, clone_kernel=False)
-
-            # First optimize starting from theta specified in kernel
-            optima = [
-                (
-                    self._constrained_optimization(
-                        obj_func, self.kernel_.theta, self.kernel_.bounds
-                    )
-                )
-            ]
-
-            # Additional runs are performed from log-uniform chosen initial
-            # theta
-            if self.n_restarts_optimizer > 0:
-                if not np.isfinite(self.kernel_.bounds).all():
-                    raise ValueError(
-                        "Multiple optimizer restarts (n_restarts_optimizer>0) "
-                        "requires that all bounds are finite."
-                    )
-                bounds = self.kernel_.bounds
-                for iteration in range(self.n_restarts_optimizer):
-                    theta_initial = self._rng.uniform(bounds[:, 0], bounds[:, 1])
-                    optima.append(
-                        self._constrained_optimization(obj_func, theta_initial, bounds)
-                    )
-            # Select result from run with minimal (negative) log-marginal
-            # likelihood
-            lml_values = list(map(itemgetter(1), optima))
-            self.kernel_.theta = optima[np.argmin(lml_values)][0]
-            self.kernel_._check_bounds_params()
-
-            self.log_marginal_likelihood_value_ = -np.min(lml_values)
-        else:
-            self.log_marginal_likelihood_value_ = self.log_marginal_likelihood(
-                self.kernel_.theta, clone_kernel=False
-            )
+        self._optimize_hyperparameters()
 
         # Precompute quantities required for predictions which are independent
         # of actual query points
@@ -366,6 +296,84 @@ class GaussianProcessRegressor(MultiOutputMixin, RegressorMixin, BaseEstimator):
             check_finite=False,
         )
         return self
+
+    def _check_n_targets(self, y):
+        """Validate that the number of targets matches ``n_targets``."""
+        n_targets_seen = y.shape[1] if y.ndim > 1 else 1
+        if self.n_targets is not None and n_targets_seen != self.n_targets:
+            raise ValueError(
+                "The number of targets seen in `y` is different from the parameter "
+                f"`n_targets`. Got {n_targets_seen} != {self.n_targets}."
+            )
+
+    def _normalize_targets(self, y):
+        """Normalize target values and store training statistics."""
+        if self.normalize_y:
+            self._y_train_mean = np.mean(y, axis=0)
+            self._y_train_std = _handle_zeros_in_scale(np.std(y, axis=0), copy=False)
+            # Remove mean and make unit variance
+            y = (y - self._y_train_mean) / self._y_train_std
+        else:
+            shape_y_stats = (y.shape[1],) if y.ndim == 2 else 1
+            self._y_train_mean = np.zeros(shape=shape_y_stats)
+            self._y_train_std = np.ones(shape=shape_y_stats)
+        return y
+
+    def _validate_alpha(self, y):
+        """Ensure ``alpha`` is compatible with the shape of ``y``."""
+        if np.iterable(self.alpha) and self.alpha.shape[0] != y.shape[0]:
+            if self.alpha.shape[0] == 1:
+                self.alpha = self.alpha[0]
+            else:
+                raise ValueError(
+                    "alpha must be a scalar or an array with same number of "
+                    f"entries as y. ({self.alpha.shape[0]} != {y.shape[0]})"
+                )
+
+    def _optimize_hyperparameters(self):
+        """Select kernel hyperparameters by maximizing log-marginal likelihood."""
+        if self.optimizer is None or self.kernel_.n_dims == 0:
+            self.log_marginal_likelihood_value_ = self.log_marginal_likelihood(
+                self.kernel_.theta, clone_kernel=False
+            )
+            return
+
+        def obj_func(theta, eval_gradient=True):
+            if eval_gradient:
+                lml, grad = self.log_marginal_likelihood(
+                    theta, eval_gradient=True, clone_kernel=False
+                )
+                return -lml, -grad
+            return -self.log_marginal_likelihood(theta, clone_kernel=False)
+
+        # First optimize starting from theta specified in kernel
+        optima = [
+            self._constrained_optimization(
+                obj_func, self.kernel_.theta, self.kernel_.bounds
+            )
+        ]
+
+        # Additional runs are performed from log-uniform chosen initial theta
+        if self.n_restarts_optimizer > 0:
+            if not np.isfinite(self.kernel_.bounds).all():
+                raise ValueError(
+                    "Multiple optimizer restarts (n_restarts_optimizer>0) "
+                    "requires that all bounds are finite."
+                )
+            bounds = self.kernel_.bounds
+            for _ in range(self.n_restarts_optimizer):
+                theta_initial = self._rng.uniform(bounds[:, 0], bounds[:, 1])
+                optima.append(
+                    self._constrained_optimization(obj_func, theta_initial, bounds)
+                )
+
+        # Select result from run with minimal (negative) log-marginal
+        # likelihood
+        lml_values = list(map(itemgetter(1), optima))
+        self.kernel_.theta = optima[np.argmin(lml_values)][0]
+        self.kernel_._check_bounds_params()
+
+        self.log_marginal_likelihood_value_ = -np.min(lml_values)
 
     def predict(self, X, return_std=False, return_cov=False):
         """Predict using the Gaussian process regression model.

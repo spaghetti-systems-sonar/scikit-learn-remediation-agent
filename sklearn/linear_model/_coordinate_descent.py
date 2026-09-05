@@ -1161,6 +1161,72 @@ class ElasticNet(RegressorMixin, MultiOutputLinearModel):
         self.random_state = random_state
         self.selection = selection
 
+    def _check_alpha_warning(self):
+        """Warn if alpha is zero, as coordinate descent does not converge well."""
+        if self.alpha == 0:
+            warnings.warn(
+                (
+                    "With alpha=0, this algorithm does not converge "
+                    "well. You are advised to use the LinearRegression "
+                    "estimator"
+                ),
+                stacklevel=3,
+            )
+
+    def _prepare_sample_weight(self, sample_weight, X, n_samples, check_input):
+        """Validate and rescale sample weights to sum to n_samples."""
+        if isinstance(sample_weight, numbers.Number):
+            sample_weight = None
+        if sample_weight is not None:
+            if check_input:
+                sample_weight = _check_sample_weight(
+                    sample_weight, X, dtype=X.dtype
+                )
+            # TLDR: Rescale sw to sum up to n_samples.
+            # Long: The objective function of Enet
+            #
+            #    1/2 * np.average(squared error, weights=sw)
+            #    + alpha * penalty                                             (1)
+            #
+            # is invariant under rescaling of sw.
+            # But enet_path coordinate descent minimizes
+            #
+            #     1/2 * sum(squared error) + alpha' * penalty                  (2)
+            #
+            # and therefore sets
+            #
+            #     alpha' = n_samples * alpha                                   (3)
+            #
+            # inside its function body, which results in objective (2) being
+            # equivalent to (1) in case of no sw.
+            # With sw, however, enet_path should set
+            #
+            #     alpha' = sum(sw) * alpha                                     (4)
+            #
+            # Therefore, we use the freedom of Eq. (1) to rescale sw before
+            # calling enet_path, i.e.
+            #
+            #     sw *= n_samples / sum(sw)
+            #
+            # such that sum(sw) = n_samples. This way, (3) and (4) are the same.
+            sample_weight = sample_weight * (n_samples / np.sum(sample_weight))
+            # Note: Alternatively, we could also have rescaled alpha instead
+            # of sample_weight:
+            #
+            #     alpha *= np.sum(sample_weight) / n_samples
+        return sample_weight
+
+    def _initialize_coef(self, n_targets, n_features, dtype):
+        """Initialize coefficients, reusing existing ones if warm starting."""
+        if not self.warm_start or not hasattr(self, "coef_"):
+            return np.zeros(
+                (n_targets, n_features), dtype=dtype, order="F"
+            )
+        coef_ = self.coef_
+        if coef_.ndim == 1:
+            coef_ = coef_[np.newaxis, :]
+        return coef_
+
     @_fit_context(prefer_skip_nested_validation=True)
     def fit(self, X, y, sample_weight=None, check_input=True):
         """Fit model with coordinate descent.
@@ -1200,15 +1266,7 @@ class ElasticNet(RegressorMixin, MultiOutputLinearModel):
         To avoid memory re-allocation it is advised to allocate the
         initial data in memory directly using that format.
         """
-        if self.alpha == 0:
-            warnings.warn(
-                (
-                    "With alpha=0, this algorithm does not converge "
-                    "well. You are advised to use the LinearRegression "
-                    "estimator"
-                ),
-                stacklevel=2,
-            )
+        self._check_alpha_warning()
 
         # Remember if X is copied
         X_copied = False
@@ -1235,43 +1293,9 @@ class ElasticNet(RegressorMixin, MultiOutputLinearModel):
 
         n_samples, n_features = X.shape
 
-        if isinstance(sample_weight, numbers.Number):
-            sample_weight = None
-        if sample_weight is not None:
-            if check_input:
-                sample_weight = _check_sample_weight(sample_weight, X, dtype=X.dtype)
-            # TLDR: Rescale sw to sum up to n_samples.
-            # Long: The objective function of Enet
-            #
-            #    1/2 * np.average(squared error, weights=sw)
-            #    + alpha * penalty                                             (1)
-            #
-            # is invariant under rescaling of sw.
-            # But enet_path coordinate descent minimizes
-            #
-            #     1/2 * sum(squared error) + alpha' * penalty                  (2)
-            #
-            # and therefore sets
-            #
-            #     alpha' = n_samples * alpha                                   (3)
-            #
-            # inside its function body, which results in objective (2) being
-            # equivalent to (1) in case of no sw.
-            # With sw, however, enet_path should set
-            #
-            #     alpha' = sum(sw) * alpha                                     (4)
-            #
-            # Therefore, we use the freedom of Eq. (1) to rescale sw before
-            # calling enet_path, i.e.
-            #
-            #     sw *= n_samples / sum(sw)
-            #
-            # such that sum(sw) = n_samples. This way, (3) and (4) are the same.
-            sample_weight = sample_weight * (n_samples / np.sum(sample_weight))
-            # Note: Alternatively, we could also have rescaled alpha instead
-            # of sample_weight:
-            #
-            #     alpha *= np.sum(sample_weight) / n_samples
+        sample_weight = self._prepare_sample_weight(
+            sample_weight, X, n_samples, check_input
+        )
 
         # Ensure copying happens only once, don't do it again if done above.
         # X and y will be rescaled if sample_weight is not None, order='F'
@@ -1298,21 +1322,13 @@ class ElasticNet(RegressorMixin, MultiOutputLinearModel):
 
         n_targets = y.shape[1]
 
-        if not self.warm_start or not hasattr(self, "coef_"):
-            coef_ = np.zeros((n_targets, n_features), dtype=X.dtype, order="F")
-        else:
-            coef_ = self.coef_
-            if coef_.ndim == 1:
-                coef_ = coef_[np.newaxis, :]
+        coef_ = self._initialize_coef(n_targets, n_features, X.dtype)
 
         dual_gaps_ = np.zeros(n_targets, dtype=X.dtype)
         self.n_iter_ = []
 
         for k in range(n_targets):
-            if Xy is not None:
-                this_Xy = Xy[:, k]
-            else:
-                this_Xy = None
+            this_Xy = Xy[:, k] if Xy is not None else None
             _, this_coef, this_dual_gap, this_iter = self.path(
                 X,
                 y[:, k],

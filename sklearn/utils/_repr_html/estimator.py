@@ -97,6 +97,79 @@ class _VisualBlock:
         return self
 
 
+def _build_doc_link_html(doc_link, doc_link_label, name, is_fitted_css_class):
+    """Build the HTML for the documentation link.
+
+    Parameters
+    ----------
+    doc_link : str
+        The URL for the documentation link. If empty, return it unchanged.
+    doc_link_label : str or None
+        The label for the documentation link.
+    name : str
+        The escaped estimator name, used as fallback label.
+    is_fitted_css_class : str
+        The CSS class indicating fitted status.
+
+    Returns
+    -------
+    doc_link : str
+        The HTML anchor element for the doc link, or the original value if falsy.
+    """
+    if not doc_link:
+        return doc_link
+    doc_label = "<span>Online documentation</span>"
+    if doc_link_label is not None:
+        doc_label = f"<span>Documentation for {doc_link_label}</span>"
+    elif name is not None:
+        doc_label = f"<span>Documentation for {name}</span>"
+    return (
+        f'<a class="sk-estimator-doc-link {is_fitted_css_class}"'
+        f' rel="noreferrer" target="_blank" href="{doc_link}">?{doc_label}</a>'
+    )
+
+
+def _write_name_details_pre(out, name, name_details, params):
+    """Write a ``<pre>`` tag with name details when appropriate.
+
+    Parameters
+    ----------
+    out : file-like object
+        The file to write the HTML representation to.
+    name : str
+        The escaped estimator name.
+    name_details : str
+        The escaped name details string.
+    params : str
+        The HTML representation of the estimator's parameters.
+    """
+    if not name_details or "Pipeline" in name or params:
+        return
+    if name == "passthrough" or name_details == "[]":
+        name_details = ""
+    out.write(f"<pre>{name_details}</pre>")
+
+
+def _build_features_div(features, is_fitted_css_class):
+    """Build the HTML for the features section.
+
+    Parameters
+    ----------
+    features : array-like or None
+        The output feature names.
+    is_fitted_css_class : str
+        The CSS class indicating fitted status.
+
+    Returns
+    -------
+    features_div : str
+        The HTML for the features section, or an empty string.
+    """
+    if features is None or len(features) == 0:
+        return ""
+    return _features_html(features, is_fitted_css_class)
+
+
 def _write_label_html(
     out,
     params,
@@ -171,16 +244,9 @@ def _write_label_html(
         checked_str = "checked" if checked else ""
         est_id = _ESTIMATOR_ID_COUNTER.get_id()
 
-        if doc_link:
-            doc_label = "<span>Online documentation</span>"
-            if doc_link_label is not None:
-                doc_label = f"<span>Documentation for {doc_link_label}</span>"
-            elif name is not None:
-                doc_label = f"<span>Documentation for {name}</span>"
-            doc_link = (
-                f'<a class="sk-estimator-doc-link {is_fitted_css_class}"'
-                f' rel="noreferrer" target="_blank" href="{doc_link}">?{doc_label}</a>'
-            )
+        doc_link = _build_doc_link_html(
+            doc_link, doc_link_label, name, is_fitted_css_class
+        )
         if name == "passthrough" or name_details == "[]":
             name_caption = ""
         name_caption_div = (
@@ -213,17 +279,10 @@ def _write_label_html(
 
         out.write(params)
         out.write(attrs)
-        if name_details and ("Pipeline" not in name) and not params:
-            if name == "passthrough" or name_details == "[]":
-                name_details = ""
-            out.write(f"<pre>{name_details}</pre>")
+        _write_name_details_pre(out, name, name_details, params)
 
         out.write(_CLOSING_DIV)
-        if features is None or len(features) == 0:
-            features_div = ""
-        else:
-            features_div = _features_html(features, is_fitted_css_class)
-
+        features_div = _build_features_div(features, is_fitted_css_class)
         out.write("</div></div>")
         out.write(features_div)
 
