@@ -40,6 +40,49 @@ __all__ = [
 ]
 
 
+def _compute_feature_axis(X, feature, is_cat, grid_resolution, percentiles):
+    """Compute the grid axis values for a single feature.
+
+    For categorical features or features with fewer unique values than
+    ``grid_resolution``, the unique values are returned. Otherwise, a
+    linearly spaced array between the empirical percentiles is returned.
+    """
+    try:
+        uniques = np.unique(_safe_indexing(X, feature, axis=1))
+    except TypeError as exc:
+        # `np.unique` will fail in the presence of `np.nan` and `str` categories
+        # due to sorting. Temporary, we reraise an error explaining the problem.
+        raise ValueError(
+            f"The column #{feature} contains mixed data types. Finding unique "
+            "categories fail due to sorting. It usually means that the column "
+            "contains `np.nan` values together with `str` categories. Such use "
+            "case is not yet supported in scikit-learn."
+        ) from exc
+
+    if is_cat or uniques.shape[0] < grid_resolution:
+        # Use the unique values either because:
+        # - feature has low resolution use unique values
+        # - feature is categorical
+        return uniques
+
+    # create axis based on percentiles and grid resolution
+    emp_percentiles = mquantiles(
+        _safe_indexing(X, feature, axis=1), prob=percentiles, axis=0
+    )
+    if np.allclose(emp_percentiles[0], emp_percentiles[1]):
+        raise ValueError(
+            "percentiles are too close to each other, "
+            "unable to build the grid. Please choose percentiles "
+            "that are further apart."
+        )
+    return np.linspace(
+        emp_percentiles[0],
+        emp_percentiles[1],
+        num=grid_resolution,
+        endpoint=True,
+    )
+
+
 def _grid_from_X(X, percentiles, is_categorical, grid_resolution, custom_values):
     """Generate a grid of points based on the percentiles of X.
 
@@ -121,40 +164,9 @@ def _grid_from_X(X, percentiles, is_categorical, grid_resolution, custom_values)
             # Use values in the custom range
             axis = custom_values[feature]
         else:
-            try:
-                uniques = np.unique(_safe_indexing(X, feature, axis=1))
-            except TypeError as exc:
-                # `np.unique` will fail in the presence of `np.nan` and `str` categories
-                # due to sorting. Temporary, we reraise an error explaining the problem.
-                raise ValueError(
-                    f"The column #{feature} contains mixed data types. Finding unique "
-                    "categories fail due to sorting. It usually means that the column "
-                    "contains `np.nan` values together with `str` categories. Such use "
-                    "case is not yet supported in scikit-learn."
-                ) from exc
-
-            if is_cat or uniques.shape[0] < grid_resolution:
-                # Use the unique values either because:
-                # - feature has low resolution use unique values
-                # - feature is categorical
-                axis = uniques
-            else:
-                # create axis based on percentiles and grid resolution
-                emp_percentiles = mquantiles(
-                    _safe_indexing(X, feature, axis=1), prob=percentiles, axis=0
-                )
-                if np.allclose(emp_percentiles[0], emp_percentiles[1]):
-                    raise ValueError(
-                        "percentiles are too close to each other, "
-                        "unable to build the grid. Please choose percentiles "
-                        "that are further apart."
-                    )
-                axis = np.linspace(
-                    emp_percentiles[0],
-                    emp_percentiles[1],
-                    num=grid_resolution,
-                    endpoint=True,
-                )
+            axis = _compute_feature_axis(
+                X, feature, is_cat, grid_resolution, percentiles
+            )
         values.append(axis)
 
     return cartesian(values), values

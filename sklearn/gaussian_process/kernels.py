@@ -1720,8 +1720,24 @@ class Matern(RBF):
         else:
             if eval_gradient:
                 raise ValueError(_GRADIENT_EVAL_ERROR_MSG)
-            dists = cdist(X / length_scale, Y / length_scale, metric="euclidean")
+            dists = cdist(
+                X / length_scale, Y / length_scale, metric="euclidean"
+            )
 
+        K = self._compute_matern_kernel(dists)
+
+        if Y is None:
+            # convert from upper-triangular matrix to square matrix
+            K = squareform(K)
+            np.fill_diagonal(K, 1)
+
+        if not eval_gradient:
+            return K
+
+        return self._compute_matern_gradient(X, Y, K, dists, length_scale)
+
+    def _compute_matern_kernel(self, dists):
+        """Compute the Matern kernel values from pairwise distances."""
         if self.nu == 0.5:
             K = np.exp(-dists)
         elif self.nu == 1.5:
@@ -1739,54 +1755,56 @@ class Matern(RBF):
             K.fill((2 ** (1.0 - self.nu)) / gamma(self.nu))
             K *= tmp**self.nu
             K *= kv(self.nu, tmp)
+        return K
 
-        if Y is None:
-            # convert from upper-triangular matrix to square matrix
-            K = squareform(K)
-            np.fill_diagonal(K, 1)
+    def _compute_matern_gradient(
+        self, X, Y, kernel_values, dists, length_scale
+    ):
+        """Compute the gradient of the Matern kernel."""
+        if self.hyperparameter_length_scale.fixed:
+            # Hyperparameter l kept fixed
+            return kernel_values, np.empty((X.shape[0], X.shape[0], 0))
 
-        if eval_gradient:
-            if self.hyperparameter_length_scale.fixed:
-                # Hyperparameter l kept fixed
-                K_gradient = np.empty((X.shape[0], X.shape[0], 0))
-                return K, K_gradient
-
-            # We need to recompute the pairwise dimension-wise distances
-            if self.anisotropic:
-                D = (X[:, np.newaxis, :] - X[np.newaxis, :, :]) ** 2 / (length_scale**2)
-            else:
-                D = squareform(dists**2)[:, :, np.newaxis]
-
-            if self.nu == 0.5:
-                denominator = np.sqrt(D.sum(axis=2))[:, :, np.newaxis]
-                divide_result = np.zeros_like(D)
-                np.divide(
-                    D,
-                    denominator,
-                    out=divide_result,
-                    where=denominator != 0,
-                )
-                K_gradient = K[..., np.newaxis] * divide_result
-            elif self.nu == 1.5:
-                K_gradient = 3 * D * np.exp(-np.sqrt(3 * D.sum(-1)))[..., np.newaxis]
-            elif self.nu == 2.5:
-                tmp = np.sqrt(5 * D.sum(-1))[..., np.newaxis]
-                K_gradient = 5.0 / 3.0 * D * (tmp + 1) * np.exp(-tmp)
-            elif self.nu == np.inf:
-                K_gradient = D * K[..., np.newaxis]
-            else:
-                # approximate gradient numerically
-                def f(theta):  # helper function
-                    return self.clone_with_theta(theta)(X, Y)
-
-                return K, _approx_fprime(self.theta, f, 1e-10)
-
-            if not self.anisotropic:
-                return K, K_gradient[:, :].sum(-1)[:, :, np.newaxis]
-            else:
-                return K, K_gradient
+        # We need to recompute the pairwise dimension-wise distances
+        if self.anisotropic:
+            D = (X[:, np.newaxis, :] - X[np.newaxis, :, :]) ** 2 / (
+                length_scale**2
+            )
         else:
-            return K
+            D = squareform(dists**2)[:, :, np.newaxis]
+
+        if self.nu == 0.5:
+            denominator = np.sqrt(D.sum(axis=2))[:, :, np.newaxis]
+            divide_result = np.zeros_like(D)
+            np.divide(
+                D,
+                denominator,
+                out=divide_result,
+                where=denominator != 0,
+            )
+            K_gradient = kernel_values[..., np.newaxis] * divide_result
+        elif self.nu == 1.5:
+            K_gradient = (
+                3 * D * np.exp(-np.sqrt(3 * D.sum(-1)))[..., np.newaxis]
+            )
+        elif self.nu == 2.5:
+            tmp = np.sqrt(5 * D.sum(-1))[..., np.newaxis]
+            K_gradient = 5.0 / 3.0 * D * (tmp + 1) * np.exp(-tmp)
+        elif self.nu == np.inf:
+            K_gradient = D * kernel_values[..., np.newaxis]
+        else:
+            # approximate gradient numerically
+            def f(theta):  # helper function
+                return self.clone_with_theta(theta)(X, Y)
+
+            return kernel_values, _approx_fprime(self.theta, f, 1e-10)
+
+        if not self.anisotropic:
+            return (
+                kernel_values,
+                K_gradient[:, :].sum(-1)[:, :, np.newaxis],
+            )
+        return kernel_values, K_gradient
 
     def __repr__(self):
         if self.anisotropic:
