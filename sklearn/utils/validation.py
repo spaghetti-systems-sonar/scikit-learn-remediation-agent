@@ -144,6 +144,37 @@ def _assert_all_finite(
     )
 
 
+def _raise_non_finite_error(
+    has_nan_error, dtype, msg_dtype, estimator_name, input_name
+):
+    """Build and raise a ValueError for non-finite values."""
+    if has_nan_error:
+        type_err = "NaN"
+    else:
+        msg_dtype = msg_dtype if msg_dtype is not None else dtype
+        type_err = f"infinity or a value too large for {msg_dtype!r}"
+    padded_input_name = input_name + " " if input_name else ""
+    msg_err = f"Input {padded_input_name}contains {type_err}."
+    if estimator_name and input_name == "X" and has_nan_error:
+        # Improve the error message on how to handle missing values in
+        # scikit-learn.
+        msg_err += (
+            f"\n{estimator_name} does not accept missing values"
+            " encoded as NaN natively. For supervised learning, you might want"
+            " to consider sklearn.ensemble.HistGradientBoostingClassifier and"
+            " Regressor which accept missing values encoded as NaNs natively."
+            " Alternatively, it is possible to preprocess the data, for"
+            " instance by using an imputer transformer in a pipeline or drop"
+            " samples with missing values. See"
+            " https://scikit-learn.org/stable/modules/impute.html"
+            " You can find a list of all estimators that handle NaN values"
+            " at the following page:"
+            " https://scikit-learn.org/stable/modules/impute.html"
+            "#estimators-that-handle-nan-values"
+        )
+    raise ValueError(msg_err)
+
+
 def _assert_all_finite_element_wise(
     X, *, xp, allow_nan, msg_dtype=None, estimator_name=None, input_name=""
 ):
@@ -159,31 +190,9 @@ def _assert_all_finite_element_wise(
         has_inf = xp.any(xp.isinf(X))
         has_nan_error = False if allow_nan else xp.any(xp.isnan(X))
     if has_inf or has_nan_error:
-        if has_nan_error:
-            type_err = "NaN"
-        else:
-            msg_dtype = msg_dtype if msg_dtype is not None else X.dtype
-            type_err = f"infinity or a value too large for {msg_dtype!r}"
-        padded_input_name = input_name + " " if input_name else ""
-        msg_err = f"Input {padded_input_name}contains {type_err}."
-        if estimator_name and input_name == "X" and has_nan_error:
-            # Improve the error message on how to handle missing values in
-            # scikit-learn.
-            msg_err += (
-                f"\n{estimator_name} does not accept missing values"
-                " encoded as NaN natively. For supervised learning, you might want"
-                " to consider sklearn.ensemble.HistGradientBoostingClassifier and"
-                " Regressor which accept missing values encoded as NaNs natively."
-                " Alternatively, it is possible to preprocess the data, for"
-                " instance by using an imputer transformer in a pipeline or drop"
-                " samples with missing values. See"
-                " https://scikit-learn.org/stable/modules/impute.html"
-                " You can find a list of all estimators that handle NaN values"
-                " at the following page:"
-                " https://scikit-learn.org/stable/modules/impute.html"
-                "#estimators-that-handle-nan-values"
-            )
-        raise ValueError(msg_err)
+        _raise_non_finite_error(
+            has_nan_error, X.dtype, msg_dtype, estimator_name, input_name
+        )
 
 
 def assert_all_finite(
@@ -230,6 +239,11 @@ def assert_all_finite(
         estimator_name=estimator_name,
         input_name=input_name,
     )
+
+
+def _array_copy_order(X):
+    """Return the memory layout order for copying a numpy array."""
+    return "F" if X.flags["F_CONTIGUOUS"] else "C"
 
 
 def as_float_array(X, *, copy=True, ensure_all_finite=True):
@@ -287,7 +301,7 @@ def as_float_array(X, *, copy=True, ensure_all_finite=True):
     elif sp.issparse(X) and X.dtype in [np.float32, np.float64]:
         return X.copy() if copy else X
     elif X.dtype in [np.float32, np.float64]:  # is numpy array
-        return X.copy("F" if X.flags["F_CONTIGUOUS"] else "C") if copy else X
+        return X.copy(_array_copy_order(X)) if copy else X
     else:
         if X.dtype.kind in "uib" and X.dtype.itemsize <= 4:
             return_dtype = np.float32
@@ -516,6 +530,26 @@ def indexable(*iterables):
     return result
 
 
+def _check_sparse_data_finite(
+    sparse_container, ensure_all_finite, estimator_name, input_name
+):
+    """Check that the data stored in a sparse container is finite."""
+    if not ensure_all_finite:
+        return
+    if not hasattr(sparse_container, "data"):
+        warnings.warn(
+            f"Can't check {sparse_container.format} sparse matrix for nan or inf.",
+            stacklevel=3,
+        )
+    else:
+        _assert_all_finite(
+            sparse_container.data,
+            allow_nan=ensure_all_finite == "allow-nan",
+            estimator_name=estimator_name,
+            input_name=input_name,
+        )
+
+
 def _ensure_sparse_format(
     sparse_container,
     accept_sparse,
@@ -626,19 +660,9 @@ def _ensure_sparse_format(
         # force copy
         sparse_container = sparse_container.copy()
 
-    if ensure_all_finite:
-        if not hasattr(sparse_container, "data"):
-            warnings.warn(
-                f"Can't check {sparse_container.format} sparse matrix for nan or inf.",
-                stacklevel=2,
-            )
-        else:
-            _assert_all_finite(
-                sparse_container.data,
-                allow_nan=ensure_all_finite == "allow-nan",
-                estimator_name=estimator_name,
-                input_name=input_name,
-            )
+    _check_sparse_data_finite(
+        sparse_container, ensure_all_finite, estimator_name, input_name
+    )
 
     # TODO: Remove when the minimum version of SciPy supported is 1.12
     # With SciPy sparse arrays, conversion from DIA format to COO, CSR, or BSR
@@ -2627,6 +2651,76 @@ def _get_feature_names(X):
         return feature_names
 
 
+def _resolve_categorical_mask_from_names(
+    categorical_features, n_features, feature_names_in_
+):
+    """Resolve string-typed categorical features into a boolean mask.
+
+    Parameters
+    ----------
+    categorical_features : ndarray
+        Array of categorical feature names (str).
+
+    n_features : int
+        Total number of features.
+
+    feature_names_in_ : array-like or None
+        Feature names from the input data, if available.
+
+    Returns
+    -------
+    is_categorical : ndarray of shape (n_features,), dtype=bool
+        Boolean mask indicating categorical features.
+    """
+    if feature_names_in_ is None:
+        raise ValueError(
+            "categorical_features should be passed as an array of "
+            "integers or as a boolean mask when the model is fitted "
+            "on data without feature names."
+        )
+    is_categorical = np.zeros(n_features, dtype=bool)
+    feature_names = list(feature_names_in_)
+    for feature_name in categorical_features:
+        try:
+            is_categorical[feature_names.index(feature_name)] = True
+        except ValueError as e:
+            raise ValueError(
+                f"categorical_features has an item value '{feature_name}' "
+                "which is not a valid feature name of the training "
+                f"data. Observed feature names: {feature_names}"
+            ) from e
+    return is_categorical
+
+
+def _resolve_categorical_mask_from_indices(categorical_features, n_features):
+    """Resolve integer-typed categorical features into a boolean mask.
+
+    Parameters
+    ----------
+    categorical_features : ndarray
+        Array of categorical feature indices (int).
+
+    n_features : int
+        Total number of features.
+
+    Returns
+    -------
+    is_categorical : ndarray of shape (n_features,), dtype=bool
+        Boolean mask indicating categorical features.
+    """
+    if (
+        np.max(categorical_features) >= n_features
+        or np.min(categorical_features) < 0
+    ):
+        raise ValueError(
+            "categorical_features set as integer "
+            "indices must be in [0, n_features - 1]"
+        )
+    is_categorical = np.zeros(n_features, dtype=bool)
+    is_categorical[categorical_features] = True
+    return is_categorical
+
+
 def _check_feature_names_in(estimator, input_features=None, *, generate_names=True):
     """Check `input_features` and generate names if needed.
 
@@ -2735,37 +2829,14 @@ def _resolve_categorical_mask(categorical_features, n_features, feature_names_in
         Boolean mask indicating categorical features.
     """
     if categorical_features.dtype.kind in ("U", "O"):
-        if feature_names_in_ is None:
-            raise ValueError(
-                "categorical_features should be passed as an array of "
-                "integers or as a boolean mask when the model is fitted "
-                "on data without feature names."
-            )
-        is_categorical = np.zeros(n_features, dtype=bool)
-        feature_names = list(feature_names_in_)
-        for feature_name in categorical_features:
-            try:
-                is_categorical[feature_names.index(feature_name)] = True
-            except ValueError as e:
-                raise ValueError(
-                    f"categorical_features has an item value '{feature_name}' "
-                    "which is not a valid feature name of the training "
-                    f"data. Observed feature names: {feature_names}"
-                ) from e
-        return is_categorical
+        return _resolve_categorical_mask_from_names(
+            categorical_features, n_features, feature_names_in_
+        )
 
     if categorical_features.dtype.kind == "i":
-        if (
-            np.max(categorical_features) >= n_features
-            or np.min(categorical_features) < 0
-        ):
-            raise ValueError(
-                "categorical_features set as integer "
-                "indices must be in [0, n_features - 1]"
-            )
-        is_categorical = np.zeros(n_features, dtype=bool)
-        is_categorical[categorical_features] = True
-        return is_categorical
+        return _resolve_categorical_mask_from_indices(
+            categorical_features, n_features
+        )
 
     if categorical_features.shape[0] != n_features:
         raise ValueError(
@@ -2795,13 +2866,51 @@ def _validate_categorical_features_dtype(categorical_features):
             f"str, got: {categorical_features.dtype.name}."
         )
 
-    if categorical_features.dtype.kind == "O":
-        types = set(type(f) for f in categorical_features)
-        if types != {str}:
-            raise ValueError(
-                "categorical_features must be an array-like of bool, int or "
-                f"str, got: {', '.join(sorted(t.__name__ for t in types))}."
-            )
+    if categorical_features.dtype.kind != "O":
+        return
+
+    types = set(type(f) for f in categorical_features)
+    if types != {str}:
+        raise ValueError(
+            "categorical_features must be an array-like of bool, int or "
+            f"str, got: {', '.join(sorted(t.__name__ for t in types))}."
+        )
+
+
+def _resolve_categorical_features_input(X, categorical_features):
+    """Resolve the categorical_features parameter into an array or None.
+
+    Parameters
+    ----------
+    X : {array-like, pandas DataFrame} of shape (n_samples, n_features)
+        Input data.
+
+    categorical_features : array-like of {bool, int, str} or str or None
+        Categorical features specification.
+
+    Returns
+    -------
+    categorical_features : ndarray or None
+        Resolved categorical features array, or None if no categorical
+        features are specified.
+    """
+    if categorical_features is None:
+        return None
+
+    categorical_by_dtype = (
+        isinstance(categorical_features, str) and categorical_features == "from_dtype"
+    )
+
+    if categorical_by_dtype:
+        if not nw.dependencies.is_into_dataframe(X):
+            return None
+        X = nw.from_native(X)
+        dtypes = X.schema.dtypes()
+        return np.asarray(
+            [d in (nw.Categorical, nw.Enum) for d in dtypes]
+        )
+
+    return np.asarray(categorical_features)
 
 
 def _check_categorical_features(X, categorical_features):
@@ -2833,33 +2942,11 @@ def _check_categorical_features(X, categorical_features):
         Indicates whether a feature is categorical. If no feature is
         categorical, this is None.
     """
-    if nw.dependencies.is_into_dataframe(X):
-        X = nw.from_native(X)
-        dtypes = X.schema.dtypes()
-        X_is_dataframe = True
-        categorical_columns_mask = np.asarray(
-            [d in (nw.Categorical, nw.Enum) for d in dtypes]
-        )
-    else:
-        X_is_dataframe = False
-        categorical_columns_mask = None
-
-    categorical_by_dtype = (
-        isinstance(categorical_features, str) and categorical_features == "from_dtype"
-    )
-    no_categorical_dtype = categorical_features is None or (
-        categorical_by_dtype and not X_is_dataframe
+    categorical_features = _resolve_categorical_features_input(
+        X, categorical_features
     )
 
-    if no_categorical_dtype:
-        return None
-
-    if categorical_by_dtype and X_is_dataframe:
-        categorical_features = categorical_columns_mask
-    else:
-        categorical_features = np.asarray(categorical_features)
-
-    if categorical_features.size == 0:
+    if categorical_features is None or categorical_features.size == 0:
         return None
 
     _validate_categorical_features_dtype(categorical_features)
