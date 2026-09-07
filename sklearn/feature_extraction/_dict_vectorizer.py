@@ -178,10 +178,9 @@ class DictVectorizer(TransformerMixin, BaseEstimator):
                     feature_name = None
                     self._add_iterable_element(f, v, feature_names, vocab)
 
-                if feature_name is not None:
-                    if feature_name not in vocab:
-                        vocab[feature_name] = len(feature_names)
-                        feature_names.append(feature_name)
+                if feature_name is not None and feature_name not in vocab:
+                    vocab[feature_name] = len(feature_names)
+                    feature_names.append(feature_name)
 
         if self.sort:
             feature_names.sort()
