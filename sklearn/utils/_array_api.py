@@ -798,6 +798,35 @@ def _find_matching_floating_dtype(*arrays, xp):
     return xp.asarray(0.0).dtype
 
 
+def _validate_and_reshape_weights(a, weights, axis, xp):
+    """Validate weights shape against array and reshape for broadcasting."""
+    if axis is None:
+        raise TypeError(
+            f"Axis must be specified when the shape of a {tuple(a.shape)} and "
+            f"weights {tuple(weights.shape)} differ."
+        )
+
+    if tuple(weights.shape) != (a.shape[axis],):
+        raise ValueError(
+            f"Shape of weights weights.shape={tuple(weights.shape)} must be "
+            f"consistent with a.shape={tuple(a.shape)} and {axis=}."
+        )
+
+    # If weights are 1D, add singleton dimensions for broadcasting
+    shape = [1] * a.ndim
+    shape[axis] = a.shape[axis]
+    return xp.reshape(weights, tuple(shape))
+
+
+def _check_no_complex_dtype(*arrays, xp):
+    """Raise if any array has a complex floating point dtype."""
+    for a in arrays:
+        if a is not None and xp.isdtype(a.dtype, "complex floating"):
+            raise NotImplementedError(
+                "Complex floating point values are not supported by average."
+            )
+
+
 def _average(a, axis=None, weights=None, normalize=True, xp=None):
     """Partial port of np.average to support the Array API.
 
@@ -818,31 +847,9 @@ def _average(a, axis=None, weights=None, normalize=True, xp=None):
         weights = xp.asarray(weights, device=device_)
 
     if weights is not None and a.shape != weights.shape:
-        if axis is None:
-            raise TypeError(
-                f"Axis must be specified when the shape of a {tuple(a.shape)} and "
-                f"weights {tuple(weights.shape)} differ."
-            )
+        weights = _validate_and_reshape_weights(a, weights, axis, xp)
 
-        if tuple(weights.shape) != (a.shape[axis],):
-            raise ValueError(
-                f"Shape of weights weights.shape={tuple(weights.shape)} must be "
-                f"consistent with a.shape={tuple(a.shape)} and {axis=}."
-            )
-
-        # If weights are 1D, add singleton dimensions for broadcasting
-        shape = [1] * a.ndim
-        shape[axis] = a.shape[axis]
-        weights = xp.reshape(weights, tuple(shape))
-
-    if xp.isdtype(a.dtype, "complex floating"):
-        raise NotImplementedError(
-            "Complex floating point values are not supported by average."
-        )
-    if weights is not None and xp.isdtype(weights.dtype, "complex floating"):
-        raise NotImplementedError(
-            "Complex floating point values are not supported by average."
-        )
+    _check_no_complex_dtype(a, weights, xp=xp)
 
     output_dtype = _find_matching_floating_dtype(a, weights, xp=xp)
     a = xp.astype(a, output_dtype)

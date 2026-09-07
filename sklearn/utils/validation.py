@@ -2013,6 +2013,72 @@ def check_non_negative(X, whom):
         raise ValueError(f"Negative values in data passed to {whom}.")
 
 
+def _type_name(t):
+    """Convert type into human readable string."""
+    module = t.__module__
+    qualname = t.__qualname__
+    if module == "builtins":
+        return qualname
+    elif t == numbers.Real:
+        return "float"
+    elif t == numbers.Integral:
+        return "int"
+    return f"{module}.{qualname}"
+
+
+def _raise_scalar_type_error(x, name, target_type):
+    """Raise a TypeError for an invalid scalar parameter type."""
+    if isinstance(target_type, tuple):
+        types_str = ", ".join(_type_name(t) for t in target_type)
+        target_type_str = f"{{{types_str}}}"
+    else:
+        target_type_str = _type_name(target_type)
+
+    raise TypeError(
+        f"{name} must be an instance of {target_type_str}, not"
+        f" {type(x).__qualname__}."
+    )
+
+
+def _check_scalar_bounds(x, name, min_val, max_val, include_boundaries):
+    """Validate scalar bounds and raise ValueError if violated."""
+    expected_include_boundaries = ("left", "right", "both", "neither")
+    if include_boundaries not in expected_include_boundaries:
+        raise ValueError(
+            f"Unknown value for `include_boundaries`: {include_boundaries!r}. "
+            f"Possible values are: {expected_include_boundaries}."
+        )
+
+    if max_val is None and include_boundaries == "right":
+        raise ValueError(
+            "`include_boundaries`='right' without specifying explicitly `max_val` "
+            "is inconsistent."
+        )
+
+    if min_val is None and include_boundaries == "left":
+        raise ValueError(
+            "`include_boundaries`='left' without specifying explicitly `min_val` "
+            "is inconsistent."
+        )
+
+    left_closed = include_boundaries in ("left", "both")
+    right_closed = include_boundaries in ("right", "both")
+
+    left_cmp = operator.lt if left_closed else operator.le
+    if min_val is not None and left_cmp(x, min_val):
+        left_symbol = ">=" if left_closed else ">"
+        raise ValueError(
+            f"{name} == {x}, must be {left_symbol} {min_val}."
+        )
+
+    right_cmp = operator.gt if right_closed else operator.ge
+    if max_val is not None and right_cmp(x, max_val):
+        right_symbol = "<=" if right_closed else "<"
+        raise ValueError(
+            f"{name} == {x}, must be {right_symbol} {max_val}."
+        )
+
+
 def check_scalar(
     x,
     name,
@@ -2076,67 +2142,10 @@ def check_scalar(
     >>> check_scalar(10, "x", int, min_val=1, max_val=20)
     10
     """
-
-    def type_name(t):
-        """Convert type into humman readable string."""
-        module = t.__module__
-        qualname = t.__qualname__
-        if module == "builtins":
-            return qualname
-        elif t == numbers.Real:
-            return "float"
-        elif t == numbers.Integral:
-            return "int"
-        return f"{module}.{qualname}"
-
     if not isinstance(x, target_type):
-        if isinstance(target_type, tuple):
-            types_str = ", ".join(type_name(t) for t in target_type)
-            target_type_str = f"{{{types_str}}}"
-        else:
-            target_type_str = type_name(target_type)
+        _raise_scalar_type_error(x, name, target_type)
 
-        raise TypeError(
-            f"{name} must be an instance of {target_type_str}, not"
-            f" {type(x).__qualname__}."
-        )
-
-    expected_include_boundaries = ("left", "right", "both", "neither")
-    if include_boundaries not in expected_include_boundaries:
-        raise ValueError(
-            f"Unknown value for `include_boundaries`: {include_boundaries!r}. "
-            f"Possible values are: {expected_include_boundaries}."
-        )
-
-    if max_val is None and include_boundaries == "right":
-        raise ValueError(
-            "`include_boundaries`='right' without specifying explicitly `max_val` "
-            "is inconsistent."
-        )
-
-    if min_val is None and include_boundaries == "left":
-        raise ValueError(
-            "`include_boundaries`='left' without specifying explicitly `min_val` "
-            "is inconsistent."
-        )
-
-    comparison_operator = (
-        operator.lt if include_boundaries in ("left", "both") else operator.le
-    )
-    if min_val is not None and comparison_operator(x, min_val):
-        raise ValueError(
-            f"{name} == {x}, must be"
-            f" {'>=' if include_boundaries in ('left', 'both') else '>'} {min_val}."
-        )
-
-    comparison_operator = (
-        operator.gt if include_boundaries in ("right", "both") else operator.ge
-    )
-    if max_val is not None and comparison_operator(x, max_val):
-        raise ValueError(
-            f"{name} == {x}, must be"
-            f" {'<=' if include_boundaries in ('right', 'both') else '<'} {max_val}."
-        )
+    _check_scalar_bounds(x, name, min_val, max_val, include_boundaries)
 
     return x
 

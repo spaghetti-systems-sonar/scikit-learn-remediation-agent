@@ -261,6 +261,34 @@ def _preserve_dia_indices_dtype(
 
 
 # TODO: remove when SciPy 1.12 is the minimum supported version
+def _check_array_requires_int64(arr, int32min, int32max, check_contents):
+    """Check whether a single array requires int64 index dtype.
+
+    Returns True if int64 is required, False otherwise.
+    Raises TypeError or ValueError for invalid arrays.
+    """
+    if not isinstance(arr, np.ndarray):
+        raise TypeError(
+            f"Arrays should be of type np.ndarray, got {type(arr)} instead."
+        )
+    if not np.issubdtype(arr.dtype, np.integer):
+        raise ValueError(
+            f"Array dtype {arr.dtype} is not supported for index dtype. We expect "
+            "integral values."
+        )
+    if np.can_cast(arr.dtype, np.int32):
+        return False
+    if not check_contents:
+        # when `check_contents` is False, we stay on the safe side and require int64.
+        return True
+    if arr.size == 0:
+        # a bigger type not needed yet
+        return False
+    arr_max = arr.max()
+    arr_min = arr.min()
+    return arr_min < int32min or arr_max > int32max
+
+
 def _smallest_admissible_index_dtype(arrays=(), maxval=None, check_contents=False):
     """Based on input (integer) arrays `a`, determine a suitable index data
     type that can hold the data in the arrays.
@@ -303,29 +331,8 @@ def _smallest_admissible_index_dtype(arrays=(), maxval=None, check_contents=Fals
         arrays = (arrays,)
 
     for arr in arrays:
-        if not isinstance(arr, np.ndarray):
-            raise TypeError(
-                f"Arrays should be of type np.ndarray, got {type(arr)} instead."
-            )
-        if not np.issubdtype(arr.dtype, np.integer):
-            raise ValueError(
-                f"Array dtype {arr.dtype} is not supported for index dtype. We expect "
-                "integral values."
-            )
-        if not np.can_cast(arr.dtype, np.int32):
-            if not check_contents:
-                # when `check_contents` is False, we stay on the safe side and return
-                # np.int64.
-                return np.int64
-            if arr.size == 0:
-                # a bigger type not needed yet, let's look at the next array
-                continue
-            else:
-                maxval = arr.max()
-                minval = arr.min()
-                if minval < int32min or maxval > int32max:
-                    # a big index type is actually needed
-                    return np.int64
+        if _check_array_requires_int64(arr, int32min, int32max, check_contents):
+            return np.int64
 
     return np.int32
 
