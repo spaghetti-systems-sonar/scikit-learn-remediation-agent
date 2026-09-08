@@ -61,10 +61,10 @@ document.querySelectorAll('.copy-paste-icon').forEach(function(element) {
  * @returns {boolean} Always returns `false` so callers can prevent the default click behavior.
  */
 function copyFeatureNamesToClipboard(element) {
-    var detailsElem = element.closest('.features').querySelector('details');
-    var wasOpen = detailsElem.open;
+    const detailsElem = element.closest('.features').querySelector('details');
+    const wasOpen = detailsElem.open;
     detailsElem.open = true;
-    var content = element.closest('.features').querySelector('tbody')
+    const content = element.closest('.features').querySelector('tbody')
                   .innerText.trim();
     if (!wasOpen) detailsElem.open = false;
     const rows = content.split('\n').map(row => `    "${row}"`);
