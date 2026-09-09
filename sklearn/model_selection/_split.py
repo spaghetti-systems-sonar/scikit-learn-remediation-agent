@@ -1376,7 +1376,7 @@ class LeaveOneGroupOut(GroupsConsumerMixin, BaseCrossValidator):
     GroupKFold: K-fold iterator variant with non-overlapping groups.
     """
 
-    def _iter_test_masks(self, X, y, groups):
+    def _iter_test_masks(self, X=None, y=None, groups=None):
         if groups is None:
             raise ValueError(_GROUPS_NOT_NONE_MSG)
         # We make a copy of groups to avoid side-effects during iteration
@@ -1502,7 +1502,7 @@ class LeavePGroupsOut(GroupsConsumerMixin, BaseCrossValidator):
     def __init__(self, n_groups):
         self.n_groups = n_groups
 
-    def _iter_test_masks(self, X, y, groups):
+    def _iter_test_masks(self, X=None, y=None, groups=None):
         if groups is None:
             raise ValueError(_GROUPS_NOT_NONE_MSG)
         groups = check_array(
