@@ -1047,38 +1047,44 @@ def _score(estimator, X_test, y_test, scorer, score_params, error_score="raise")
             # If `_MultimetricScorer` raises exception, the `error_score`
             # parameter is equal to "raise".
             raise
-        else:
-            if error_score == "raise":
-                raise
-            else:
-                scores = error_score
-                warnings.warn(
-                    (
-                        "Scoring failed. The score on this train-test partition for "
-                        f"these parameters will be set to {error_score}. Details: \n"
-                        f"{format_exc()}"
-                    ),
-                    UserWarning,
-                )
+        if error_score == "raise":
+            raise
+        scores = error_score
+        warnings.warn(
+            (
+                "Scoring failed. The score on this train-test partition for "
+                f"these parameters will be set to {error_score}. Details: \n"
+                f"{format_exc()}"
+            ),
+            UserWarning,
+        )
 
     # Check non-raised error messages in `_MultimetricScorer`
     if isinstance(scorer, _MultimetricScorer):
-        exception_messages = [
-            (name, str_e) for name, str_e in scores.items() if isinstance(str_e, str)
-        ]
-        if exception_messages:
-            # error_score != "raise"
-            for name, str_e in exception_messages:
-                scores[name] = error_score
-                warnings.warn(
-                    (
-                        "Scoring failed. The score on this train-test partition for "
-                        f"these parameters will be set to {error_score}. Details: \n"
-                        f"{str_e}"
-                    ),
-                    UserWarning,
-                )
+        _handle_multimetric_error_messages(scores, error_score)
 
+    return _validate_score_results(scores, scorer)
+
+
+def _handle_multimetric_error_messages(scores, error_score):
+    """Replace string error messages in multimetric scores and emit warnings."""
+    exception_messages = [
+        (name, str_e) for name, str_e in scores.items() if isinstance(str_e, str)
+    ]
+    for name, str_e in exception_messages:
+        scores[name] = error_score
+        warnings.warn(
+            (
+                "Scoring failed. The score on this train-test partition for "
+                f"these parameters will be set to {error_score}. Details: \n"
+                f"{str_e}"
+            ),
+            UserWarning,
+        )
+
+
+def _validate_score_results(scores, scorer):
+    """Validate that score results are numbers, unwrapping memmapped scalars."""
     error_msg = "scoring must return a number, got %s (%s) instead. (scorer=%s)"
     if isinstance(scores, dict):
         for name, score in scores.items():
@@ -1097,6 +1103,41 @@ def _score(estimator, X_test, y_test, scorer, score_params, error_score="raise")
         if not isinstance(scores, numbers.Number):
             raise ValueError(error_msg % (scores, type(scores), scorer))
     return scores
+
+
+def _encode_y_for_cross_val_predict(y, xp_y):
+    """Encode target labels for use in cross_val_predict."""
+    y = xp_y.asarray(y)
+    if y.ndim == 1:
+        le = LabelEncoder()
+        y = le.fit_transform(y)
+    elif y.ndim == 2:
+        y_enc = np.zeros_like(y, dtype=int)
+        for i_label in range(y.shape[1]):
+            y_enc[:, i_label] = LabelEncoder().fit_transform(y[:, i_label])
+        y = y_enc
+    return y
+
+
+def _concatenate_predictions(predictions, encode, y, xp, inv_test_indices, X):
+    """Concatenate predictions from multiple cross-validation folds."""
+    if sp.issparse(predictions[0]):
+        predictions = sp.vstack(predictions, format=predictions[0].format)
+    elif encode and isinstance(predictions[0], list):
+        # `predictions` is a list of method outputs from each fold.
+        # If each of those is also a list, then treat this as a
+        # multioutput-multiclass task. We need to separately concatenate
+        # the method outputs for each label into an `n_labels` long list.
+        n_labels = y.shape[1]
+        concat_pred = []
+        for i_label in range(n_labels):
+            label_preds = np.concatenate([p[i_label] for p in predictions])
+            concat_pred.append(label_preds)
+        predictions = concat_pred
+    else:
+        inv_test_indices = xp.asarray(inv_test_indices, device=device(X))
+        predictions = xp.concat(predictions)
+    return predictions, inv_test_indices
 
 
 @validate_params(
@@ -1322,15 +1363,7 @@ def cross_val_predict(
     xp, is_array_api, device_ = get_namespace_and_device(X)
     xp_y, _ = get_namespace(y)
     if encode:
-        y = xp_y.asarray(y)
-        if y.ndim == 1:
-            le = LabelEncoder()
-            y = le.fit_transform(y)
-        elif y.ndim == 2:
-            y_enc = np.zeros_like(y, dtype=int)
-            for i_label in range(y.shape[1]):
-                y_enc[:, i_label] = LabelEncoder().fit_transform(y[:, i_label])
-            y = y_enc
+        y = _encode_y_for_cross_val_predict(y, xp_y)
 
     y = move_to(y, xp=xp, device=device_)
     # We clone the estimator to make sure that all the folds are
@@ -1352,22 +1385,9 @@ def cross_val_predict(
     inv_test_indices = np.empty(len(test_indices), dtype=int)
     inv_test_indices[test_indices] = np.arange(len(test_indices))
 
-    if sp.issparse(predictions[0]):
-        predictions = sp.vstack(predictions, format=predictions[0].format)
-    elif encode and isinstance(predictions[0], list):
-        # `predictions` is a list of method outputs from each fold.
-        # If each of those is also a list, then treat this as a
-        # multioutput-multiclass task. We need to separately concatenate
-        # the method outputs for each label into an `n_labels` long list.
-        n_labels = y.shape[1]
-        concat_pred = []
-        for i_label in range(n_labels):
-            label_preds = np.concatenate([p[i_label] for p in predictions])
-            concat_pred.append(label_preds)
-        predictions = concat_pred
-    else:
-        inv_test_indices = xp.asarray(inv_test_indices, device=device(X))
-        predictions = xp.concat(predictions)
+    predictions, inv_test_indices = _concatenate_predictions(
+        predictions, encode, y, xp, inv_test_indices, X
+    )
 
     if isinstance(predictions, list):
         return [p[inv_test_indices] for p in predictions]
@@ -1841,6 +1861,58 @@ def _shuffle(y, groups, random_state):
     return _safe_indexing(y, indices)
 
 
+def _learning_curve_batch(
+    parallel,
+    estimator,
+    X,
+    y,
+    scorer,
+    cv_iter,
+    train_sizes_abs,
+    n_unique_ticks,
+    verbose,
+    routed_params,
+    error_score,
+    return_times,
+):
+    """Compute learning curve scores using batch (non-incremental) fitting."""
+    train_test_proportions = []
+    for train, test in cv_iter:
+        for n_train_samples in train_sizes_abs:
+            train_test_proportions.append((train[:n_train_samples], test))
+
+    results = parallel(
+        delayed(_fit_and_score)(
+            clone(estimator),
+            X,
+            y,
+            scorer=scorer,
+            train=train,
+            test=test,
+            verbose=verbose,
+            parameters=None,
+            fit_params=routed_params.estimator.fit,
+            score_params=routed_params.scorer.score,
+            return_train_score=True,
+            error_score=error_score,
+            return_times=return_times,
+        )
+        for train, test in train_test_proportions
+    )
+    _warn_or_raise_about_fit_failures(results, error_score)
+    results = _aggregate_score_dicts(results)
+    train_scores = results["train_scores"].reshape(-1, n_unique_ticks).T
+    test_scores = results["test_scores"].reshape(-1, n_unique_ticks).T
+    out = [train_scores, test_scores]
+
+    if return_times:
+        fit_times = results["fit_time"].reshape(-1, n_unique_ticks).T
+        score_times = results["score_time"].reshape(-1, n_unique_ticks).T
+        out.extend([fit_times, score_times])
+
+    return out
+
+
 @validate_params(
     {
         "estimator": [HasMethods(["fit"])],
@@ -2155,39 +2227,20 @@ def learning_curve(
         )
         out = np.asarray(out).transpose((2, 1, 0))
     else:
-        train_test_proportions = []
-        for train, test in cv_iter:
-            for n_train_samples in train_sizes_abs:
-                train_test_proportions.append((train[:n_train_samples], test))
-
-        results = parallel(
-            delayed(_fit_and_score)(
-                clone(estimator),
-                X,
-                y,
-                scorer=scorer,
-                train=train,
-                test=test,
-                verbose=verbose,
-                parameters=None,
-                fit_params=routed_params.estimator.fit,
-                score_params=routed_params.scorer.score,
-                return_train_score=True,
-                error_score=error_score,
-                return_times=return_times,
-            )
-            for train, test in train_test_proportions
+        out = _learning_curve_batch(
+            parallel,
+            estimator,
+            X,
+            y,
+            scorer,
+            cv_iter,
+            train_sizes_abs,
+            n_unique_ticks,
+            verbose,
+            routed_params,
+            error_score,
+            return_times,
         )
-        _warn_or_raise_about_fit_failures(results, error_score)
-        results = _aggregate_score_dicts(results)
-        train_scores = results["train_scores"].reshape(-1, n_unique_ticks).T
-        test_scores = results["test_scores"].reshape(-1, n_unique_ticks).T
-        out = [train_scores, test_scores]
-
-        if return_times:
-            fit_times = results["fit_time"].reshape(-1, n_unique_ticks).T
-            score_times = results["score_time"].reshape(-1, n_unique_ticks).T
-            out.extend([fit_times, score_times])
 
     ret = train_sizes_abs, out[0], out[1]
 

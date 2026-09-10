@@ -133,6 +133,47 @@ class _BinaryClassifierCurveDisplayMixin:
         return label
 
     @staticmethod
+    def _normalize_name(name, n_curves):
+        """Normalize `name` to a list of length `n_curves`."""
+        if isinstance(name, str):
+            name = [name]
+        if isinstance(name, list) and len(name) == 1:
+            name = name * n_curves
+        return [None] * n_curves if name is None else name
+
+    @staticmethod
+    def _build_legend_labels(legend_metric, name, legend_metric_name, n_curves):
+        """Build legend labels for each curve."""
+        if "mean" in legend_metric:
+            label_aggregate = _BinaryClassifierCurveDisplayMixin._get_legend_label(
+                legend_metric["mean"], name[0], legend_metric_name
+            )
+            # Note: "std" always `None` when "mean" is `None` - no metric value
+            # added to label in this case
+            if legend_metric["std"] is not None:
+                # Add the "+/- std" to the end (in brackets if name provided)
+                if name[0] is not None:
+                    label_aggregate = (
+                        label_aggregate[:-1]
+                        + f" +/- {legend_metric['std']:0.2f})"
+                    )
+                else:
+                    label_aggregate = (
+                        label_aggregate + f" +/- {legend_metric['std']:0.2f}"
+                    )
+            # Add `label` for first curve only, set to `None` for remaining
+            return [label_aggregate] + [None] * (n_curves - 1)
+
+        return [
+            _BinaryClassifierCurveDisplayMixin._get_legend_label(
+                curve_legend_metric, curve_name, legend_metric_name
+            )
+            for curve_legend_metric, curve_name in zip(
+                legend_metric["metric"], name
+            )
+        ]
+
+    @staticmethod
     def _validate_curve_kwargs(
         n_curves,
         name,
@@ -217,12 +258,7 @@ class _BinaryClassifierCurveDisplayMixin:
                 "a single legend entry for all curves."
             )
 
-        # Ensure `name` is of the correct length
-        if isinstance(name, str):
-            name = [name]
-        if isinstance(name, list) and len(name) == 1:
-            name = name * n_curves
-        name = [None] * n_curves if name is None else name
+        name = _BinaryClassifierCurveDisplayMixin._normalize_name(name, n_curves)
 
         # Ensure `curve_kwargs` is of correct length
         if isinstance(curve_kwargs, Mapping):
@@ -238,32 +274,9 @@ class _BinaryClassifierCurveDisplayMixin:
         if n_curves > 1:
             default_curve_kwargs.update(default_multi_curve_kwargs)
 
-        labels = []
-        if "mean" in legend_metric:
-            label_aggregate = _BinaryClassifierCurveDisplayMixin._get_legend_label(
-                legend_metric["mean"], name[0], legend_metric_name
-            )
-            # Note: "std" always `None` when "mean" is `None` - no metric value added
-            # to label in this case
-            if legend_metric["std"] is not None:
-                # Add the "+/- std" to the end (in brackets if name provided)
-                if name[0] is not None:
-                    label_aggregate = (
-                        label_aggregate[:-1] + f" +/- {legend_metric['std']:0.2f})"
-                    )
-                else:
-                    label_aggregate = (
-                        label_aggregate + f" +/- {legend_metric['std']:0.2f}"
-                    )
-            # Add `label` for first curve only, set to `None` for remaining curves
-            labels.extend([label_aggregate] + [None] * (n_curves - 1))
-        else:
-            for curve_legend_metric, curve_name in zip(legend_metric["metric"], name):
-                labels.append(
-                    _BinaryClassifierCurveDisplayMixin._get_legend_label(
-                        curve_legend_metric, curve_name, legend_metric_name
-                    )
-                )
+        labels = _BinaryClassifierCurveDisplayMixin._build_legend_labels(
+            legend_metric, name, legend_metric_name, n_curves
+        )
 
         curve_kwargs_ = [
             _validate_style_kwargs(

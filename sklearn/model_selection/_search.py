@@ -1240,6 +1240,58 @@ class BaseSearchCV(
 
         return self
 
+    @staticmethod
+    def _store_scores(
+        results, key_name, array, n_candidates, n_splits,
+        weights=None, splits=False, rank=False,
+    ):
+        """Store the scores/times to the cv_results_."""
+        # When iterated first by splits, then by parameters
+        # We want `array` to have `n_candidates` rows and `n_splits` cols.
+        array = np.array(array, dtype=np.float64).reshape(n_candidates, n_splits)
+        if splits:
+            for split_idx in range(n_splits):
+                results["split%d_%s" % (split_idx, key_name)] = array[:, split_idx]
+
+        array_means = np.average(array, axis=1, weights=weights)
+        results["mean_%s" % key_name] = array_means
+
+        if key_name.startswith(("train_", "test_")) and np.any(
+            ~np.isfinite(array_means)
+        ):
+            warnings.warn(
+                (
+                    f"One or more of the {key_name.split('_')[0]} scores "
+                    f"are non-finite: {array_means}"
+                ),
+                category=UserWarning,
+            )
+
+        # Weighted std is not directly available in numpy
+        array_stds = np.sqrt(
+            np.average(
+                (array - array_means[:, np.newaxis]) ** 2, axis=1, weights=weights
+            )
+        )
+        results["std_%s" % key_name] = array_stds
+
+        if rank:
+            # When the fit/scoring fails `array_means` contains NaNs, we
+            # will exclude them from the ranking process and consider them
+            # as tied with the worst performers.
+            if np.isnan(array_means).all():
+                # All fit/scoring routines failed.
+                rank_result = np.ones_like(array_means, dtype=np.int32)
+            else:
+                min_array_means = np.nanmin(array_means) - 1
+                array_means = xpx.nan_to_num(
+                    array_means, fill_value=min_array_means
+                )
+                rank_result = rankdata(-array_means, method="min").astype(
+                    np.int32, copy=False
+                )
+            results["rank_%s" % key_name] = rank_result
+
     def _format_results(self, candidate_params, n_splits, out, more_results=None):
         n_candidates = len(candidate_params)
         out = _aggregate_score_dicts(out)
@@ -1250,57 +1302,10 @@ class BaseSearchCV(
             # we convert it to an array for consistency with the other keys
             results[key] = np.asarray(val)
 
-        def _store(key_name, array, weights=None, splits=False, rank=False):
-            """A small helper to store the scores/times to the cv_results_"""
-            # When iterated first by splits, then by parameters
-            # We want `array` to have `n_candidates` rows and `n_splits` cols.
-            array = np.array(array, dtype=np.float64).reshape(n_candidates, n_splits)
-            if splits:
-                for split_idx in range(n_splits):
-                    # Uses closure to alter the results
-                    results["split%d_%s" % (split_idx, key_name)] = array[:, split_idx]
-
-            array_means = np.average(array, axis=1, weights=weights)
-            results["mean_%s" % key_name] = array_means
-
-            if key_name.startswith(("train_", "test_")) and np.any(
-                ~np.isfinite(array_means)
-            ):
-                warnings.warn(
-                    (
-                        f"One or more of the {key_name.split('_')[0]} scores "
-                        f"are non-finite: {array_means}"
-                    ),
-                    category=UserWarning,
-                )
-
-            # Weighted std is not directly available in numpy
-            array_stds = np.sqrt(
-                np.average(
-                    (array - array_means[:, np.newaxis]) ** 2, axis=1, weights=weights
-                )
-            )
-            results["std_%s" % key_name] = array_stds
-
-            if rank:
-                # When the fit/scoring fails `array_means` contains NaNs, we
-                # will exclude them from the ranking process and consider them
-                # as tied with the worst performers.
-                if np.isnan(array_means).all():
-                    # All fit/scoring routines failed.
-                    rank_result = np.ones_like(array_means, dtype=np.int32)
-                else:
-                    min_array_means = np.nanmin(array_means) - 1
-                    array_means = xpx.nan_to_num(
-                        array_means, fill_value=min_array_means
-                    )
-                    rank_result = rankdata(-array_means, method="min").astype(
-                        np.int32, copy=False
-                    )
-                results["rank_%s" % key_name] = rank_result
-
-        _store("fit_time", out["fit_time"])
-        _store("score_time", out["score_time"])
+        self._store_scores(results, "fit_time", out["fit_time"], n_candidates, n_splits)
+        self._store_scores(
+            results, "score_time", out["score_time"], n_candidates, n_splits
+        )
         # Store a list of param dicts at the key 'params'
         for param, ma in _yield_masked_array_for_each_param(candidate_params):
             results[param] = ma
@@ -1312,17 +1317,23 @@ class BaseSearchCV(
 
         for scorer_name in test_scores_dict:
             # Computed the (weighted) mean and std for test scores alone
-            _store(
+            self._store_scores(
+                results,
                 "test_%s" % scorer_name,
                 test_scores_dict[scorer_name],
+                n_candidates,
+                n_splits,
                 splits=True,
                 rank=True,
                 weights=None,
             )
             if self.return_train_score:
-                _store(
+                self._store_scores(
+                    results,
                     "train_%s" % scorer_name,
                     train_scores_dict[scorer_name],
+                    n_candidates,
+                    n_splits,
                     splits=True,
                 )
 
