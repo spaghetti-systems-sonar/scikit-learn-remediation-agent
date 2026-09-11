@@ -184,8 +184,8 @@ for ax, (name, est) in zip(
     )
     ax.set_title(f"{name}\nEvaluation in {elapsed_time:.2f} seconds")
 
-    for name, score in scores.items():
-        ax.plot([], [], " ", label=f"{name}: {score}")
+    for metric_name, score in scores.items():
+        ax.plot([], [], " ", label=f"{metric_name}: {score}")
     ax.legend(loc="upper left")
 
 plt.suptitle("Prediction Errors of Base versus Stacked Predictors", y=1)
