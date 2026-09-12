@@ -72,6 +72,9 @@ df["transfer"][:17_760].unique()
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+YLABEL_ENERGY_TRANSFER = "Normalized energy transfer"
+XLABEL_TIME_OF_WEEK = "Time of the week"
+
 df = electricity.frame.iloc[17_760:]
 X = df.drop(columns=["transfer", "class"])
 y = df["transfer"]
@@ -82,7 +85,7 @@ handles, labels = ax.get_legend_handles_labels()
 ax.set(
     title="Hourly energy transfer for different days of the week",
     xlabel="Normalized time of the day",
-    ylabel="Normalized energy transfer",
+    ylabel=YLABEL_ENERGY_TRANSFER,
 )
 _ = ax.legend(handles, ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"])
 
@@ -136,8 +139,8 @@ ax.set(
     title="Predicted average energy transfer during the week",
     xticks=[(i + 0.2) * 48 for i in range(7)],
     xticklabels=["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
-    xlabel="Time of the week",
-    ylabel="Normalized energy transfer",
+    xlabel=XLABEL_TIME_OF_WEEK,
+    ylabel=YLABEL_ENERGY_TRANSFER,
 )
 _ = ax.legend()
 
@@ -253,8 +256,8 @@ ax.set(
     title="Daily energy transfer predictions on data with MCAR values",
     xticks=[(i + 0.2) * 48 for i in range(7)],
     xticklabels=["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-    xlabel="Time of the week",
-    ylabel="Normalized energy transfer",
+    xlabel=XLABEL_TIME_OF_WEEK,
+    ylabel=YLABEL_ENERGY_TRANSFER,
 )
 _ = ax.legend(loc="lower right")
 
@@ -303,8 +306,8 @@ ax.set(
     title="Daily energy transfer predictions with quantile loss",
     xticks=[(i + 0.2) * 48 for i in range(7)],
     xticklabels=["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-    xlabel="Time of the week",
-    ylabel="Normalized energy transfer",
+    xlabel=XLABEL_TIME_OF_WEEK,
+    ylabel=YLABEL_ENERGY_TRANSFER,
 )
 _ = ax.legend(loc="lower right")
 
