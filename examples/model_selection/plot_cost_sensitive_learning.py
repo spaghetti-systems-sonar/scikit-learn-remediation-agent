@@ -199,6 +199,9 @@ import matplotlib.pyplot as plt
 
 from sklearn.metrics import PrecisionRecallDisplay, RocCurveDisplay
 
+COLOR_BLUE = "tab:blue"
+COLOR_ORANGE = "tab:orange"
+
 fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(14, 6))
 
 PrecisionRecallDisplay.from_estimator(
@@ -209,7 +212,7 @@ axs[0].plot(
     scoring["precision"](model, X_test, y_test),
     marker="o",
     markersize=10,
-    color="tab:blue",
+    color=COLOR_BLUE,
     label="Default cut-off point at a probability of 0.5",
 )
 axs[0].set_title("Precision-Recall curve")
@@ -229,7 +232,7 @@ axs[1].plot(
     scoring["tpr"](model, X_test, y_test),
     marker="o",
     markersize=10,
-    color="tab:blue",
+    color=COLOR_BLUE,
     label="Default cut-off point at a probability of 0.5",
 )
 axs[1].set_title("ROC curve")
@@ -293,7 +296,7 @@ def plot_roc_pr_curves(vanilla_model, tuned_model, *, title):
 
     linestyles = ("dashed", "dotted")
     markerstyles = ("o", ">")
-    colors = ("tab:blue", "tab:orange")
+    colors = (COLOR_BLUE, COLOR_ORANGE)
     names = ("Vanilla GBDT", "Tuned GBDT")
     for idx, (est, linestyle, marker, color, name) in enumerate(
         zip((vanilla_model, tuned_model), linestyles, markerstyles, colors, names)
@@ -343,14 +346,14 @@ def plot_roc_pr_curves(vanilla_model, tuned_model, *, title):
     axs[2].plot(
         tuned_model.cv_results_["thresholds"],
         tuned_model.cv_results_["scores"],
-        color="tab:orange",
+        color=COLOR_ORANGE,
     )
     axs[2].plot(
         tuned_model.best_threshold_,
         tuned_model.best_score_,
         "o",
         markersize=10,
-        color="tab:orange",
+        color=COLOR_ORANGE,
         label="Optimal cut-off point for the business metric",
     )
     axs[2].legend()
