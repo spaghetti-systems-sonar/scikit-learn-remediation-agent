@@ -1429,6 +1429,20 @@ class RequestMethod:
         self.keys = keys
         self.validate_keys = validate_keys
 
+    def _build_doc(self):
+        """Build the docstring for the set_{method}_request method."""
+        if self.keys:
+            doc = REQUESTER_DOC.format(method=self.name)
+            doc += REQUESTER_DOC_PARAMS_SECTION
+            for metadata in self.keys:
+                doc += REQUESTER_DOC_PARAM.format(
+                    metadata=metadata, method=self.name
+                )
+        else:
+            doc = REQUESTER_DOC_EMPTY
+        doc += REQUESTER_DOC_RETURN
+        return doc
+
     def __get__(self, instance, owner):
         # we would want to have a method which accepts only the expected args
         def func(*args, **kw):
@@ -1503,16 +1517,41 @@ class RequestMethod:
             params,
             return_annotation=owner,
         )
-        if self.keys:
-            doc = REQUESTER_DOC.format(method=self.name)
-            doc += REQUESTER_DOC_PARAMS_SECTION
-            for metadata in self.keys:
-                doc += REQUESTER_DOC_PARAM.format(metadata=metadata, method=self.name)
-        else:
-            doc = REQUESTER_DOC_EMPTY
-        doc += REQUESTER_DOC_RETURN
-        func.__doc__ = doc
+        func.__doc__ = self._build_doc()
         return func
+
+
+def _update_params_from_mro(cls, method_name, params):
+    """Update params with metadata request values from class hierarchy.
+
+    Goes through the MRO in reverse so that child classes have precedence
+    over their parents.
+    """
+    substr = f"_metadata_request__{method_name}"
+    for base_class in reversed(inspect.getmro(cls)):
+        # Copy is needed with free-threaded context to avoid
+        # RuntimeError: dictionary changed size during iteration.
+        # copy.deepcopy applied on an instance of base_class adds
+        # __slotnames__ attribute to base_class.
+        base_class_items = vars(base_class).copy().items()
+        for attr, value in base_class_items:
+            # we don't check for equivalence since python prefixes attrs
+            # starting with __ with the `_ClassName`.
+            if substr not in attr:
+                continue
+            for prop, alias in value.items():
+                # Here we add request values specified via those class attributes
+                # to the result dictionary (params). Adding a request which already
+                # exists will override the previous one. Since we go through the
+                # MRO in reverse order, the one specified by the lowest most classes
+                # in the inheritance tree are the ones which take effect.
+                if prop not in params and alias == UNUSED:
+                    raise ValueError(
+                        f"Trying to remove parameter {prop} with UNUSED which"
+                        " doesn't exist."
+                    )
+
+                params[prop] = alias
 
 
 class _MetadataRequester:
@@ -1532,16 +1571,16 @@ class _MetadataRequester:
         # The following list of defined methods mirrors the list of methods
         # in SIMPLE_METHODS.
         # fmt: off
-        def set_fit_request(self, **kwargs): pass  # type-checking stub
-        def set_partial_fit_request(self, **kwargs): pass  # type-checking stub
-        def set_predict_request(self, **kwargs): pass  # type-checking stub
-        def set_predict_proba_request(self, **kwargs): pass  # type-checking stub
-        def set_predict_log_proba_request(self, **kwargs): pass  # type-checking stub
-        def set_decision_function_request(self, **kwargs): pass  # type-checking stub
-        def set_score_request(self, **kwargs): pass  # type-checking stub
-        def set_split_request(self, **kwargs): pass  # type-checking stub
-        def set_transform_request(self, **kwargs): pass  # type-checking stub
-        def set_inverse_transform_request(self, **kwargs): pass  # type-checking stub
+        def set_fit_request(self, **kwargs): ...  # type-checking stub
+        def set_partial_fit_request(self, **kwargs): ...  # type-checking stub
+        def set_predict_request(self, **kwargs): ...  # type-checking stub
+        def set_predict_proba_request(self, **kwargs): ...  # type-checking stub
+        def set_predict_log_proba_request(self, **kwargs): ...  # type-checking stub
+        def set_decision_function_request(self, **kwargs): ...  # type-checking stub
+        def set_score_request(self, **kwargs): ...  # type-checking stub
+        def set_split_request(self, **kwargs): ...  # type-checking stub
+        def set_transform_request(self, **kwargs): ...  # type-checking stub
+        def set_inverse_transform_request(self, **kwargs): ...  # type-checking stub
         # fmt: on
 
     def __init_subclass__(cls, **kwargs):
@@ -1672,36 +1711,7 @@ class _MetadataRequester:
         # Then overwrite those defaults with the ones provided in
         # `__metadata_request__{method}` class attributes, which take precedence over
         # signature sniffing.
-
-        # need to go through the MRO since this is a classmethod and
-        # ``vars`` doesn't report the parent class attributes. We go through
-        # the reverse of the MRO so that child classes have precedence over
-        # their parents.
-        substr = f"_metadata_request__{method_name}"
-        for base_class in reversed(inspect.getmro(cls)):
-            # Copy is needed with free-threaded context to avoid
-            # RuntimeError: dictionary changed size during iteration.
-            # copy.deepcopy applied on an instance of base_class adds
-            # __slotnames__ attribute to base_class.
-            base_class_items = vars(base_class).copy().items()
-            for attr, value in base_class_items:
-                # we don't check for equivalence since python prefixes attrs
-                # starting with __ with the `_ClassName`.
-                if substr not in attr:
-                    continue
-                for prop, alias in value.items():
-                    # Here we add request values specified via those class attributes
-                    # to the result dictionary (params). Adding a request which already
-                    # exists will override the previous one. Since we go through the
-                    # MRO in reverse order, the one specified by the lowest most classes
-                    # in the inheritance tree are the ones which take effect.
-                    if prop not in params and alias == UNUSED:
-                        raise ValueError(
-                            f"Trying to remove parameter {prop} with UNUSED which"
-                            " doesn't exist."
-                        )
-
-                    params[prop] = alias
+        _update_params_from_mro(cls, method_name, params)
 
         return {param: alias for param, alias in params.items() if alias is not UNUSED}
 
