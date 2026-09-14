@@ -109,6 +109,7 @@ from sklearn.utils._testing import (
 from sklearn.utils.validation import _num_samples, check_is_fitted, has_fit_parameter
 
 REGRESSION_DATASET = None
+_SKLEARN_MODULE_PREFIX = "sklearn."
 
 
 def _raise_for_missing_tags(estimator, tag_name, Mixin):
@@ -1063,7 +1064,7 @@ def check_supervised_y_no_nan(name, estimator_orig):
         y = _enforce_estimator_tags_y(estimator, y)
 
         module_name = estimator.__module__
-        if module_name.startswith("sklearn.") and not (
+        if module_name.startswith(_SKLEARN_MODULE_PREFIX) and not (
             "test_" in module_name or module_name.endswith("_testing")
         ):
             # In scikit-learn we want the error message to mention the input
@@ -2816,7 +2817,7 @@ def check_estimators_pickle(name, estimator_orig, readonly_memmap=False):
         # No need to touch the file system in that case.
         pickled_estimator = pickle.dumps(estimator)
         module_name = estimator.__module__
-        if module_name.startswith("sklearn.") and not (
+        if module_name.startswith(_SKLEARN_MODULE_PREFIX) and not (
             "test_" in module_name or module_name.endswith("_testing")
         ):
             # strict check for sklearn estimators that are not implemented in test
@@ -5083,7 +5084,7 @@ def check_dataframe_column_names_consistency(name, estimator_orig):
     # Only check sklearn estimators for feature_names_in_ in docstring
     module_name = estimator_orig.__module__
     if (
-        module_name.startswith("sklearn.")
+        module_name.startswith(_SKLEARN_MODULE_PREFIX)
         and not ("test_" in module_name or module_name.endswith("_testing"))
         and ("feature_names_in_" not in (estimator_orig.__doc__))
     ):

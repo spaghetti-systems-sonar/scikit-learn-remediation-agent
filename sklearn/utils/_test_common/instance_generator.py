@@ -905,6 +905,9 @@ CHECK_SAME_NAMESPACE_NOT_ADDED = "check_same_namespace not yet added"
 MIXED_ARRAY_API_NOT_ADDED = "mixed array API input support not added yet"
 N_ITER_NOT_ACCESSIBLE = "n_iter_ cannot be easily accessed."
 EMPTY_ARRAY_PASSED = "empty array passed inside"
+DATA_CONVERSION_WARNING_NOT_CAUGHT = "DataConversionWarning not caught"
+DOESNT_FAIL_GRACEFULLY = "Doesn't fail gracefully"
+DOES_NOT_FAIL_GRACEFULLY = "does not fail gracefully"
 
 PER_ESTIMATOR_XFAIL_CHECKS = {
     AdaBoostClassifier: {
@@ -991,8 +994,8 @@ PER_ESTIMATOR_XFAIL_CHECKS = {
         "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     GridSearchCV: {
-        "check_supervised_y_2d": "DataConversionWarning not caught",
-        "check_requires_y_none": "Doesn't fail gracefully",
+        "check_supervised_y_2d": DATA_CONVERSION_WARNING_NOT_CAUGHT,
+        "check_requires_y_none": DOESNT_FAIL_GRACEFULLY,
     },
     HalvingGridSearchCV: {
         "check_array_api_mixed_inputs": MIXED_ARRAY_API_NOT_ADDED,
@@ -1002,8 +1005,8 @@ PER_ESTIMATOR_XFAIL_CHECKS = {
         "check_estimators_nan_inf": "FIXME",
         "check_classifiers_one_label_sample_weights": "FIXME",
         "check_fit2d_1feature": "FIXME",
-        "check_supervised_y_2d": "DataConversionWarning not caught",
-        "check_requires_y_none": "Doesn't fail gracefully",
+        "check_supervised_y_2d": DATA_CONVERSION_WARNING_NOT_CAUGHT,
+        "check_requires_y_none": DOESNT_FAIL_GRACEFULLY,
     },
     HalvingRandomSearchCV: {
         "check_array_api_mixed_inputs": MIXED_ARRAY_API_NOT_ADDED,
@@ -1013,8 +1016,8 @@ PER_ESTIMATOR_XFAIL_CHECKS = {
         "check_estimators_nan_inf": "FIXME",
         "check_classifiers_one_label_sample_weights": "FIXME",
         "check_fit2d_1feature": "FIXME",
-        "check_supervised_y_2d": "DataConversionWarning not caught",
-        "check_requires_y_none": "Doesn't fail gracefully",
+        "check_supervised_y_2d": DATA_CONVERSION_WARNING_NOT_CAUGHT,
+        "check_requires_y_none": DOESNT_FAIL_GRACEFULLY,
     },
     HistGradientBoostingClassifier: {
         # TODO: replace by a statistical test, see meta-issue #16298
@@ -1153,8 +1156,8 @@ PER_ESTIMATOR_XFAIL_CHECKS = {
         "check_sample_weight_equivalence_on_sparse_data": SAMPLE_WEIGHT_NOT_EQUIVALENT,
     },
     RandomizedSearchCV: {
-        "check_supervised_y_2d": "DataConversionWarning not caught",
-        "check_requires_y_none": "Doesn't fail gracefully",
+        "check_supervised_y_2d": DATA_CONVERSION_WARNING_NOT_CAUGHT,
+        "check_requires_y_none": DOESNT_FAIL_GRACEFULLY,
     },
     RandomTreesEmbedding: {
         # TODO: replace by a statistical test, see meta-issue #16298
@@ -1197,8 +1200,8 @@ PER_ESTIMATOR_XFAIL_CHECKS = {
         "check_estimators_dtypes": "raises nan error",
         "check_fit2d_1sample": "_scale_normalize fails",
         "check_fit2d_1feature": "raises apply_along_axis error",
-        "check_estimator_sparse_matrix": "does not fail gracefully",
-        "check_estimator_sparse_array": "does not fail gracefully",
+        "check_estimator_sparse_matrix": DOES_NOT_FAIL_GRACEFULLY,
+        "check_estimator_sparse_array": DOES_NOT_FAIL_GRACEFULLY,
         "check_methods_subset_invariance": EMPTY_ARRAY_PASSED,
         "check_dont_overwrite_parameters": EMPTY_ARRAY_PASSED,
         "check_fit2d_predict1d": EMPTY_ARRAY_PASSED,
@@ -1210,8 +1213,8 @@ PER_ESTIMATOR_XFAIL_CHECKS = {
         "check_estimators_dtypes": "raises nan error",
         "check_fit2d_1sample": "_scale_normalize fails",
         "check_fit2d_1feature": "raises apply_along_axis error",
-        "check_estimator_sparse_matrix": "does not fail gracefully",
-        "check_estimator_sparse_array": "does not fail gracefully",
+        "check_estimator_sparse_matrix": DOES_NOT_FAIL_GRACEFULLY,
+        "check_estimator_sparse_array": DOES_NOT_FAIL_GRACEFULLY,
         "check_methods_subset_invariance": EMPTY_ARRAY_PASSED,
         "check_dont_overwrite_parameters": EMPTY_ARRAY_PASSED,
         "check_fit2d_predict1d": EMPTY_ARRAY_PASSED,
