@@ -1,5 +1,6 @@
 import argparse
 import os
+import tempfile
 from gzip import GzipFile
 from time import time
 from urllib.request import urlretrieve
@@ -23,7 +24,7 @@ parser.add_argument("--learning-rate", type=float, default=1.0)
 parser.add_argument("--subsample", type=int, default=None)
 parser.add_argument("--max-bins", type=int, default=255)
 parser.add_argument("--no-predict", action="store_true", default=False)
-parser.add_argument("--cache-loc", type=str, default="/tmp")
+parser.add_argument("--cache-loc", type=str, default=tempfile.gettempdir())
 parser.add_argument("--no-interactions", type=bool, default=False)
 parser.add_argument("--max-features", type=float, default=1.0)
 args = parser.parse_args()
