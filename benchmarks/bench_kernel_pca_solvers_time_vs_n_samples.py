@@ -30,8 +30,8 @@ Going further:
 You can increase `max_n_samples` and `nb_n_samples_to_try` if you wish to
 explore a wider range of values for `n_samples`.
 
-You can also set `include_arpack=True` to add this other solver in the
-experiments (much slower).
+You can also set the environment variable ``INCLUDE_ARPACK=true`` to add
+this other solver in the experiments (much slower).
 
 Finally you can have a look at the second example of this series, "Kernel PCA
 Solvers comparison benchmark: time vs n_components", where this time the number
@@ -41,6 +41,7 @@ of examples is fixed, and the desired number of components varies.
 # Authors: The scikit-learn developers
 # SPDX-License-Identifier: BSD-3-Clause
 
+import os
 import time
 
 import matplotlib.pyplot as plt
@@ -66,7 +67,7 @@ n_samples_range = [
 
 n_components = 100  # the number of principal components we want to use
 n_iter = 3  # the number of times each experiment will be repeated
-include_arpack = False  # set this to True to include arpack solver (slower)
+include_arpack = os.environ.get("INCLUDE_ARPACK", "false").lower() == "true"
 
 
 # 2- Generate random data
