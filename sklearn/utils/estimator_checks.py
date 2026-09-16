@@ -4411,6 +4411,20 @@ def _enforce_pairwise_tags(estimator, X, X_test=None, kernel=linear_kernel):
     return X_res, X_test
 
 
+def _check_fit_does_not_raise_on_negative_input(estimator, X, y, name):
+    """Fit the estimator and re-raise any exception as AssertionError."""
+    try:
+        estimator.fit(X, y)
+    except Exception as e:
+        err_msg = (
+            f"Estimator {name!r} raised {e.__class__.__name__} unexpectedly."
+            " This happens when passing negative input values as X."
+            " If negative values are not supported for this estimator instance,"
+            " then the tags.input_tags.positive_only tag needs to be set to True."
+        )
+        raise AssertionError(err_msg) from e
+
+
 @ignore_warnings(category=FutureWarning)
 def check_positive_only_tag_during_fit(name, estimator_orig):
     """Test that the estimator correctly sets the tags.input_tags.positive_only
@@ -4434,17 +4448,7 @@ def check_positive_only_tag_during_fit(name, estimator_orig):
         with raises(ValueError, match="Negative values in data"):
             estimator.fit(X, y)
     else:
-        # This should pass
-        try:
-            estimator.fit(X, y)
-        except Exception as e:
-            err_msg = (
-                f"Estimator {name!r} raised {e.__class__.__name__} unexpectedly."
-                " This happens when passing negative input values as X."
-                " If negative values are not supported for this estimator instance,"
-                " then the tags.input_tags.positive_only tag needs to be set to True."
-            )
-            raise AssertionError(err_msg) from e
+        _check_fit_does_not_raise_on_negative_input(estimator, X, y, name)
 
 
 @ignore_warnings(category=FutureWarning)
@@ -4554,13 +4558,12 @@ def check_set_params(name, estimator_orig):
                 )
                 params_before_exception = curr_params
                 curr_params = estimator.get_params(deep=False)
-                try:
-                    assert set(params_before_exception.keys()) == set(
-                        curr_params.keys()
-                    )
-                    for k, v in curr_params.items():
-                        assert params_before_exception[k] is v
-                except AssertionError:
+                if set(params_before_exception.keys()) != set(
+                    curr_params.keys()
+                ) or any(
+                    params_before_exception[k] is not v
+                    for k, v in curr_params.items()
+                ):
                     warnings.warn(change_warning_msg)
             else:
                 curr_params = estimator.get_params(deep=False)
@@ -4620,9 +4623,7 @@ def check_decision_proba_consistency(name, estimator_orig):
         b = estimator.decision_function(X_test).round(decimals=10)
 
         rank_proba, rank_score = rankdata(a), rankdata(b)
-        try:
-            assert_array_almost_equal(rank_proba, rank_score)
-        except AssertionError:
+        if not np.allclose(rank_proba, rank_score, atol=1.5e-6, rtol=0):
             # Sometimes, the rounding applied on the probabilities will have
             # ties that are not present in the scores because it is
             # numerically more precise. In this case, we relax the test by

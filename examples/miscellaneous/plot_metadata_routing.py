@@ -666,8 +666,6 @@ for w in record:
 
 
 class ExampleRegressor(RegressorMixin, BaseEstimator):
-    _metadata_request__fit = {"sample_weight": metadata_routing.WARN}
-
     def fit(self, X, y, sample_weight=None):
         check_metadata(self, sample_weight=sample_weight)
         return self
@@ -677,7 +675,11 @@ class ExampleRegressor(RegressorMixin, BaseEstimator):
 
 
 with warnings.catch_warnings(record=True) as record:
-    MetaRegressor(estimator=ExampleRegressor()).fit(X, y, sample_weight=my_weights)
+    MetaRegressor(
+        estimator=ExampleRegressor().set_fit_request(
+            sample_weight=metadata_routing.WARN
+        )
+    ).fit(X, y, sample_weight=my_weights)
 for w in record:
     print(w.message)
 

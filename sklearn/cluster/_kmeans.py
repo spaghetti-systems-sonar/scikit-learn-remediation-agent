@@ -1934,8 +1934,8 @@ class MiniBatchKMeans(_BaseKMeans):
         self.init_size = init_size
         self.reassignment_ratio = reassignment_ratio
 
-    def _check_params_vs_input(self, X):
-        super()._check_params_vs_input(X, default_n_init=3)
+    def _check_params_vs_input(self, X, default_n_init=3):
+        super()._check_params_vs_input(X, default_n_init=default_n_init)
 
         self._batch_size = min(self.batch_size, X.shape[0])
 
@@ -1976,6 +1976,11 @@ class MiniBatchKMeans(_BaseKMeans):
             f"OMP_NUM_THREADS={n_active_threads}"
         )
 
+    def _log_verbose(self, message):
+        """Print message if verbose mode is enabled."""
+        if self.verbose:
+            print(message)
+
     def _mini_batch_convergence(
         self, step, n_steps, n_samples, centers_squared_diff, batch_inertia
     ):
@@ -1989,11 +1994,10 @@ class MiniBatchKMeans(_BaseKMeans):
 
         # Ignore first iteration because it's inertia from initialization.
         if step == 1:
-            if self.verbose:
-                print(
-                    f"Minibatch step {step}/{n_steps}: mean batch "
-                    f"inertia: {batch_inertia}"
-                )
+            self._log_verbose(
+                f"Minibatch step {step}/{n_steps}: mean batch "
+                f"inertia: {batch_inertia}"
+            )
             return False
 
         # Compute an Exponentially Weighted Average of the inertia to
@@ -2007,17 +2011,17 @@ class MiniBatchKMeans(_BaseKMeans):
             self._ewa_inertia = self._ewa_inertia * (1 - alpha) + batch_inertia * alpha
 
         # Log progress to be able to monitor convergence
-        if self.verbose:
-            print(
-                f"Minibatch step {step}/{n_steps}: mean batch inertia: "
-                f"{batch_inertia}, ewa inertia: {self._ewa_inertia}"
-            )
+        self._log_verbose(
+            f"Minibatch step {step}/{n_steps}: mean batch inertia: "
+            f"{batch_inertia}, ewa inertia: {self._ewa_inertia}"
+        )
 
         # Early stopping based on absolute tolerance on squared change of
         # centers position
         if self._tol > 0.0 and centers_squared_diff <= self._tol:
-            if self.verbose:
-                print(f"Converged (small centers change) at step {step}/{n_steps}")
+            self._log_verbose(
+                f"Converged (small centers change) at step {step}/{n_steps}"
+            )
             return True
 
         # Early stopping heuristic due to lack of improvement on smoothed
@@ -2032,11 +2036,10 @@ class MiniBatchKMeans(_BaseKMeans):
             self.max_no_improvement is not None
             and self._no_improvement >= self.max_no_improvement
         ):
-            if self.verbose:
-                print(
-                    "Converged (lack of improvement in inertia) at step "
-                    f"{step}/{n_steps}"
-                )
+            self._log_verbose(
+                "Converged (lack of improvement in inertia) at step "
+                f"{step}/{n_steps}"
+            )
             return True
 
         return False
