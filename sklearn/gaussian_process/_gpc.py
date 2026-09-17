@@ -211,50 +211,7 @@ class _BinaryGaussianProcessClassifierLaplace(BaseEstimator):
                 )
             )
 
-        if self.optimizer is not None and self.kernel_.n_dims > 0:
-            # Choose hyperparameters based on maximizing the log-marginal
-            # likelihood (potentially starting from several initial values)
-            def obj_func(theta, eval_gradient=True):
-                if eval_gradient:
-                    lml, grad = self.log_marginal_likelihood(
-                        theta, eval_gradient=True, clone_kernel=False
-                    )
-                    return -lml, -grad
-                else:
-                    return -self.log_marginal_likelihood(theta, clone_kernel=False)
-
-            # First optimize starting from theta specified in kernel
-            optima = [
-                self._constrained_optimization(
-                    obj_func, self.kernel_.theta, self.kernel_.bounds
-                )
-            ]
-
-            # Additional runs are performed from log-uniform chosen initial
-            # theta
-            if self.n_restarts_optimizer > 0:
-                if not np.isfinite(self.kernel_.bounds).all():
-                    raise ValueError(
-                        "Multiple optimizer restarts (n_restarts_optimizer>0) "
-                        "requires that all bounds are finite."
-                    )
-                bounds = self.kernel_.bounds
-                for iteration in range(self.n_restarts_optimizer):
-                    theta_initial = np.exp(self.rng.uniform(bounds[:, 0], bounds[:, 1]))
-                    optima.append(
-                        self._constrained_optimization(obj_func, theta_initial, bounds)
-                    )
-            # Select result from run with minimal (negative) log-marginal
-            # likelihood
-            lml_values = list(map(itemgetter(1), optima))
-            self.kernel_.theta = optima[np.argmin(lml_values)][0]
-            self.kernel_._check_bounds_params()
-
-            self.log_marginal_likelihood_value_ = -np.min(lml_values)
-        else:
-            self.log_marginal_likelihood_value_ = self.log_marginal_likelihood(
-                self.kernel_.theta
-            )
+        self._optimize_kernel_hyperparameters()
 
         # Precompute quantities required for predictions which are independent
         # of actual query points
@@ -265,6 +222,56 @@ class _BinaryGaussianProcessClassifierLaplace(BaseEstimator):
         )
 
         return self
+
+    def _optimize_kernel_hyperparameters(self):
+        """Set kernel hyperparameters by maximizing log-marginal likelihood."""
+        if self.optimizer is None or self.kernel_.n_dims == 0:
+            self.log_marginal_likelihood_value_ = self.log_marginal_likelihood(
+                self.kernel_.theta
+            )
+            return
+
+        def obj_func(theta, eval_gradient=True):
+            if eval_gradient:
+                lml, grad = self.log_marginal_likelihood(
+                    theta, eval_gradient=True, clone_kernel=False
+                )
+                return -lml, -grad
+            else:
+                return -self.log_marginal_likelihood(theta, clone_kernel=False)
+
+        # First optimize starting from theta specified in kernel
+        optima = [
+            self._constrained_optimization(
+                obj_func, self.kernel_.theta, self.kernel_.bounds
+            )
+        ]
+
+        # Additional runs are performed from log-uniform chosen initial
+        # theta
+        if self.n_restarts_optimizer > 0:
+            if not np.isfinite(self.kernel_.bounds).all():
+                raise ValueError(
+                    "Multiple optimizer restarts (n_restarts_optimizer>0) "
+                    "requires that all bounds are finite."
+                )
+            bounds = self.kernel_.bounds
+            for iteration in range(self.n_restarts_optimizer):
+                theta_initial = np.exp(
+                    self.rng.uniform(bounds[:, 0], bounds[:, 1])
+                )
+                optima.append(
+                    self._constrained_optimization(
+                        obj_func, theta_initial, bounds
+                    )
+                )
+        # Select result from run with minimal (negative) log-marginal
+        # likelihood
+        lml_values = list(map(itemgetter(1), optima))
+        self.kernel_.theta = optima[np.argmin(lml_values)][0]
+        self.kernel_._check_bounds_params()
+
+        self.log_marginal_likelihood_value_ = -np.min(lml_values)
 
     def predict(self, X):
         """Perform classification on an array of test vectors X.
