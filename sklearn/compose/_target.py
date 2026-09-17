@@ -175,9 +175,7 @@ class TransformedTargetRegressor(RegressorMixin, BaseEstimator):
         elif self.transformer is not None:
             self.transformer_ = clone(self.transformer)
         else:
-            if (self.func is not None and self.inverse_func is None) or (
-                self.func is None and self.inverse_func is not None
-            ):
+            if (self.func is None) != (self.inverse_func is None):
                 lacking_param, existing_param = (
                     ("func", "inverse_func")
                     if self.func is None

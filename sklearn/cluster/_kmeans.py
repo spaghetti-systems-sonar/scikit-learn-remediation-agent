@@ -2122,8 +2122,9 @@ class MiniBatchKMeans(_BaseKMeans):
         # perform several inits with random subsets
         best_inertia = None
         for init_idx in range(self._n_init):
-            if self.verbose:
-                print(f"Init {init_idx + 1}/{self._n_init} with method {init}")
+            self._log_verbose(
+                f"Init {init_idx + 1}/{self._n_init} with method {init}"
+            )
 
             # Initialize the centers using only a fraction of the data as we
             # expect n_samples to be very large when using MiniBatchKMeans.
@@ -2144,8 +2145,9 @@ class MiniBatchKMeans(_BaseKMeans):
                 n_threads=self._n_threads,
             )
 
-            if self.verbose:
-                print(f"Inertia for init {init_idx + 1}/{self._n_init}: {inertia}")
+            self._log_verbose(
+                f"Inertia for init {init_idx + 1}/{self._n_init}: {inertia}"
+            )
             if best_inertia is None or inertia < best_inertia:
                 init_centers = cluster_centers
                 best_inertia = inertia

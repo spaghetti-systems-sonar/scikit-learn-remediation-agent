@@ -465,17 +465,19 @@ class ColumnTransformer(TransformerMixin, _BaseComposition):
                 continue
 
             if column_as_labels:
-                # Convert all columns to using their string labels
-                columns_is_scalar = np.isscalar(columns)
-
-                indices = self._transformer_to_input_indices[name]
-                columns = self.feature_names_in_[indices]
-
-                if columns_is_scalar:
-                    # selection is done with one dimension
-                    columns = columns[0]
+                columns = self._get_columns_as_labels(name, columns)
 
             yield (name, trans, columns, get_weight(name))
+
+    def _get_columns_as_labels(self, name, columns):
+        """Convert columns to their string labels."""
+        columns_is_scalar = np.isscalar(columns)
+        indices = self._transformer_to_input_indices[name]
+        columns = self.feature_names_in_[indices]
+        if columns_is_scalar:
+            # selection is done with one dimension
+            columns = columns[0]
+        return columns
 
     def _validate_transformers(self):
         """Validate names of transformers and the transformers themselves.
@@ -763,24 +765,30 @@ class ColumnTransformer(TransformerMixin, _BaseComposition):
         for Xs, name in zip(result, names):
             if not isinstance(Xs, pd.DataFrame):
                 continue
-            for col_name, dtype in Xs.dtypes.to_dict().items():
-                if getattr(dtype, "na_value", None) is not pd.NA:
-                    continue
-                if pd.NA not in Xs[col_name].values:
-                    continue
-                class_name = self.__class__.__name__
-                raise ValueError(
-                    f"The output of the '{name}' transformer for column"
-                    f" '{col_name}' has dtype {dtype} and uses pandas.NA to"
-                    " represent null values. Storing this output in a numpy array"
-                    " can cause errors in downstream scikit-learn estimators, and"
-                    " inefficiencies. To avoid this problem you can (i)"
-                    " store the output in a pandas DataFrame by using"
-                    f" {class_name}.set_output(transform='pandas') or (ii) modify"
-                    f" the input data or the '{name}' transformer to avoid the"
-                    " presence of pandas.NA (for example by using"
-                    " pandas.DataFrame.astype)."
-                )
+            self._check_dataframe_nullable_dtypes(Xs, name)
+
+    def _check_dataframe_nullable_dtypes(self, xs, name):
+        """Raise if a DataFrame uses pd.NA with nullable dtypes."""
+        import pandas as pd
+
+        for col_name, dtype in xs.dtypes.to_dict().items():
+            if getattr(dtype, "na_value", None) is not pd.NA:
+                continue
+            if pd.NA not in xs[col_name].values:
+                continue
+            class_name = self.__class__.__name__
+            raise ValueError(
+                f"The output of the '{name}' transformer for column"
+                f" '{col_name}' has dtype {dtype} and uses pandas.NA to"
+                " represent null values. Storing this output in a numpy array"
+                " can cause errors in downstream scikit-learn estimators, and"
+                " inefficiencies. To avoid this problem you can (i)"
+                " store the output in a pandas DataFrame by using"
+                f" {class_name}.set_output(transform='pandas') or (ii) modify"
+                f" the input data or the '{name}' transformer to avoid the"
+                " presence of pandas.NA (for example by using"
+                " pandas.DataFrame.astype)."
+            )
 
     def _record_output_indices(self, Xs):
         """
