@@ -88,6 +88,71 @@ def _line_search_wolfe1(
     return stp, fc[0], gc[0], fval, old_fval, gval[0]
 
 
+def _gradient_fallback_search(
+    f, fprime, xk, pk, gfk, old_fval, ret, xp, eps, is_verbose, **kwargs
+):
+    """Try a gradient-based fallback when wolfe1 line search fails.
+
+    Deal with relative loss differences around machine precision by checking
+    if the loss improvement is tiny and gradients are decreasing.
+    """
+    # Have a look at the line_search method of our NewtonSolver class. We borrow
+    # the logic from there
+    # Deal with relative loss differences around machine precision.
+    args = kwargs.get("args", tuple())
+    fval = f(xk + pk, *args)
+    tiny_loss = xp.abs(old_fval * eps)
+    loss_improvement = fval - old_fval
+    check = xp.abs(loss_improvement) <= tiny_loss
+    if is_verbose:
+        print(
+            "    check loss |improvement| <= eps * |loss_old|:"
+            f" {xp.abs(loss_improvement)} <= {tiny_loss} {check}"
+        )
+    if not check:
+        return ret
+
+    # Check sum of absolute gradients as alternative condition.
+    sum_abs_grad_old = scipy.linalg.norm(gfk, ord=1)
+    grad = fprime(xk + pk, *args)
+    sum_abs_grad = scipy.linalg.norm(grad, ord=1)
+    check = sum_abs_grad < sum_abs_grad_old
+    if is_verbose:
+        print(
+            "    check sum(|gradient|) < sum(|gradient_old|): "
+            f"{sum_abs_grad} < {sum_abs_grad_old} {check}"
+        )
+    if check:
+        ret = (
+            1.0,  # step size
+            ret[1] + 1,  # number of function evaluations
+            ret[2] + 1,  # number of gradient evaluations
+            fval,
+            old_fval,
+            grad,
+        )
+    return ret
+
+
+def _wolfe2_fallback_search(
+    f, fprime, xk, pk, gfk, old_fval, old_old_fval, is_verbose, **kwargs
+):
+    """Try wolfe2 line search as a last resort fallback."""
+    # line search failed: try different one.
+    # TODO: It seems that the new check for the sum of absolute gradients above
+    # catches all cases that, earlier, ended up here. In fact, our tests never
+    # trigger this "if branch" here and we can consider to remove it.
+    if is_verbose:
+        print("    last resort: try line search wolfe2")
+    ret = line_search_wolfe2(
+        f, fprime, xk, pk, gfk, old_fval, old_old_fval, **kwargs
+    )
+    if is_verbose:
+        _not_ = "not " if ret[0] is None else ""
+        print("    wolfe2 line search was " + _not_ + "successful")
+    return ret
+
+
 def _line_search_wolfe12(
     f, fprime, xk, pk, gfk, old_fval, old_old_fval, xp, device, verbose=0, **kwargs
 ):
@@ -116,58 +181,55 @@ def _line_search_wolfe12(
         print("    wolfe1 line search was " + _not_ + "successful")
 
     if ret[0] is None:
-        # Have a look at the line_search method of our NewtonSolver class. We borrow
-        # the logic from there
-        # Deal with relative loss differences around machine precision.
-        args = kwargs.get("args", tuple())
-        fval = f(xk + pk, *args)
-        tiny_loss = xp.abs(old_fval * eps)
-        loss_improvement = fval - old_fval
-        check = xp.abs(loss_improvement) <= tiny_loss
-        if is_verbose:
-            print(
-                "    check loss |improvement| <= eps * |loss_old|:"
-                f" {xp.abs(loss_improvement)} <= {tiny_loss} {check}"
-            )
-        if check:
-            # 2.1 Check sum of absolute gradients as alternative condition.
-            sum_abs_grad_old = scipy.linalg.norm(gfk, ord=1)
-            grad = fprime(xk + pk, *args)
-            sum_abs_grad = scipy.linalg.norm(grad, ord=1)
-            check = sum_abs_grad < sum_abs_grad_old
-            if is_verbose:
-                print(
-                    "    check sum(|gradient|) < sum(|gradient_old|): "
-                    f"{sum_abs_grad} < {sum_abs_grad_old} {check}"
-                )
-            if check:
-                ret = (
-                    1.0,  # step size
-                    ret[1] + 1,  # number of function evaluations
-                    ret[2] + 1,  # number of gradient evaluations
-                    fval,
-                    old_fval,
-                    grad,
-                )
+        ret = _gradient_fallback_search(
+            f, fprime, xk, pk, gfk, old_fval, ret, xp, eps, is_verbose, **kwargs
+        )
 
     if ret[0] is None:
-        # line search failed: try different one.
-        # TODO: It seems that the new check for the sum of absolute gradients above
-        # catches all cases that, earlier, ended up here. In fact, our tests never
-        # trigger this "if branch" here and we can consider to remove it.
-        if is_verbose:
-            print("    last resort: try line search wolfe2")
-        ret = line_search_wolfe2(
-            f, fprime, xk, pk, gfk, old_fval, old_old_fval, **kwargs
+        ret = _wolfe2_fallback_search(
+            f, fprime, xk, pk, gfk, old_fval, old_old_fval, is_verbose, **kwargs
         )
-        if is_verbose:
-            _not_ = "not " if ret[0] is None else ""
-            print("    wolfe2 line search was " + _not_ + "successful")
 
     if ret[0] is None:
         raise _LineSearchError()
 
     return ret
+
+
+def _check_curvature(curv, eps, psupi_norm2, i, is_verbose, dri0, psupi):
+    """Check curvature conditions and return whether the CG loop should break.
+
+    Returns
+    -------
+    should_break : bool
+        Whether the CG loop should break.
+
+    update : ndarray or None
+        Steepest descent fallback to add to xsupi, or None.
+    """
+    if 0 <= curv <= eps * psupi_norm2:
+        # See https://arxiv.org/abs/1803.02924, Algo 1 Capped Conjugate Gradient.
+        if is_verbose:
+            print(
+                f"  Inner CG solver iteration {i} stopped with\n"
+                f"    tiny_|p| = eps * ||p||^2, eps = {eps}, "
+                f"squared L2 norm ||p||^2 = {psupi_norm2}\n"
+                f"    curvature <= tiny_|p|: {curv} <= {eps * psupi_norm2}"
+            )
+        return True, None
+    if curv < 0:
+        if i > 0:
+            if is_verbose:
+                print(
+                    f"  Inner CG solver iteration {i} stopped with negative "
+                    f"curvature, curvature = {curv}"
+                )
+            return True, None
+        # fall back to steepest descent direction
+        if is_verbose:
+            print("  Inner CG solver iteration 0 fell back to steepest descent")
+        return True, dri0 / curv * psupi
+    return False, None
 
 
 def _cg(fhess_p, fgrad, maxiter, tol, xp, device, verbose=0):
@@ -217,30 +279,13 @@ def _cg(fhess_p, fgrad, maxiter, tol, xp, device, verbose=0):
         Ap = fhess_p(psupi)
         # check curvature
         curv = psupi @ Ap
-        if 0 <= curv <= eps * psupi_norm2:
-            # See https://arxiv.org/abs/1803.02924, Algo 1 Capped Conjugate Gradient.
-            if is_verbose:
-                print(
-                    f"  Inner CG solver iteration {i} stopped with\n"
-                    f"    tiny_|p| = eps * ||p||^2, eps = {eps}, "
-                    f"squared L2 norm ||p||^2 = {psupi_norm2}\n"
-                    f"    curvature <= tiny_|p|: {curv} <= {eps * psupi_norm2}"
-                )
+        should_break, update = _check_curvature(
+            curv, eps, psupi_norm2, i, is_verbose, dri0, psupi
+        )
+        if should_break:
+            if update is not None:
+                xsupi += update
             break
-        elif curv < 0:
-            if i > 0:
-                if is_verbose:
-                    print(
-                        f"  Inner CG solver iteration {i} stopped with negative "
-                        f"curvature, curvature = {curv}"
-                    )
-                break
-            else:
-                # fall back to steepest descent direction
-                xsupi += dri0 / curv * psupi
-                if is_verbose:
-                    print("  Inner CG solver iteration 0 fell back to steepest descent")
-                break
         alphai = dri0 / curv
         xsupi += alphai * psupi
         ri += alphai * Ap
