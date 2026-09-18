@@ -745,6 +745,17 @@ def _implicit_column_offset(X, offset):
     )
 
 
+def _validate_or_create_out(out, n1, n3, dtype):
+    """Validate or create the output array for sparse_matmul_to_dense."""
+    if out is None:
+        return np.empty((n1, n3), dtype=dtype)
+    if out.shape[0] != n1 or out.shape[1] != n3:
+        raise ValueError("Shape of out must be ({n1}, {n3}), got {out.shape}.")
+    if out.dtype != dtype:
+        raise ValueError("Dtype of out must match that of input A.")
+    return out
+
+
 def sparse_matmul_to_dense(A, B, out=None):
     """Compute A @ B for sparse and 2-dim A and B while returning an ndarray.
 
@@ -777,13 +788,7 @@ def sparse_matmul_to_dense(A, B, out=None):
     if A.dtype != B.dtype or A.dtype not in (np.float32, np.float64):
         msg = "Dtype of A and B must be the same, either both float32 or float64."
         raise ValueError(msg)
-    if out is None:
-        out = np.empty((n1, n3), dtype=A.data.dtype)
-    else:
-        if out.shape[0] != n1 or out.shape[1] != n3:
-            raise ValueError("Shape of out must be ({n1}, {n3}), got {out.shape}.")
-        if out.dtype != A.data.dtype:
-            raise ValueError("Dtype of out must match that of input A.")
+    out = _validate_or_create_out(out, n1, n3, A.data.dtype)
 
     transpose_out = False
     if A.format == "csc":

@@ -26,6 +26,7 @@ from sklearn.utils.fixes import parse_version
 __all__ = ["xpx"]  # we import xpx here just to re-export it, need this to appease ruff
 
 _NUMPY_NAMESPACE_NAMES = {"numpy", "sklearn.externals.array_api_compat.numpy"}
+_REAL_FLOATING_KIND = "real floating"
 REMOVE_TYPES_DEFAULT = (
     str,
     list,
@@ -303,7 +304,7 @@ def supported_float_dtypes(xp, device=None):
     https://data-apis.org/array-api/latest/API_specification/data_types.html
     """
     dtypes_dict = xp.__array_namespace_info__().dtypes(
-        kind="real floating", device=device
+        kind=_REAL_FLOATING_KIND, device=device
     )
     valid_float_dtypes = []
     for dtype_key in ("float64", "float32"):
@@ -765,7 +766,7 @@ def _max_precision_float_dtype(xp, device):
         return xp.float64
 
     floating_dtypes = xp.__array_namespace_info__().dtypes(
-        kind="real floating", device=device
+        kind=_REAL_FLOATING_KIND, device=device
     )
     if "float64" in floating_dtypes:
         return xp.float64
@@ -786,7 +787,7 @@ def _find_matching_floating_dtype(*arrays, xp):
     """
     dtyped_arrays = [xp.asarray(a) for a in arrays if hasattr(a, "dtype")]
     floating_dtypes = [
-        a.dtype for a in dtyped_arrays if xp.isdtype(a.dtype, "real floating")
+        a.dtype for a in dtyped_arrays if xp.isdtype(a.dtype, _REAL_FLOATING_KIND)
     ]
     if floating_dtypes:
         # Return the floating dtype with the highest precision:
@@ -1241,6 +1242,19 @@ def _isin(element, test_elements, xp, assume_unique=False, invert=False):
 
 # Note: This is a helper for the function `_isin`.
 # It is not meant to be called directly.
+def _isin_element_wise(ar1, ar2, xp, invert):
+    """Element-wise membership check for small `ar2` arrays."""
+    if invert:
+        mask = xp.ones(ar1.shape[0], dtype=xp.bool, device=device(ar1))
+        for a in ar2:
+            mask &= ar1 != a
+    else:
+        mask = xp.zeros(ar1.shape[0], dtype=xp.bool, device=device(ar1))
+        for a in ar2:
+            mask |= ar1 == a
+    return mask
+
+
 def _in1d(ar1, ar2, xp, assume_unique=False, invert=False):
     """Checks whether each element of an array is also present in a
     second array.
@@ -1256,15 +1270,7 @@ def _in1d(ar1, ar2, xp, assume_unique=False, invert=False):
 
     # This code is run to make the code significantly faster
     if ar2.shape[0] < 10 * ar1.shape[0] ** 0.145:
-        if invert:
-            mask = xp.ones(ar1.shape[0], dtype=xp.bool, device=device(ar1))
-            for a in ar2:
-                mask &= ar1 != a
-        else:
-            mask = xp.zeros(ar1.shape[0], dtype=xp.bool, device=device(ar1))
-            for a in ar2:
-                mask |= ar1 == a
-        return mask
+        return _isin_element_wise(ar1, ar2, xp, invert)
 
     if not assume_unique:
         ar1, rev_idx = xp.unique_inverse(ar1)
