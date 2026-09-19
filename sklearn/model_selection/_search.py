@@ -65,6 +65,8 @@ from sklearn.utils.validation import _check_method_params, check_is_fitted, inde
 
 __all__ = ["GridSearchCV", "ParameterGrid", "ParameterSampler", "RandomizedSearchCV"]
 
+_DEFAULT_PRE_DISPATCH = "2*n_jobs"
+
 
 def _validate_grid_values(grid):
     """Check that all values in a parameter grid dict are valid."""
@@ -482,7 +484,7 @@ class BaseSearchCV(
         refit=True,
         cv=None,
         verbose=0,
-        pre_dispatch="2*n_jobs",
+        pre_dispatch=_DEFAULT_PRE_DISPATCH,
         error_score=np.nan,
         return_train_score=True,
     ):
@@ -1734,7 +1736,7 @@ class GridSearchCV(BaseSearchCV):
         refit=True,
         cv=None,
         verbose=0,
-        pre_dispatch="2*n_jobs",
+        pre_dispatch=_DEFAULT_PRE_DISPATCH,
         error_score=np.nan,
         return_train_score=False,
     ):
@@ -2132,7 +2134,7 @@ class RandomizedSearchCV(BaseSearchCV):
         refit=True,
         cv=None,
         verbose=0,
-        pre_dispatch="2*n_jobs",
+        pre_dispatch=_DEFAULT_PRE_DISPATCH,
         random_state=None,
         error_score=np.nan,
         return_train_score=False,

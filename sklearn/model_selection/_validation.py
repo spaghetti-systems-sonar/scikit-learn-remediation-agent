@@ -58,6 +58,8 @@ __all__ = [
     "validation_curve",
 ]
 
+_DEFAULT_PRE_DISPATCH = "2*n_jobs"
+
 
 # TODO(SLEP6): To be removed when set_config(enable_metadata_routing=False) is not
 # possible.
@@ -108,7 +110,7 @@ def cross_validate(
     n_jobs=None,
     verbose=0,
     params=None,
-    pre_dispatch="2*n_jobs",
+    pre_dispatch=_DEFAULT_PRE_DISPATCH,
     return_train_score=False,
     return_estimator=False,
     return_indices=False,
@@ -516,7 +518,7 @@ def cross_val_score(
     n_jobs=None,
     verbose=0,
     params=None,
-    pre_dispatch="2*n_jobs",
+    pre_dispatch=_DEFAULT_PRE_DISPATCH,
     error_score=np.nan,
 ):
     """Evaluate a score by cross-validation.
@@ -1174,7 +1176,7 @@ def cross_val_predict(
     n_jobs=None,
     verbose=0,
     params=None,
-    pre_dispatch="2*n_jobs",
+    pre_dispatch=_DEFAULT_PRE_DISPATCH,
     method="predict",
 ):
     """Generate cross-validated estimates for each input data point.

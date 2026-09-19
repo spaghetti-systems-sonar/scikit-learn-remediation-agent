@@ -370,11 +370,10 @@ def _newton_cg(
     xk = xp.asarray(x0, copy=True)  # np.copy(x0)
     k = 0
 
+    old_fval = 0
+    old_old_fval = None
     if line_search:
         old_fval = func(x0, *args)
-        old_old_fval = None
-    else:
-        old_fval = 0
 
     is_verbose = verbose > 0
 
