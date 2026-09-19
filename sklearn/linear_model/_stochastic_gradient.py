@@ -65,6 +65,12 @@ _MAX_ITER_CONVERGENCE_MSG = (
     "improve the fit."
 )
 
+_POWER_T_DEPRECATION_MSG = (
+    "Negative values for `power_t` are deprecated in version 1.8 "
+    "and will raise an error in 1.10. "
+    "Use values in the range [0.0, inf) instead."
+)
+
 DEFAULT_EPSILON = 0.1
 # Default value of ``epsilon`` parameter.
 
@@ -767,9 +773,7 @@ class BaseSGDClassifier(LinearClassifierMixin, BaseSGD, metaclass=ABCMeta):
 
         if self.power_t < 0:
             warnings.warn(
-                "Negative values for `power_t` are deprecated in version 1.8 "
-                "and will raise an error in 1.10. "
-                "Use values in the range [0.0, inf) instead.",
+                _POWER_T_DEPRECATION_MSG,
                 FutureWarning,
             )
 
@@ -1642,9 +1646,7 @@ class BaseSGDRegressor(RegressorMixin, BaseSGD):
 
         if self.power_t < 0:
             warnings.warn(
-                "Negative values for `power_t` are deprecated in version 1.8 "
-                "and will raise an error in 1.10. "
-                "Use values in the range [0.0, inf) instead.",
+                _POWER_T_DEPRECATION_MSG,
                 FutureWarning,
             )
 
@@ -2571,9 +2573,7 @@ class SGDOneClassSVM(OutlierMixin, BaseSGD):
 
         if self.power_t < 0:
             warnings.warn(
-                "Negative values for `power_t` are deprecated in version 1.8 "
-                "and will raise an error in 1.10. "
-                "Use values in the range [0.0, inf) instead.",
+                _POWER_T_DEPRECATION_MSG,
                 FutureWarning,
             )
 
