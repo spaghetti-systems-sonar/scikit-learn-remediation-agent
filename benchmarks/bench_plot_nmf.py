@@ -42,6 +42,38 @@ def _norm(x):
     return np.sqrt(squared_norm(x))
 
 
+def _update_step(h, gamma, grad, wtw, sigma, beta):
+    """Perform line search for the projected gradient descent step."""
+    h_prev = h
+
+    for inner_iter in range(20):
+        # Gradient step.
+        h_new = h - gamma * grad
+        # Projection step.
+        h_new *= h_new > 0
+        d = h_new - h
+        gradd = np.dot(grad.ravel(), d.ravel())
+        dqd = np.dot(np.dot(wtw, d).ravel(), d.ravel())
+        suff_decr = (1 - sigma) * gradd + 0.5 * dqd < 0
+        if inner_iter == 0:
+            decr_gamma = not suff_decr
+
+        if decr_gamma:
+            if suff_decr:
+                h = h_new
+                break
+            else:
+                gamma *= beta
+        elif not suff_decr or (h_prev == h_new).all():
+            h = h_prev
+            break
+        else:
+            gamma /= beta
+            h_prev = h_new
+
+    return h, gamma
+
+
 def _nls_subproblem(
     X, W, H, tol, max_iter, alpha=0.0, l1_ratio=0.0, sigma=0.01, beta=0.1
 ):
@@ -111,32 +143,7 @@ def _nls_subproblem(
         if _norm(grad * np.logical_or(grad < 0, H > 0)) < tol:
             break
 
-        Hp = H
-
-        for inner_iter in range(20):
-            # Gradient step.
-            Hn = H - gamma * grad
-            # Projection step.
-            Hn *= Hn > 0
-            d = Hn - H
-            gradd = np.dot(grad.ravel(), d.ravel())
-            dQd = np.dot(np.dot(WtW, d).ravel(), d.ravel())
-            suff_decr = (1 - sigma) * gradd + 0.5 * dQd < 0
-            if inner_iter == 0:
-                decr_gamma = not suff_decr
-
-            if decr_gamma:
-                if suff_decr:
-                    H = Hn
-                    break
-                else:
-                    gamma *= beta
-            elif not suff_decr or (Hp == Hn).all():
-                H = Hp
-                break
-            else:
-                gamma /= beta
-                Hp = Hn
+        H, gamma = _update_step(H, gamma, grad, WtW, sigma, beta)
 
     if n_iter == max_iter:
         warnings.warn("Iteration limit reached in nls subproblem.", ConvergenceWarning)
