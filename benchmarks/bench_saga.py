@@ -173,21 +173,8 @@ def _predict_proba(lr, X):
     return softmax(pred)
 
 
-def exp(
-    solvers,
-    penalty,
-    single_target,
-    n_samples=30000,
-    max_iter=20,
-    dataset="rcv1",
-    n_jobs=1,
-    skip_slow=False,
-):
-    dtypes_mapping = {
-        "float64": np.float64,
-        "float32": np.float32,
-    }
-
+def _load_dataset(dataset, single_target):
+    """Load dataset and optionally binarize the target."""
     if dataset == "rcv1":
         rcv1 = fetch_rcv1()
 
@@ -225,6 +212,25 @@ def exp(
             y_n[y <= 16] = 0
             y = y_n
 
+    return X, y
+
+
+def exp(
+    solvers,
+    penalty,
+    single_target,
+    n_samples=30000,
+    max_iter=20,
+    dataset="rcv1",
+    n_jobs=1,
+    skip_slow=False,
+):
+    dtypes_mapping = {
+        "float64": np.float64,
+        "float32": np.float32,
+    }
+
+    X, y = _load_dataset(dataset, single_target)
     X = X[:n_samples]
     y = y[:n_samples]
 
