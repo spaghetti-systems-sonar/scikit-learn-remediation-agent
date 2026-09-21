@@ -36,9 +36,12 @@ import numpy as np
 import pandas as pd
 from matplotlib.colors import ListedColormap
 
+FEATURE_0 = "Feature #0"
+FEATURE_1 = "Feature #1"
+
 n_samples = 500
 rng = np.random.default_rng(0)
-feature_names = ["Feature #0", "Feature #1"]
+feature_names = [FEATURE_0, FEATURE_1]
 common_scatter_plot_params = dict(
     cmap=ListedColormap(["tab:red", "tab:blue"]),
     edgecolor="white",
@@ -51,14 +54,14 @@ xor = pd.DataFrame(
 )
 noise = rng.normal(loc=0, scale=0.1, size=(n_samples, 2))
 target_xor = np.logical_xor(
-    xor["Feature #0"] + noise[:, 0] > 0, xor["Feature #1"] + noise[:, 1] > 0
+    xor[FEATURE_0] + noise[:, 0] > 0, xor[FEATURE_1] + noise[:, 1] > 0
 )
 
 X = xor[feature_names]
 y = target_xor.astype(np.int32)
 
 fig, ax = plt.subplots()
-ax.scatter(X["Feature #0"], X["Feature #1"], c=y, **common_scatter_plot_params)
+ax.scatter(X[FEATURE_0], X[FEATURE_1], c=y, **common_scatter_plot_params)
 ax.set_title("The XOR dataset")
 plt.show()
 
@@ -144,8 +147,8 @@ for idx, clf, title in zip(
         ax=axarr[idx[0], idx[1]],
     )
     axarr[idx[0], idx[1]].scatter(
-        X["Feature #0"],
-        X["Feature #1"],
+        X[FEATURE_0],
+        X[FEATURE_1],
         c=y,
         **common_scatter_plot_params,
     )
@@ -164,7 +167,7 @@ plt.show()
 # (here in red) as the first entry, and the probability of belonging to class 1
 # (here in blue) as the second entry.
 
-test_sample = pd.DataFrame({"Feature #0": [-0.5], "Feature #1": [1.5]})
+test_sample = pd.DataFrame({FEATURE_0: [-0.5], FEATURE_1: [1.5]})
 predict_probas = [est.predict_proba(test_sample).ravel() for est in eclf.estimators_]
 for (est_name, _), est_probas in zip(eclf.estimators, predict_probas):
     print(f"{est_name}'s predicted probabilities: {est_probas}")

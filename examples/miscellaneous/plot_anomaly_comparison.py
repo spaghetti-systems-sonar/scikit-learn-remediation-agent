@@ -88,6 +88,8 @@ outliers_fraction = 0.15
 n_outliers = int(outliers_fraction * n_samples)
 n_inliers = n_samples - n_outliers
 
+LOCAL_OUTLIER_FACTOR = "Local Outlier Factor"
+
 # define outlier/anomaly detection methods to be compared.
 # the SGDOneClassSVM must be used in a pipeline with a kernel approximation
 # to give similar results to the OneClassSVM
@@ -115,7 +117,7 @@ anomaly_algorithms = [
         IsolationForest(contamination=outliers_fraction, random_state=42),
     ),
     (
-        "Local Outlier Factor",
+        LOCAL_OUTLIER_FACTOR,
         LocalOutlierFactor(n_neighbors=35, contamination=outliers_fraction),
     ),
 ]
@@ -158,13 +160,13 @@ for i_dataset, X in enumerate(datasets):
             plt.title(name, size=18)
 
         # fit the data and tag outliers
-        if name == "Local Outlier Factor":
+        if name == LOCAL_OUTLIER_FACTOR:
             y_pred = algorithm.fit_predict(X)
         else:
             y_pred = algorithm.fit(X).predict(X)
 
         # plot the levels lines and the points
-        if name != "Local Outlier Factor":  # LOF does not implement predict
+        if name != LOCAL_OUTLIER_FACTOR:  # LOF does not implement predict
             Z = algorithm.predict(np.c_[xx.ravel(), yy.ravel()])
             Z = Z.reshape(xx.shape)
             plt.contour(xx, yy, Z, levels=[0], linewidths=2, colors="black")
