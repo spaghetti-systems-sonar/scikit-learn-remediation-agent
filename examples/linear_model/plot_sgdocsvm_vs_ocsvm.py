@@ -81,6 +81,8 @@ n_error_outliers_sgd = y_pred_outliers_sgd[y_pred_outliers_sgd == 1].size
 # %%
 from sklearn.inspection import DecisionBoundaryDisplay
 
+LEARNED_FRONTIER_LABEL = "learned frontier"
+
 _, ax = plt.subplots(figsize=(9, 6))
 
 xx, yy = np.meshgrid(np.linspace(-4.5, 4.5, 50), np.linspace(-4.5, 4.5, 50))
@@ -129,9 +131,9 @@ ax.set(
     ),
 )
 _ = ax.legend(
-    [mlines.Line2D([], [], color="darkred", label="learned frontier"), b1, b2, c],
+    [mlines.Line2D([], [], color="darkred", label=LEARNED_FRONTIER_LABEL), b1, b2, c],
     [
-        "learned frontier",
+        LEARNED_FRONTIER_LABEL,
         "training observations",
         "new regular observations",
         "new abnormal observations",
@@ -188,9 +190,9 @@ ax.set(
     ),
 )
 ax.legend(
-    [mlines.Line2D([], [], color="darkred", label="learned frontier"), b1, b2, c],
+    [mlines.Line2D([], [], color="darkred", label=LEARNED_FRONTIER_LABEL), b1, b2, c],
     [
-        "learned frontier",
+        LEARNED_FRONTIER_LABEL,
         "training observations",
         "new regular observations",
         "new abnormal observations",

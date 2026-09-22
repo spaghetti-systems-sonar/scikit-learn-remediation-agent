@@ -67,10 +67,14 @@ fit_time = time.time() - start_time
 
 # %%
 # We store the AIC metric for each value of alpha used during `fit`.
+AIC_CRITERION = "AIC criterion"
+BIC_CRITERION = "BIC criterion"
+ALPHA_LABEL = r"$\alpha$"
+
 results = pd.DataFrame(
     {
         "alphas": lasso_lars_ic[-1].alphas_,
-        "AIC criterion": lasso_lars_ic[-1].criterion_,
+        AIC_CRITERION: lasso_lars_ic[-1].criterion_,
     }
 ).set_index("alphas")
 alpha_aic = lasso_lars_ic[-1].alpha_
@@ -78,7 +82,7 @@ alpha_aic = lasso_lars_ic[-1].alpha_
 # %%
 # Now, we perform the same analysis using the BIC criterion.
 lasso_lars_ic.set_params(lassolarsic__criterion="bic").fit(X, y)
-results["BIC criterion"] = lasso_lars_ic[-1].criterion_
+results[BIC_CRITERION] = lasso_lars_ic[-1].criterion_
 alpha_bic = lasso_lars_ic[-1].alpha_
 
 
@@ -99,21 +103,21 @@ results.style.apply(highlight_min)
 ax = results.plot()
 ax.vlines(
     alpha_aic,
-    results["AIC criterion"].min(),
-    results["AIC criterion"].max(),
+    results[AIC_CRITERION].min(),
+    results[AIC_CRITERION].max(),
     label="alpha: AIC estimate",
     linestyles="--",
     color="tab:blue",
 )
 ax.vlines(
     alpha_bic,
-    results["BIC criterion"].min(),
-    results["BIC criterion"].max(),
+    results[BIC_CRITERION].min(),
+    results[BIC_CRITERION].max(),
     label="alpha: BIC estimate",
     linestyle="--",
     color="tab:orange",
 )
-ax.set_xlabel(r"$\alpha$")
+ax.set_xlabel(ALPHA_LABEL)
 ax.set_ylabel("criterion")
 ax.set_xscale("log")
 ax.legend()
@@ -174,7 +178,7 @@ plt.plot(
 plt.axvline(lasso.alpha_, linestyle="--", color="black", label="alpha: CV estimate")
 
 plt.ylim(ymin, ymax)
-plt.xlabel(r"$\alpha$")
+plt.xlabel(ALPHA_LABEL)
 plt.ylabel("Mean square error")
 plt.legend()
 _ = plt.title(
@@ -205,7 +209,7 @@ plt.semilogx(
 plt.axvline(lasso.alpha_, linestyle="--", color="black", label="alpha CV")
 
 plt.ylim(ymin, ymax)
-plt.xlabel(r"$\alpha$")
+plt.xlabel(ALPHA_LABEL)
 plt.ylabel("Mean square error")
 plt.legend()
 _ = plt.title(f"Mean square error on each fold: Lars (train time: {fit_time:.2f}s)")
