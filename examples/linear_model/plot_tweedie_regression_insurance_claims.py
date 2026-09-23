@@ -337,13 +337,16 @@ print(scores)
 fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(16, 8))
 fig.subplots_adjust(hspace=0.3, wspace=0.2)
 
+CLAIM_FREQ_LABEL = "Claim Frequency"
+TEST_DATA_TITLE = "test data"
+
 plot_obs_pred(
     df=df_train,
     feature="DrivAge",
     weight="Exposure",
     observed="Frequency",
     predicted=glm_freq.predict(X_train),
-    y_label="Claim Frequency",
+    y_label=CLAIM_FREQ_LABEL,
     title="train data",
     ax=ax[0, 0],
 )
@@ -354,8 +357,8 @@ plot_obs_pred(
     weight="Exposure",
     observed="Frequency",
     predicted=glm_freq.predict(X_test),
-    y_label="Claim Frequency",
-    title="test data",
+    y_label=CLAIM_FREQ_LABEL,
+    title=TEST_DATA_TITLE,
     ax=ax[0, 1],
     fill_legend=True,
 )
@@ -366,8 +369,8 @@ plot_obs_pred(
     weight="Exposure",
     observed="Frequency",
     predicted=glm_freq.predict(X_test),
-    y_label="Claim Frequency",
-    title="test data",
+    y_label=CLAIM_FREQ_LABEL,
+    title=TEST_DATA_TITLE,
     ax=ax[1, 0],
     fill_legend=True,
 )
@@ -378,8 +381,8 @@ plot_obs_pred(
     weight="Exposure",
     observed="Frequency",
     predicted=glm_freq.predict(X_test),
-    y_label="Claim Frequency",
-    title="test data",
+    y_label=CLAIM_FREQ_LABEL,
+    title=TEST_DATA_TITLE,
     ax=ax[1, 1],
     fill_legend=True,
 )
@@ -509,7 +512,7 @@ plot_obs_pred(
     observed="AvgClaimAmount",
     predicted=glm_sev.predict(X_test[mask_test.values]),
     y_label="Average Claim Severity",
-    title="test data",
+    title=TEST_DATA_TITLE,
     ax=ax[1],
     fill_legend=True,
 )
