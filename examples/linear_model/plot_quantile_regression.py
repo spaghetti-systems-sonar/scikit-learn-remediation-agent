@@ -47,14 +47,16 @@ y_pareto = y_true_mean + 10 * (rng.pareto(a, size=x.shape[0]) - 1 / (a - 1))
 # residuals `y - mean(y)`.
 import matplotlib.pyplot as plt
 
+TRUE_MEAN_LABEL = "True mean"
+
 _, axs = plt.subplots(nrows=2, ncols=2, figsize=(15, 11), sharex="row", sharey="row")
 
-axs[0, 0].plot(x, y_true_mean, label="True mean")
+axs[0, 0].plot(x, y_true_mean, label=TRUE_MEAN_LABEL)
 axs[0, 0].scatter(x, y_normal, color="black", alpha=0.5, label="Observations")
 axs[1, 0].hist(y_true_mean - y_normal, edgecolor="black")
 
 
-axs[0, 1].plot(x, y_true_mean, label="True mean")
+axs[0, 1].plot(x, y_true_mean, label=TRUE_MEAN_LABEL)
 axs[0, 1].scatter(x, y_pareto, color="black", alpha=0.5, label="Observations")
 axs[1, 1].hist(y_true_mean - y_pareto, edgecolor="black")
 
@@ -134,7 +136,7 @@ for quantile in quantiles:
 # Now, we can plot the three linear models and the distinguished samples that
 # are within the central 90% interval from samples that are outside this
 # interval.
-plt.plot(X, y_true_mean, color="black", linestyle="dashed", label="True mean")
+plt.plot(X, y_true_mean, color="black", linestyle="dashed", label=TRUE_MEAN_LABEL)
 
 for quantile, y_pred in predictions.items():
     plt.plot(X, y_pred, label=f"Quantile: {quantile}")
@@ -193,7 +195,7 @@ for quantile in quantiles:
         )
 
 # %%
-plt.plot(X, y_true_mean, color="black", linestyle="dashed", label="True mean")
+plt.plot(X, y_true_mean, color="black", linestyle="dashed", label=TRUE_MEAN_LABEL)
 
 for quantile, y_pred in predictions.items():
     plt.plot(X, y_pred, label=f"Quantile: {quantile}")

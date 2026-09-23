@@ -41,6 +41,8 @@ import matplotlib.pyplot as plt
 from sklearn.datasets import load_diabetes
 from sklearn.linear_model import enet_path, lars_path, lasso_path
 
+LEGEND_LOC = "lower right"
+
 X, y = load_diabetes(return_X_y=True)
 X /= X.std(axis=0)  # Standardize data (easier to set the l1_ratio parameter)
 
@@ -83,7 +85,7 @@ for coef_lasso, coef_lars, c in zip(coefs_lasso, coefs_lars, colors):
 plt.xlabel("alpha")
 plt.ylabel("coefficients")
 plt.title("Lasso and LARS Paths")
-plt.legend((l1[-1], l2[-1]), ("Lasso", "LARS"), loc="lower right")
+plt.legend((l1[-1], l2[-1]), ("Lasso", "LARS"), loc=LEGEND_LOC)
 plt.axis("tight")
 
 plt.figure(2)
@@ -95,7 +97,7 @@ for coef_l, coef_e, c in zip(coefs_lasso, coefs_enet, colors):
 plt.xlabel("alpha")
 plt.ylabel("coefficients")
 plt.title("Lasso and Elastic-Net Paths")
-plt.legend((l1[-1], l2[-1]), ("Lasso", "Elastic-Net"), loc="lower right")
+plt.legend((l1[-1], l2[-1]), ("Lasso", "Elastic-Net"), loc=LEGEND_LOC)
 plt.axis("tight")
 
 
@@ -107,7 +109,7 @@ for coef_l, coef_pl, c in zip(coefs_lasso, coefs_positive_lasso, colors):
 plt.xlabel("alpha")
 plt.ylabel("coefficients")
 plt.title("Lasso and positive Lasso")
-plt.legend((l1[-1], l2[-1]), ("Lasso", "positive Lasso"), loc="lower right")
+plt.legend((l1[-1], l2[-1]), ("Lasso", "positive Lasso"), loc=LEGEND_LOC)
 plt.axis("tight")
 
 
@@ -120,7 +122,7 @@ for coef_lars, coef_positive_lars, c in zip(coefs_lars, coefs_positive_lars, col
 plt.xlabel("alpha")
 plt.ylabel("coefficients")
 plt.title("LARS and Positive LARS")
-plt.legend((l1[-1], l2[-1]), ("LARS", "Positive LARS"), loc="lower right")
+plt.legend((l1[-1], l2[-1]), ("LARS", "Positive LARS"), loc=LEGEND_LOC)
 plt.axis("tight")
 
 plt.figure(5)
@@ -131,6 +133,6 @@ for coef_e, coef_pe, c in zip(coefs_enet, coefs_positive_enet, colors):
 plt.xlabel("alpha")
 plt.ylabel("coefficients")
 plt.title("Elastic-Net and positive Elastic-Net")
-plt.legend((l1[-1], l2[-1]), ("Elastic-Net", "positive Elastic-Net"), loc="lower right")
+plt.legend((l1[-1], l2[-1]), ("Elastic-Net", "positive Elastic-Net"), loc=LEGEND_LOC)
 plt.axis("tight")
 plt.show()
