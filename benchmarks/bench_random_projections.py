@@ -23,6 +23,8 @@ from sklearn.random_projection import (
     johnson_lindenstrauss_min_dim,
 )
 
+SEPARATOR = "==========================="
+
 
 def type_auto_or_float(val):
     if val == "auto":
@@ -197,7 +199,7 @@ if __name__ == "__main__":
     n_nonzeros = int(opts.ratio_nonzeros * opts.n_features)
 
     print("Dataset statistics")
-    print("===========================")
+    print(SEPARATOR)
     print("n_samples \t= %s" % opts.n_samples)
     print("n_features \t= %s" % opts.n_features)
     if opts.n_components == "auto":
@@ -247,7 +249,7 @@ if __name__ == "__main__":
     time_transform = collections.defaultdict(list)
 
     print("Benchmarks")
-    print("===========================")
+    print(SEPARATOR)
     print("Generate dataset benchmarks... ", end="")
     X_dense, X_sparse = make_sparse_random_data(
         opts.n_samples, opts.n_features, n_nonzeros, random_state=opts.random_seed
@@ -273,7 +275,7 @@ if __name__ == "__main__":
     # Print results
     ###########################################################################
     print("Script arguments")
-    print("===========================")
+    print(SEPARATOR)
     arguments = vars(opts)
     print(
         "%s \t | %s "
@@ -288,7 +290,7 @@ if __name__ == "__main__":
     print("")
 
     print("Transformer performance:")
-    print("===========================")
+    print(SEPARATOR)
     print("Results are averaged over %s repetition(s)." % opts.n_times)
     print("")
     print(

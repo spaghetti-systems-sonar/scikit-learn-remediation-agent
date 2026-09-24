@@ -36,10 +36,12 @@ y = np.squeeze(X * np.sin(X))
 # %%
 import matplotlib.pyplot as plt
 
+Y_LABEL = "$f(x)$"
+
 plt.plot(X, y, label=r"$f(x) = x \sin(x)$", linestyle="dotted")
 plt.legend()
 plt.xlabel("$x$")
-plt.ylabel("$f(x)$")
+plt.ylabel(Y_LABEL)
 _ = plt.title("True generative process")
 
 # %%
@@ -86,7 +88,7 @@ plt.fill_between(
 )
 plt.legend()
 plt.xlabel("$x$")
-plt.ylabel("$f(x)$")
+plt.ylabel(Y_LABEL)
 _ = plt.title("Gaussian process regression on noise-free dataset")
 
 # %%
@@ -140,7 +142,7 @@ plt.fill_between(
 )
 plt.legend()
 plt.xlabel("$x$")
-plt.ylabel("$f(x)$")
+plt.ylabel(Y_LABEL)
 _ = plt.title("Gaussian process regression on a noisy dataset")
 
 # %%
