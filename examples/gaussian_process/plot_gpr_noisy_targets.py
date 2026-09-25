@@ -37,8 +37,9 @@ y = np.squeeze(X * np.sin(X))
 import matplotlib.pyplot as plt
 
 Y_LABEL = "$f(x)$"
+TRUE_FUNCTION_LABEL = r"$f(x) = x \sin(x)$"
 
-plt.plot(X, y, label=r"$f(x) = x \sin(x)$", linestyle="dotted")
+plt.plot(X, y, label=TRUE_FUNCTION_LABEL, linestyle="dotted")
 plt.legend()
 plt.xlabel("$x$")
 plt.ylabel(Y_LABEL)
@@ -76,7 +77,7 @@ gaussian_process.kernel_
 # of the full dataset and plot the 95% confidence interval.
 mean_prediction, std_prediction = gaussian_process.predict(X, return_std=True)
 
-plt.plot(X, y, label=r"$f(x) = x \sin(x)$", linestyle="dotted")
+plt.plot(X, y, label=TRUE_FUNCTION_LABEL, linestyle="dotted")
 plt.scatter(X_train, y_train, label="Observations")
 plt.plot(X, mean_prediction, label="Mean prediction")
 plt.fill_between(
@@ -120,7 +121,7 @@ mean_prediction, std_prediction = gaussian_process.predict(X, return_std=True)
 
 # %%
 # Let's plot the mean prediction and the uncertainty region as before.
-plt.plot(X, y, label=r"$f(x) = x \sin(x)$", linestyle="dotted")
+plt.plot(X, y, label=TRUE_FUNCTION_LABEL, linestyle="dotted")
 plt.errorbar(
     X_train,
     y_train_noisy,

@@ -140,6 +140,10 @@ if args.print_params:
             pprint(est.get_params())
 
 
+SCORE_FMT = "score: {:.4f}"
+FIT_DURATION_FMT = "fit duration: {:.3f}s,"
+
+
 def one_run(n_threads, n_samples):
     X_train = X_train_[:n_samples]
     X_test = X_test_[:n_samples]
@@ -161,8 +165,8 @@ def one_run(n_threads, n_samples):
         tic = time()
         sklearn_score = est.score(X_test, y_test)
         sklearn_score_duration = time() - tic
-    print("score: {:.4f}".format(sklearn_score))
-    print("fit duration: {:.3f}s,".format(sklearn_fit_duration))
+    print(SCORE_FMT.format(sklearn_score))
+    print(FIT_DURATION_FMT.format(sklearn_fit_duration))
     print("score duration: {:.3f}s,".format(sklearn_score_duration))
 
     lightgbm_score = None
@@ -181,8 +185,8 @@ def one_run(n_threads, n_samples):
         tic = time()
         lightgbm_score = lightgbm_est.score(X_test, y_test)
         lightgbm_score_duration = time() - tic
-        print("score: {:.4f}".format(lightgbm_score))
-        print("fit duration: {:.3f}s,".format(lightgbm_fit_duration))
+        print(SCORE_FMT.format(lightgbm_score))
+        print(FIT_DURATION_FMT.format(lightgbm_fit_duration))
         print("score duration: {:.3f}s,".format(lightgbm_score_duration))
 
     xgb_score = None
@@ -199,8 +203,8 @@ def one_run(n_threads, n_samples):
         tic = time()
         xgb_score = xgb_est.score(X_test, y_test)
         xgb_score_duration = time() - tic
-        print("score: {:.4f}".format(xgb_score))
-        print("fit duration: {:.3f}s,".format(xgb_fit_duration))
+        print(SCORE_FMT.format(xgb_score))
+        print(FIT_DURATION_FMT.format(xgb_fit_duration))
         print("score duration: {:.3f}s,".format(xgb_score_duration))
 
     cat_score = None
@@ -219,8 +223,8 @@ def one_run(n_threads, n_samples):
         tic = time()
         cat_score = cat_est.score(X_test, y_test)
         cat_score_duration = time() - tic
-        print("score: {:.4f}".format(cat_score))
-        print("fit duration: {:.3f}s,".format(cat_fit_duration))
+        print(SCORE_FMT.format(cat_score))
+        print(FIT_DURATION_FMT.format(cat_fit_duration))
         print("score duration: {:.3f}s,".format(cat_score_duration))
 
     return (
