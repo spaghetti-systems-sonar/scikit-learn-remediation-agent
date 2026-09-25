@@ -39,7 +39,10 @@ y = target_generator(X, add_noise=False)
 # %%
 import matplotlib.pyplot as plt
 
-plt.plot(X, y, label="Expected signal")
+EXPECTED_SIGNAL_LABEL = "Expected signal"
+POSTERIOR_MEAN_STD_LABEL = "Posterior mean ± std"
+
+plt.plot(X, y, label=EXPECTED_SIGNAL_LABEL)
 plt.legend()
 plt.xlabel("X")
 _ = plt.ylabel("y")
@@ -53,7 +56,7 @@ X_train = rng.uniform(0, 5, size=20).reshape(-1, 1)
 y_train = target_generator(X_train, add_noise=True)
 
 # %%
-plt.plot(X, y, label="Expected signal")
+plt.plot(X, y, label=EXPECTED_SIGNAL_LABEL)
 plt.scatter(
     x=X_train[:, 0],
     y=y_train,
@@ -95,9 +98,9 @@ gpr.fit(X_train, y_train)
 y_mean, y_std = gpr.predict(X, return_std=True)
 
 # %%
-plt.plot(X, y, label="Expected signal")
+plt.plot(X, y, label=EXPECTED_SIGNAL_LABEL)
 plt.scatter(x=X_train[:, 0], y=y_train, color="black", alpha=0.4, label="Observations")
-plt.errorbar(X, y_mean, y_std, label="Posterior mean ± std")
+plt.errorbar(X, y_mean, y_std, label=POSTERIOR_MEAN_STD_LABEL)
 plt.legend()
 plt.xlabel("X")
 plt.ylabel("y")
@@ -129,9 +132,9 @@ gpr.fit(X_train, y_train)
 y_mean, y_std = gpr.predict(X, return_std=True)
 
 # %%
-plt.plot(X, y, label="Expected signal")
+plt.plot(X, y, label=EXPECTED_SIGNAL_LABEL)
 plt.scatter(x=X_train[:, 0], y=y_train, color="black", alpha=0.4, label="Observations")
-plt.errorbar(X, y_mean, y_std, label="Posterior mean ± std")
+plt.errorbar(X, y_mean, y_std, label=POSTERIOR_MEAN_STD_LABEL)
 plt.legend()
 plt.xlabel("X")
 plt.ylabel("y")
@@ -207,9 +210,9 @@ gpr.fit(X_train, y_train)
 y_mean, y_std = gpr.predict(X, return_std=True)
 
 # %%
-plt.plot(X, y, label="Expected signal")
+plt.plot(X, y, label=EXPECTED_SIGNAL_LABEL)
 plt.scatter(x=X_train[:, 0], y=y_train, color="black", alpha=0.4, label="Observations")
-plt.errorbar(X, y_mean, y_std, label="Posterior mean ± std")
+plt.errorbar(X, y_mean, y_std, label=POSTERIOR_MEAN_STD_LABEL)
 plt.legend()
 plt.xlabel("X")
 plt.ylabel("y")
