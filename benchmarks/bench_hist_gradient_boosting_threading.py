@@ -142,6 +142,7 @@ if args.print_params:
 
 SCORE_FMT = "score: {:.4f}"
 FIT_DURATION_FMT = "fit duration: {:.3f}s,"
+SCORE_DURATION_FMT = "score duration: {:.3f}s,"
 
 
 def one_run(n_threads, n_samples):
@@ -167,7 +168,7 @@ def one_run(n_threads, n_samples):
         sklearn_score_duration = time() - tic
     print(SCORE_FMT.format(sklearn_score))
     print(FIT_DURATION_FMT.format(sklearn_fit_duration))
-    print("score duration: {:.3f}s,".format(sklearn_score_duration))
+    print(SCORE_DURATION_FMT.format(sklearn_score_duration))
 
     lightgbm_score = None
     lightgbm_fit_duration = None
@@ -187,7 +188,7 @@ def one_run(n_threads, n_samples):
         lightgbm_score_duration = time() - tic
         print(SCORE_FMT.format(lightgbm_score))
         print(FIT_DURATION_FMT.format(lightgbm_fit_duration))
-        print("score duration: {:.3f}s,".format(lightgbm_score_duration))
+        print(SCORE_DURATION_FMT.format(lightgbm_score_duration))
 
     xgb_score = None
     xgb_fit_duration = None
@@ -205,7 +206,7 @@ def one_run(n_threads, n_samples):
         xgb_score_duration = time() - tic
         print(SCORE_FMT.format(xgb_score))
         print(FIT_DURATION_FMT.format(xgb_fit_duration))
-        print("score duration: {:.3f}s,".format(xgb_score_duration))
+        print(SCORE_DURATION_FMT.format(xgb_score_duration))
 
     cat_score = None
     cat_fit_duration = None
@@ -225,7 +226,7 @@ def one_run(n_threads, n_samples):
         cat_score_duration = time() - tic
         print(SCORE_FMT.format(cat_score))
         print(FIT_DURATION_FMT.format(cat_fit_duration))
-        print("score duration: {:.3f}s,".format(cat_score_duration))
+        print(SCORE_DURATION_FMT.format(cat_score_duration))
 
     return (
         sklearn_score,
