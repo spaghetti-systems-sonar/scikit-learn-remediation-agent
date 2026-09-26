@@ -57,12 +57,17 @@ training_noisy_target = target[training_sample_indices] + 0.5 * rng.randn(
 # Let's plot the true signal and the noisy measurements available for training.
 import matplotlib.pyplot as plt
 
-plt.plot(data, target, label="True signal", linewidth=2)
+TRUE_SIGNAL_LABEL = "True signal"
+NOISY_MEASUREMENTS_LABEL = "Noisy measurements"
+KERNEL_RIDGE_LABEL = "Kernel ridge"
+LEGEND_LOC = "lower right"
+
+plt.plot(data, target, label=TRUE_SIGNAL_LABEL, linewidth=2)
 plt.scatter(
     training_data,
     training_noisy_target,
     color="black",
-    label="Noisy measurements",
+    label=NOISY_MEASUREMENTS_LABEL,
 )
 plt.legend()
 plt.xlabel("data")
@@ -83,12 +88,12 @@ from sklearn.linear_model import Ridge
 
 ridge = Ridge().fit(training_data, training_noisy_target)
 
-plt.plot(data, target, label="True signal", linewidth=2)
+plt.plot(data, target, label=TRUE_SIGNAL_LABEL, linewidth=2)
 plt.scatter(
     training_data,
     training_noisy_target,
     color="black",
-    label="Noisy measurements",
+    label=NOISY_MEASUREMENTS_LABEL,
 )
 plt.plot(data, ridge.predict(data), label="Ridge regression")
 plt.legend()
@@ -137,21 +142,21 @@ print(
 )
 
 # %%
-plt.plot(data, target, label="True signal", linewidth=2, linestyle="dashed")
+plt.plot(data, target, label=TRUE_SIGNAL_LABEL, linewidth=2, linestyle="dashed")
 plt.scatter(
     training_data,
     training_noisy_target,
     color="black",
-    label="Noisy measurements",
+    label=NOISY_MEASUREMENTS_LABEL,
 )
 plt.plot(
     data,
     kernel_ridge.predict(data),
-    label="Kernel ridge",
+    label=KERNEL_RIDGE_LABEL,
     linewidth=2,
     linestyle="dashdot",
 )
-plt.legend(loc="lower right")
+plt.legend(loc=LEGEND_LOC)
 plt.xlabel("data")
 plt.ylabel("target")
 _ = plt.title(
@@ -210,21 +215,21 @@ predictions_kr = kernel_ridge_tuned.predict(data)
 print(f"Time for KernelRidge predict: {time.time() - start_time:.3f} seconds")
 
 # %%
-plt.plot(data, target, label="True signal", linewidth=2, linestyle="dashed")
+plt.plot(data, target, label=TRUE_SIGNAL_LABEL, linewidth=2, linestyle="dashed")
 plt.scatter(
     training_data,
     training_noisy_target,
     color="black",
-    label="Noisy measurements",
+    label=NOISY_MEASUREMENTS_LABEL,
 )
 plt.plot(
     data,
     predictions_kr,
-    label="Kernel ridge",
+    label=KERNEL_RIDGE_LABEL,
     linewidth=2,
     linestyle="dashdot",
 )
-plt.legend(loc="lower right")
+plt.legend(loc=LEGEND_LOC)
 plt.xlabel("data")
 plt.ylabel("target")
 _ = plt.title(
@@ -281,18 +286,18 @@ print(
 )
 
 # %%
-plt.plot(data, target, label="True signal", linewidth=2, linestyle="dashed")
+plt.plot(data, target, label=TRUE_SIGNAL_LABEL, linewidth=2, linestyle="dashed")
 plt.scatter(
     training_data,
     training_noisy_target,
     color="black",
-    label="Noisy measurements",
+    label=NOISY_MEASUREMENTS_LABEL,
 )
 # Plot the predictions of the kernel ridge
 plt.plot(
     data,
     predictions_kr,
-    label="Kernel ridge",
+    label=KERNEL_RIDGE_LABEL,
     linewidth=2,
     linestyle="dashdot",
 )
@@ -311,7 +316,7 @@ plt.fill_between(
     color="tab:green",
     alpha=0.2,
 )
-plt.legend(loc="lower right")
+plt.legend(loc=LEGEND_LOC)
 plt.xlabel("data")
 plt.ylabel("target")
 _ = plt.title("Comparison between kernel ridge and gaussian process regressor")
@@ -353,18 +358,18 @@ mean_predictions_gpr, std_predictions_gpr = gaussian_process.predict(
 )
 
 # %%
-plt.plot(data, target, label="True signal", linewidth=2, linestyle="dashed")
+plt.plot(data, target, label=TRUE_SIGNAL_LABEL, linewidth=2, linestyle="dashed")
 plt.scatter(
     training_data,
     training_noisy_target,
     color="black",
-    label="Noisy measurements",
+    label=NOISY_MEASUREMENTS_LABEL,
 )
 # Plot the predictions of the kernel ridge
 plt.plot(
     data,
     predictions_kr,
-    label="Kernel ridge",
+    label=KERNEL_RIDGE_LABEL,
     linewidth=2,
     linestyle="dashdot",
 )
@@ -383,7 +388,7 @@ plt.fill_between(
     color="tab:green",
     alpha=0.2,
 )
-plt.legend(loc="lower right")
+plt.legend(loc=LEGEND_LOC)
 plt.xlabel("data")
 plt.ylabel("target")
 _ = plt.title("Effect of using a radial basis function kernel")
