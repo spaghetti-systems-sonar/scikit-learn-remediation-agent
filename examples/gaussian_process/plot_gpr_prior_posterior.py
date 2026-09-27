@@ -33,6 +33,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 LEGEND_LOC = "upper left"
+PRIOR_TITLE = "Samples from prior distribution"
+POSTERIOR_TITLE = "Samples from posterior distribution"
 
 
 def plot_gpr_samples(gpr_model, n_samples, ax):
@@ -108,14 +110,14 @@ fig, axs = plt.subplots(nrows=2, sharex=True, sharey=True, figsize=(10, 8))
 
 # plot prior
 plot_gpr_samples(gpr, n_samples=n_samples, ax=axs[0])
-axs[0].set_title("Samples from prior distribution")
+axs[0].set_title(PRIOR_TITLE)
 
 # plot posterior
 gpr.fit(X_train, y_train)
 plot_gpr_samples(gpr, n_samples=n_samples, ax=axs[1])
 axs[1].scatter(X_train[:, 0], y_train, color="red", zorder=10, label="Observations")
 axs[1].legend(bbox_to_anchor=(1.05, 1.5), loc=LEGEND_LOC)
-axs[1].set_title("Samples from posterior distribution")
+axs[1].set_title(POSTERIOR_TITLE)
 
 fig.suptitle("Radial Basis Function kernel", fontsize=18)
 plt.tight_layout()
@@ -139,14 +141,14 @@ fig, axs = plt.subplots(nrows=2, sharex=True, sharey=True, figsize=(10, 8))
 
 # plot prior
 plot_gpr_samples(gpr, n_samples=n_samples, ax=axs[0])
-axs[0].set_title("Samples from prior distribution")
+axs[0].set_title(PRIOR_TITLE)
 
 # plot posterior
 gpr.fit(X_train, y_train)
 plot_gpr_samples(gpr, n_samples=n_samples, ax=axs[1])
 axs[1].scatter(X_train[:, 0], y_train, color="red", zorder=10, label="Observations")
 axs[1].legend(bbox_to_anchor=(1.05, 1.5), loc=LEGEND_LOC)
-axs[1].set_title("Samples from posterior distribution")
+axs[1].set_title(POSTERIOR_TITLE)
 
 fig.suptitle("Rational Quadratic kernel", fontsize=18)
 plt.tight_layout()
@@ -175,14 +177,14 @@ fig, axs = plt.subplots(nrows=2, sharex=True, sharey=True, figsize=(10, 8))
 
 # plot prior
 plot_gpr_samples(gpr, n_samples=n_samples, ax=axs[0])
-axs[0].set_title("Samples from prior distribution")
+axs[0].set_title(PRIOR_TITLE)
 
 # plot posterior
 gpr.fit(X_train, y_train)
 plot_gpr_samples(gpr, n_samples=n_samples, ax=axs[1])
 axs[1].scatter(X_train[:, 0], y_train, color="red", zorder=10, label="Observations")
 axs[1].legend(bbox_to_anchor=(1.05, 1.5), loc=LEGEND_LOC)
-axs[1].set_title("Samples from posterior distribution")
+axs[1].set_title(POSTERIOR_TITLE)
 
 fig.suptitle("Exp-Sine-Squared kernel", fontsize=18)
 plt.tight_layout()
@@ -208,14 +210,14 @@ fig, axs = plt.subplots(nrows=2, sharex=True, sharey=True, figsize=(10, 8))
 
 # plot prior
 plot_gpr_samples(gpr, n_samples=n_samples, ax=axs[0])
-axs[0].set_title("Samples from prior distribution")
+axs[0].set_title(PRIOR_TITLE)
 
 # plot posterior
 gpr.fit(X_train, y_train)
 plot_gpr_samples(gpr, n_samples=n_samples, ax=axs[1])
 axs[1].scatter(X_train[:, 0], y_train, color="red", zorder=10, label="Observations")
 axs[1].legend(bbox_to_anchor=(1.05, 1.5), loc=LEGEND_LOC)
-axs[1].set_title("Samples from posterior distribution")
+axs[1].set_title(POSTERIOR_TITLE)
 
 fig.suptitle("Dot-product kernel", fontsize=18)
 plt.tight_layout()
@@ -239,14 +241,14 @@ fig, axs = plt.subplots(nrows=2, sharex=True, sharey=True, figsize=(10, 8))
 
 # plot prior
 plot_gpr_samples(gpr, n_samples=n_samples, ax=axs[0])
-axs[0].set_title("Samples from prior distribution")
+axs[0].set_title(PRIOR_TITLE)
 
 # plot posterior
 gpr.fit(X_train, y_train)
 plot_gpr_samples(gpr, n_samples=n_samples, ax=axs[1])
 axs[1].scatter(X_train[:, 0], y_train, color="red", zorder=10, label="Observations")
 axs[1].legend(bbox_to_anchor=(1.05, 1.5), loc=LEGEND_LOC)
-axs[1].set_title("Samples from posterior distribution")
+axs[1].set_title(POSTERIOR_TITLE)
 
 fig.suptitle("Matérn kernel", fontsize=18)
 plt.tight_layout()
