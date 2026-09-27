@@ -6,6 +6,10 @@ from numpy import random as nr
 
 from sklearn.cluster import KMeans, MiniBatchKMeans
 
+SEPARATOR = "=============================="
+KMEANS_INIT = "k-means++"
+SPEED_FORMAT = "Speed: %0.3fs"
+
 
 def compute_bench(samples_range, features_range):
     it = 0
@@ -16,18 +20,18 @@ def compute_bench(samples_range, features_range):
     for n_samples in samples_range:
         for n_features in features_range:
             it += 1
-            print("==============================")
+            print(SEPARATOR)
             print("Iteration %03d of %03d" % (it, max_it))
-            print("==============================")
+            print(SEPARATOR)
             print()
             data = nr.randint(-50, 51, (n_samples, n_features))
 
             print("K-Means")
             tstart = time()
-            kmeans = KMeans(init="k-means++", n_clusters=10).fit(data)
+            kmeans = KMeans(init=KMEANS_INIT, n_clusters=10).fit(data)
 
             delta = time() - tstart
-            print("Speed: %0.3fs" % delta)
+            print(SPEED_FORMAT % delta)
             print("Inertia: %0.5f" % kmeans.inertia_)
             print()
 
@@ -37,12 +41,12 @@ def compute_bench(samples_range, features_range):
             print("Fast K-Means")
             # let's prepare the data in small chunks
             mbkmeans = MiniBatchKMeans(
-                init="k-means++", n_clusters=10, batch_size=chunk
+                init=KMEANS_INIT, n_clusters=10, batch_size=chunk
             )
             tstart = time()
             mbkmeans.fit(data)
             delta = time() - tstart
-            print("Speed: %0.3fs" % delta)
+            print(SPEED_FORMAT % delta)
             print("Inertia: %f" % mbkmeans.inertia_)
             print()
             print()
@@ -75,18 +79,18 @@ def compute_bench_2(chunks):
     it = 0
     for chunk in chunks:
         it += 1
-        print("==============================")
+        print(SEPARATOR)
         print("Iteration %03d of %03d" % (it, max_it))
-        print("==============================")
+        print(SEPARATOR)
         print()
 
         print("Fast K-Means")
         tstart = time()
-        mbkmeans = MiniBatchKMeans(init="k-means++", n_clusters=8, batch_size=chunk)
+        mbkmeans = MiniBatchKMeans(init=KMEANS_INIT, n_clusters=8, batch_size=chunk)
 
         mbkmeans.fit(X)
         delta = time() - tstart
-        print("Speed: %0.3fs" % delta)
+        print(SPEED_FORMAT % delta)
         print("Inertia: %0.3fs" % mbkmeans.inertia_)
         print()
 
