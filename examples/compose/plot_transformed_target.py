@@ -114,8 +114,11 @@ for ax, y_pred in zip([ax0, ax1], [y_pred_ridge, y_pred_ridge_with_trans_target]
         ax.plot([], [], " ", label=f"{name}={score}")
     ax.legend(loc="upper left")
 
-ax0.set_title("Ridge regression \n without target transformation")
-ax1.set_title("Ridge regression \n with target transformation")
+TITLE_WITHOUT_TRANS = "Ridge regression \n without target transformation"
+TITLE_WITH_TRANS = "Ridge regression \n with target transformation"
+
+ax0.set_title(TITLE_WITHOUT_TRANS)
+ax1.set_title(TITLE_WITH_TRANS)
 f.suptitle("Synthetic data", y=1.05)
 plt.tight_layout()
 
@@ -205,8 +208,8 @@ for ax, y_pred in zip([ax0[0], ax0[1]], [y_pred_ridge, y_pred_ridge_with_trans_t
         ax.plot([], [], " ", label=f"{name}={score}")
     ax.legend(loc="upper left")
 
-ax0[0].set_title("Ridge regression \n without target transformation")
-ax0[1].set_title("Ridge regression \n with target transformation")
+ax0[0].set_title(TITLE_WITHOUT_TRANS)
+ax0[1].set_title(TITLE_WITH_TRANS)
 
 # plot the residuals vs the predicted values
 PredictionErrorDisplay.from_predictions(
@@ -223,8 +226,8 @@ PredictionErrorDisplay.from_predictions(
     ax=ax1[1],
     scatter_kwargs={"alpha": 0.5},
 )
-ax1[0].set_title("Ridge regression \n without target transformation")
-ax1[1].set_title("Ridge regression \n with target transformation")
+ax1[0].set_title(TITLE_WITHOUT_TRANS)
+ax1[1].set_title(TITLE_WITH_TRANS)
 
 f.suptitle("Ames housing data: selling price", y=1.05)
 plt.tight_layout()
