@@ -261,7 +261,9 @@ common_params = {
     "random_state": 0,
 }
 
-print("Computing partial dependence plots...")
+COMPUTING_PDP_MSG = "Computing partial dependence plots..."
+
+print(COMPUTING_PDP_MSG)
 features_info = {
     # features of interest
     "features": ["temp", "humidity", "windspeed", "season", "weather", "hour"],
@@ -323,7 +325,7 @@ print(f"Test R2 score: {hgbdt_model.score(X_test, y_test):.2f}")
 #
 # We will plot the partial dependence for some of the numerical and categorical
 # features.
-print("Computing partial dependence plots...")
+print(COMPUTING_PDP_MSG)
 tic = time()
 _, ax = plt.subplots(ncols=3, nrows=2, figsize=(9, 8), constrained_layout=True)
 display = PartialDependenceDisplay.from_estimator(
@@ -438,7 +440,7 @@ _ = display.figure_.suptitle("ICE and PDP representations", fontsize=16)
 # the representation of available in
 # :meth:`~sklearn.inspection.PartialDependenceDisplay.from_estimator` that is a 2D
 # heatmap.
-print("Computing partial dependence plots...")
+print(COMPUTING_PDP_MSG)
 features_info = {
     "features": ["temp", "humidity", ("temp", "humidity")],
     "kind": "average",
@@ -474,7 +476,7 @@ _ = display.figure_.suptitle(
 # We now contrast those results with the same plots computed for the model
 # constrained to learn a prediction function that does not depend on such
 # non-linear feature interactions.
-print("Computing partial dependence plots...")
+print(COMPUTING_PDP_MSG)
 features_info = {
     "features": ["temp", "humidity", ("temp", "humidity")],
     "kind": "average",
@@ -515,7 +517,7 @@ _ = display.figure_.suptitle(
 # The partial dependence between categorical features will provide a discrete
 # representation that can be shown as a heatmap. For instance the interaction between
 # the season, the weather, and the target would be as follow:
-print("Computing partial dependence plots...")
+print(COMPUTING_PDP_MSG)
 features_info = {
     "features": ["season", "weather", ("season", "weather")],
     "kind": "average",

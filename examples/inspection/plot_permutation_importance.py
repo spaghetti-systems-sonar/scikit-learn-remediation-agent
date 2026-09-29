@@ -164,6 +164,8 @@ ax.figure.tight_layout()
 # expected.
 from sklearn.inspection import permutation_importance
 
+XLABEL_ACCURACY_DECREASE = "Decrease in accuracy score"
+
 result = permutation_importance(
     rf, X_test, y_test, n_repeats=10, random_state=42, n_jobs=2
 )
@@ -176,7 +178,7 @@ importances = pd.DataFrame(
 ax = importances.plot.box(vert=False, whis=10)
 ax.set_title("Permutation Importances (test set)")
 ax.axvline(x=0, color="k", linestyle="--")
-ax.set_xlabel("Decrease in accuracy score")
+ax.set_xlabel(XLABEL_ACCURACY_DECREASE)
 ax.figure.tight_layout()
 
 # %%
@@ -197,7 +199,7 @@ importances = pd.DataFrame(
 ax = importances.plot.box(vert=False, whis=10)
 ax.set_title("Permutation Importances (train set)")
 ax.axvline(x=0, color="k", linestyle="--")
-ax.set_xlabel("Decrease in accuracy score")
+ax.set_xlabel(XLABEL_ACCURACY_DECREASE)
 ax.figure.tight_layout()
 
 # %%
@@ -235,7 +237,7 @@ test_importances = pd.DataFrame(
 for name, importances in zip(["train", "test"], [train_importances, test_importances]):
     ax = importances.plot.box(vert=False, whis=10)
     ax.set_title(f"Permutation Importances ({name} set)")
-    ax.set_xlabel("Decrease in accuracy score")
+    ax.set_xlabel(XLABEL_ACCURACY_DECREASE)
     ax.axvline(x=0, color="k", linestyle="--")
     ax.figure.tight_layout()
 
