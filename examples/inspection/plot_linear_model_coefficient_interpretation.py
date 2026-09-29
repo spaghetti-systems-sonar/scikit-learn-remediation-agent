@@ -180,9 +180,11 @@ from sklearn.metrics import PredictionErrorDisplay, median_absolute_error
 mae_train = median_absolute_error(y_train, model.predict(X_train))
 y_pred = model.predict(X_test)
 mae_test = median_absolute_error(y_test, y_pred)
+MEDAE_TRAIN_LABEL = "MedAE on training set"
+MEDAE_TEST_LABEL = "MedAE on testing set"
 scores = {
-    "MedAE on training set": f"{mae_train:.2f} $/hour",
-    "MedAE on testing set": f"{mae_test:.2f} $/hour",
+    MEDAE_TRAIN_LABEL: f"{mae_train:.2f} $/hour",
+    MEDAE_TEST_LABEL: f"{mae_test:.2f} $/hour",
 }
 
 # %%
@@ -476,8 +478,8 @@ mae_train = median_absolute_error(y_train, model.predict(X_train))
 y_pred = model.predict(X_test)
 mae_test = median_absolute_error(y_test, y_pred)
 scores = {
-    "MedAE on training set": f"{mae_train:.2f} $/hour",
-    "MedAE on testing set": f"{mae_test:.2f} $/hour",
+    MEDAE_TRAIN_LABEL: f"{mae_train:.2f} $/hour",
+    MEDAE_TEST_LABEL: f"{mae_test:.2f} $/hour",
 }
 
 _, ax = plt.subplots(figsize=(5, 5))
@@ -494,9 +496,10 @@ plt.tight_layout()
 # For the coefficient analysis, scaling is not needed this time because it
 # was performed during the preprocessing step.
 
+COEFS_IMPORTANCE_LABEL = "Coefficients importance"
 coefs = pd.DataFrame(
     model[-1].regressor_.coef_,
-    columns=["Coefficients importance"],
+    columns=[COEFS_IMPORTANCE_LABEL],
     index=feature_names,
 )
 coefs.plot.barh(figsize=(9, 7))
@@ -567,8 +570,8 @@ mae_train = median_absolute_error(y_train, model.predict(X_train))
 y_pred = model.predict(X_test)
 mae_test = median_absolute_error(y_test, y_pred)
 scores = {
-    "MedAE on training set": f"{mae_train:.2f} $/hour",
-    "MedAE on testing set": f"{mae_test:.2f} $/hour",
+    MEDAE_TRAIN_LABEL: f"{mae_train:.2f} $/hour",
+    MEDAE_TEST_LABEL: f"{mae_test:.2f} $/hour",
 }
 
 _, ax = plt.subplots(figsize=(5, 5))
@@ -587,7 +590,7 @@ plt.tight_layout()
 
 coefs = pd.DataFrame(
     model[-1].regressor_.coef_,
-    columns=["Coefficients importance"],
+    columns=[COEFS_IMPORTANCE_LABEL],
     index=feature_names,
 )
 coefs.plot.barh(figsize=(9, 7))
@@ -671,8 +674,8 @@ mae_train = median_absolute_error(y_train, model.predict(X_train))
 y_pred = model.predict(X_test)
 mae_test = median_absolute_error(y_test, y_pred)
 scores = {
-    "MedAE on training set": f"{mae_train:.2f} $/hour",
-    "MedAE on testing set": f"{mae_test:.2f} $/hour",
+    MEDAE_TRAIN_LABEL: f"{mae_train:.2f} $/hour",
+    MEDAE_TEST_LABEL: f"{mae_test:.2f} $/hour",
 }
 
 _, ax = plt.subplots(figsize=(6, 6))
@@ -690,7 +693,7 @@ plt.tight_layout()
 
 coefs = pd.DataFrame(
     model[-1].regressor_.coef_,
-    columns=["Coefficients importance"],
+    columns=[COEFS_IMPORTANCE_LABEL],
     index=feature_names,
 )
 coefs.plot(kind="barh", figsize=(9, 7))

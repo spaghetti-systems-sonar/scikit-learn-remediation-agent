@@ -76,6 +76,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+PERMUTATION_XLABEL = "Decrease in accuracy score"
+
 mdi_importances = pd.Series(clf.feature_importances_, index=X_train.columns)
 tree_importance_sorted_idx = np.argsort(clf.feature_importances_)
 
@@ -83,7 +85,7 @@ fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 8))
 mdi_importances.sort_values().plot.barh(ax=ax1)
 ax1.set_xlabel("Gini importance")
 plot_permutation_importance(clf, X_train, y_train, ax2)
-ax2.set_xlabel("Decrease in accuracy score")
+ax2.set_xlabel(PERMUTATION_XLABEL)
 fig.suptitle(
     "Impurity-based vs. permutation importances on multicollinear features (train set)"
 )
@@ -110,7 +112,7 @@ _ = fig.tight_layout()
 fig, ax = plt.subplots(figsize=(7, 6))
 plot_permutation_importance(clf, X_test, y_test, ax)
 ax.set_title("Permutation Importances on multicollinear features\n(test set)")
-ax.set_xlabel("Decrease in accuracy score")
+ax.set_xlabel(PERMUTATION_XLABEL)
 _ = ax.figure.tight_layout()
 
 # %%
@@ -187,6 +189,6 @@ print(
 fig, ax = plt.subplots(figsize=(7, 6))
 plot_permutation_importance(clf_sel, X_test_sel, y_test, ax)
 ax.set_title("Permutation Importances on selected subset of features\n(test set)")
-ax.set_xlabel("Decrease in accuracy score")
+ax.set_xlabel(PERMUTATION_XLABEL)
 ax.figure.tight_layout()
 plt.show()
