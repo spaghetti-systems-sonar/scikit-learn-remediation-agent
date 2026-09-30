@@ -182,9 +182,12 @@ y_pred = model.predict(X_test)
 mae_test = median_absolute_error(y_test, y_pred)
 MEDAE_TRAIN_LABEL = "MedAE on training set"
 MEDAE_TEST_LABEL = "MedAE on testing set"
+LEGEND_LOC = "upper left"
+RIDGE_SMALL_REG_TITLE = "Ridge model, small regularization"
+WAGE_UNIT = "$/hour"
 scores = {
-    MEDAE_TRAIN_LABEL: f"{mae_train:.2f} $/hour",
-    MEDAE_TEST_LABEL: f"{mae_test:.2f} $/hour",
+    MEDAE_TRAIN_LABEL: f"{mae_train:.2f} {WAGE_UNIT}",
+    MEDAE_TEST_LABEL: f"{mae_test:.2f} {WAGE_UNIT}",
 }
 
 # %%
@@ -192,10 +195,10 @@ _, ax = plt.subplots(figsize=(5, 5))
 display = PredictionErrorDisplay.from_predictions(
     y_test, y_pred, kind="actual_vs_predicted", ax=ax, scatter_kwargs={"alpha": 0.5}
 )
-ax.set_title("Ridge model, small regularization")
+ax.set_title(RIDGE_SMALL_REG_TITLE)
 for name, score in scores.items():
     ax.plot([], [], " ", label=f"{name}: {score}")
-ax.legend(loc="upper left")
+ax.legend(loc=LEGEND_LOC)
 plt.tight_layout()
 
 # %%
@@ -237,10 +240,11 @@ coefs
 # hence value ranges, because of their different unit of measure. This is more
 # visible if we plot the coefficients.
 
+RAW_COEF_LABEL = "Raw coefficient values"
 coefs.plot.barh(figsize=(9, 7))
-plt.title("Ridge model, small regularization")
+plt.title(RIDGE_SMALL_REG_TITLE)
 plt.axvline(x=0, color=".5")
-plt.xlabel("Raw coefficient values")
+plt.xlabel(RAW_COEF_LABEL)
 plt.subplots_adjust(left=0.3)
 
 # %%
@@ -277,14 +281,15 @@ plt.subplots_adjust(left=0.3)
 # greater the variance of a feature, the larger the weight of the corresponding
 # coefficient on the output, all else being equal.
 
+COEF_IMPORTANCE_LABEL = "Coefficient importance"
 coefs = pd.DataFrame(
     model[-1].regressor_.coef_ * X_train_preprocessed.std(axis=0),
-    columns=["Coefficient importance"],
+    columns=[COEF_IMPORTANCE_LABEL],
     index=feature_names,
 )
 coefs.plot(kind="barh", figsize=(9, 7))
 plt.xlabel("Coefficient values corrected by the feature's std. dev.")
-plt.title("Ridge model, small regularization")
+plt.title(RIDGE_SMALL_REG_TITLE)
 plt.axvline(x=0, color=".5")
 plt.subplots_adjust(left=0.3)
 
@@ -367,13 +372,14 @@ coefs = pd.DataFrame(
 )
 
 # %%
+STRIP_PALETTE = "dark:k"
 plt.figure(figsize=(9, 7))
-sns.stripplot(data=coefs, orient="h", palette="dark:k", alpha=0.5)
+sns.stripplot(data=coefs, orient="h", palette=STRIP_PALETTE, alpha=0.5)
 sns.boxplot(data=coefs, orient="h", color="cyan", saturation=0.5, whis=10)
 plt.axvline(x=0, color=".5")
-plt.xlabel("Coefficient importance")
+plt.xlabel(COEF_IMPORTANCE_LABEL)
 plt.title("Coefficient importance and its variability")
-plt.suptitle("Ridge model, small regularization")
+plt.suptitle(RIDGE_SMALL_REG_TITLE)
 plt.subplots_adjust(left=0.3)
 
 # %%
@@ -427,11 +433,11 @@ coefs = pd.DataFrame(
 
 # %%
 plt.figure(figsize=(9, 7))
-sns.stripplot(data=coefs, orient="h", palette="dark:k", alpha=0.5)
+sns.stripplot(data=coefs, orient="h", palette=STRIP_PALETTE, alpha=0.5)
 sns.boxplot(data=coefs, orient="h", color="cyan", saturation=0.5)
 plt.axvline(x=0, color=".5")
 plt.title("Coefficient importance and its variability")
-plt.xlabel("Coefficient importance")
+plt.xlabel(COEF_IMPORTANCE_LABEL)
 plt.suptitle("Ridge model, small regularization, AGE dropped")
 plt.subplots_adjust(left=0.3)
 
@@ -478,18 +484,18 @@ mae_train = median_absolute_error(y_train, model.predict(X_train))
 y_pred = model.predict(X_test)
 mae_test = median_absolute_error(y_test, y_pred)
 scores = {
-    MEDAE_TRAIN_LABEL: f"{mae_train:.2f} $/hour",
-    MEDAE_TEST_LABEL: f"{mae_test:.2f} $/hour",
+    MEDAE_TRAIN_LABEL: f"{mae_train:.2f} {WAGE_UNIT}",
+    MEDAE_TEST_LABEL: f"{mae_test:.2f} {WAGE_UNIT}",
 }
 
 _, ax = plt.subplots(figsize=(5, 5))
 display = PredictionErrorDisplay.from_predictions(
     y_test, y_pred, kind="actual_vs_predicted", ax=ax, scatter_kwargs={"alpha": 0.5}
 )
-ax.set_title("Ridge model, small regularization")
+ax.set_title(RIDGE_SMALL_REG_TITLE)
 for name, score in scores.items():
     ax.plot([], [], " ", label=f"{name}: {score}")
-ax.legend(loc="upper left")
+ax.legend(loc=LEGEND_LOC)
 plt.tight_layout()
 
 # %%
@@ -504,7 +510,7 @@ coefs = pd.DataFrame(
 )
 coefs.plot.barh(figsize=(9, 7))
 plt.title("Ridge model, small regularization, normalized variables")
-plt.xlabel("Raw coefficient values")
+plt.xlabel(RAW_COEF_LABEL)
 plt.axvline(x=0, color=".5")
 plt.subplots_adjust(left=0.3)
 
@@ -525,7 +531,7 @@ coefs = pd.DataFrame(
 
 # %%
 plt.figure(figsize=(9, 7))
-sns.stripplot(data=coefs, orient="h", palette="dark:k", alpha=0.5)
+sns.stripplot(data=coefs, orient="h", palette=STRIP_PALETTE, alpha=0.5)
 sns.boxplot(data=coefs, orient="h", color="cyan", saturation=0.5, whis=10)
 plt.axvline(x=0, color=".5")
 plt.title("Coefficient variability")
@@ -570,8 +576,8 @@ mae_train = median_absolute_error(y_train, model.predict(X_train))
 y_pred = model.predict(X_test)
 mae_test = median_absolute_error(y_test, y_pred)
 scores = {
-    MEDAE_TRAIN_LABEL: f"{mae_train:.2f} $/hour",
-    MEDAE_TEST_LABEL: f"{mae_test:.2f} $/hour",
+    MEDAE_TRAIN_LABEL: f"{mae_train:.2f} {WAGE_UNIT}",
+    MEDAE_TEST_LABEL: f"{mae_test:.2f} {WAGE_UNIT}",
 }
 
 _, ax = plt.subplots(figsize=(5, 5))
@@ -581,7 +587,7 @@ display = PredictionErrorDisplay.from_predictions(
 ax.set_title("Ridge model, optimum regularization")
 for name, score in scores.items():
     ax.plot([], [], " ", label=f"{name}: {score}")
-ax.legend(loc="upper left")
+ax.legend(loc=LEGEND_LOC)
 plt.tight_layout()
 
 # %%
@@ -595,7 +601,7 @@ coefs = pd.DataFrame(
 )
 coefs.plot.barh(figsize=(9, 7))
 plt.title("Ridge model, with regularization, normalized variables")
-plt.xlabel("Raw coefficient values")
+plt.xlabel(RAW_COEF_LABEL)
 plt.axvline(x=0, color=".5")
 plt.subplots_adjust(left=0.3)
 
@@ -674,8 +680,8 @@ mae_train = median_absolute_error(y_train, model.predict(X_train))
 y_pred = model.predict(X_test)
 mae_test = median_absolute_error(y_test, y_pred)
 scores = {
-    MEDAE_TRAIN_LABEL: f"{mae_train:.2f} $/hour",
-    MEDAE_TEST_LABEL: f"{mae_test:.2f} $/hour",
+    MEDAE_TRAIN_LABEL: f"{mae_train:.2f} {WAGE_UNIT}",
+    MEDAE_TEST_LABEL: f"{mae_test:.2f} {WAGE_UNIT}",
 }
 
 _, ax = plt.subplots(figsize=(6, 6))
@@ -685,7 +691,7 @@ display = PredictionErrorDisplay.from_predictions(
 ax.set_title("Lasso model, optimum regularization")
 for name, score in scores.items():
     ax.plot([], [], " ", label=f"{name}: {score}")
-ax.legend(loc="upper left")
+ax.legend(loc=LEGEND_LOC)
 plt.tight_layout()
 
 # %%
@@ -727,7 +733,7 @@ coefs = pd.DataFrame(
 
 # %%
 plt.figure(figsize=(9, 7))
-sns.stripplot(data=coefs, orient="h", palette="dark:k", alpha=0.5)
+sns.stripplot(data=coefs, orient="h", palette=STRIP_PALETTE, alpha=0.5)
 sns.boxplot(data=coefs, orient="h", color="cyan", saturation=0.5, whis=100)
 plt.axvline(x=0, color=".5")
 plt.title("Coefficient variability")
