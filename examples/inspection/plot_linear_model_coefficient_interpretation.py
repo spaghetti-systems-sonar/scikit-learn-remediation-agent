@@ -44,6 +44,12 @@ import pandas as pd
 import scipy as sp
 import seaborn as sns
 
+MEDAE_TRAIN_LABEL = "MedAE on training set"
+MEDAE_TEST_LABEL = "MedAE on testing set"
+LEGEND_LOC = "upper left"
+RIDGE_SMALL_REG_TITLE = "Ridge model, small regularization"
+WAGE_UNIT = "$/hour"
+
 # %%
 # The dataset: wages
 # ------------------
@@ -180,11 +186,6 @@ from sklearn.metrics import PredictionErrorDisplay, median_absolute_error
 mae_train = median_absolute_error(y_train, model.predict(X_train))
 y_pred = model.predict(X_test)
 mae_test = median_absolute_error(y_test, y_pred)
-MEDAE_TRAIN_LABEL = "MedAE on training set"
-MEDAE_TEST_LABEL = "MedAE on testing set"
-LEGEND_LOC = "upper left"
-RIDGE_SMALL_REG_TITLE = "Ridge model, small regularization"
-WAGE_UNIT = "$/hour"
 scores = {
     MEDAE_TRAIN_LABEL: f"{mae_train:.2f} {WAGE_UNIT}",
     MEDAE_TEST_LABEL: f"{mae_test:.2f} {WAGE_UNIT}",
