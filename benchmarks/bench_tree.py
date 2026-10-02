@@ -26,6 +26,8 @@ scikit_regressor_results = []
 
 mu_second = 0.0 + 10**6  # number of microseconds in a second
 
+SEPARATOR = "============================================"
+
 
 def bench_scikit_tree_classifier(X, Y):
     """Benchmark with scikit-learn decision tree classifier"""
@@ -62,9 +64,9 @@ def bench_scikit_tree_regressor(X, Y):
 
 
 if __name__ == "__main__":
-    print("============================================")
+    print(SEPARATOR)
     print("Warning: this is going to take a looong time")
-    print("============================================")
+    print(SEPARATOR)
 
     n = 10
     step = 10000
@@ -72,9 +74,9 @@ if __name__ == "__main__":
     dim = 10
     n_classes = 10
     for i in range(n):
-        print("============================================")
+        print(SEPARATOR)
         print("Entering iteration %s of %s" % (i, n))
-        print("============================================")
+        print(SEPARATOR)
         n_samples += step
         X = np.random.randn(n_samples, dim)
         Y = np.random.randint(0, n_classes, (n_samples,))
@@ -101,9 +103,9 @@ if __name__ == "__main__":
 
     dim = start_dim
     for i in range(0, n):
-        print("============================================")
+        print(SEPARATOR)
         print("Entering iteration %s of %s" % (i, n))
-        print("============================================")
+        print(SEPARATOR)
         dim += step
         X = np.random.randn(100, dim)
         Y = np.random.randint(0, n_classes, (100,))
