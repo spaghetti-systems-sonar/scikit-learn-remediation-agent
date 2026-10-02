@@ -25,6 +25,7 @@ from sklearn.utils import check_array
 from sklearn.utils import shuffle as _shuffle
 
 LOG_DIR = "mnist_tsne_output"
+MNIST_FILENAME = "mnist_{}_{}.npy"
 if not os.path.exists(LOG_DIR):
     os.mkdir(LOG_DIR)
 
@@ -186,10 +187,10 @@ $ cd ..
             print("Fitting {} on {} samples...".format(name, n))
             t0 = time()
             np.save(
-                os.path.join(LOG_DIR, "mnist_{}_{}.npy".format("original", n)), X_train
+                os.path.join(LOG_DIR, MNIST_FILENAME.format("original", n)), X_train
             )
             np.save(
-                os.path.join(LOG_DIR, "mnist_{}_{}.npy".format("original_labels", n)),
+                os.path.join(LOG_DIR, MNIST_FILENAME.format("original_labels", n)),
                 y_train,
             )
             X_embedded, n_iter = method(X_train)
@@ -204,5 +205,5 @@ $ cd ..
                 json.dump(results, f)
             method_name = sanitize(name)
             np.save(
-                op.join(LOG_DIR, "mnist_{}_{}.npy".format(method_name, n)), X_embedded
+                op.join(LOG_DIR, MNIST_FILENAME.format(method_name, n)), X_embedded
             )
