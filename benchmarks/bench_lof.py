@@ -31,6 +31,8 @@ print(__doc__)
 
 random_state = 2  # to control the random selection of anomalies in SA
 
+NORMAL_LABEL = b"normal."
+
 # datasets available: ['http', 'smtp', 'SA', 'SF', 'shuttle', 'forestcover']
 datasets = ["http", "smtp", "SA", "SF", "shuttle", "forestcover"]
 
@@ -73,7 +75,7 @@ for dataset_name in datasets:
         lb = LabelBinarizer()
         x1 = lb.fit_transform(X[:, 1].astype(str))
         X = np.c_[X[:, :1], x1, X[:, 2:]]
-        y = (y != b"normal.").astype(int)
+        y = (y != NORMAL_LABEL).astype(int)
 
     if dataset_name == "SA":
         lb = LabelBinarizer()
@@ -81,10 +83,10 @@ for dataset_name in datasets:
         x2 = lb.fit_transform(X[:, 2].astype(str))
         x3 = lb.fit_transform(X[:, 3].astype(str))
         X = np.c_[X[:, :1], x1, x2, x3, X[:, 4:]]
-        y = (y != b"normal.").astype(int)
+        y = (y != NORMAL_LABEL).astype(int)
 
     if dataset_name == "http" or dataset_name == "smtp":
-        y = (y != b"normal.").astype(int)
+        y = (y != NORMAL_LABEL).astype(int)
 
     X = X.astype(float)
 

@@ -27,6 +27,8 @@ from sklearn.preprocessing import LabelBinarizer, LabelEncoder
 from sklearn.utils.extmath import safe_sparse_dot, softmax
 from sklearn.utils.parallel import Parallel, delayed
 
+TIME_LABEL = "Time (s)"
+
 
 def _build_classifier(
     solver, alpha, beta, lightning_penalty, this_max_iter, c, l1_ratio, multi_class
@@ -310,7 +312,7 @@ def plot(outname=None):
                 alpha=alpha[dtype],
                 linestyle=linestyles[dtype],
             )
-        ax.set_xlabel("Time (s)")
+        ax.set_xlabel(TIME_LABEL)
         ax.set_ylabel("Training objective (relative to min)")
         ax.set_yscale("log")
 
@@ -335,7 +337,7 @@ def plot(outname=None):
                 linestyle=linestyles[dtype],
             )
 
-        ax.set_xlabel("Time (s)")
+        ax.set_xlabel(TIME_LABEL)
         ax.set_ylabel("Test objective (relative to min)")
         ax.set_yscale("log")
 
@@ -359,7 +361,7 @@ def plot(outname=None):
                 linestyle=linestyles[dtype],
             )
 
-        ax.set_xlabel("Time (s)")
+        ax.set_xlabel(TIME_LABEL)
         ax.set_ylabel("Test accuracy")
         ax.legend()
         name = "single_target" if single_target else "multi_target"
