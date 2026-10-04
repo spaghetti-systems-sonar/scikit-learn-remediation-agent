@@ -212,6 +212,9 @@ html_theme = "pydata_sphinx_theme"
 # returning results pointing to old scikit-learn versions.
 html_baseurl = "https://scikit-learn.org/stable/"
 
+# Path to the scikit-learn logo (without subtitle) used in the navbar
+_LOGO_WITHOUT_SUBTITLE = "logos/scikit-learn-logo-without-subtitle.svg"
+
 # Theme options are theme-specific and customize the look and feel of a theme
 # further.  For a list of options available for each theme, see the
 # documentation.
@@ -261,9 +264,9 @@ html_theme_options = {
     "pygments_dark_style": "monokai",
     "logo": {
         "alt_text": "scikit-learn homepage",
-        "image_relative": "logos/scikit-learn-logo-without-subtitle.svg",
-        "image_light": "logos/scikit-learn-logo-without-subtitle.svg",
-        "image_dark": "logos/scikit-learn-logo-without-subtitle.svg",
+        "image_relative": _LOGO_WITHOUT_SUBTITLE,
+        "image_light": _LOGO_WITHOUT_SUBTITLE,
+        "image_dark": _LOGO_WITHOUT_SUBTITLE,
     },
     "surface_warnings": True,
     # -- Template placement in theme layouts ----------------------------------
@@ -366,6 +369,9 @@ sass_targets = {
 # Additional CSS files, should be subset of the values of `sass_targets`
 html_css_files = ["styles/colors.css", "styles/custom.css"]
 
+# Page name of the API reference index
+API_INDEX_PAGE = "api/index"
+
 
 def add_js_css_files(app, pagename, templatename, context, doctree):
     """Load additional JS and CSS files only for certain pages.
@@ -374,7 +380,7 @@ def add_js_css_files(app, pagename, templatename, context, doctree):
     should be used for the ones that are used by multiple pages. All page-specific
     JS and CSS files should be added here instead.
     """
-    if pagename == "api/index":
+    if pagename == API_INDEX_PAGE:
         # External: jQuery and DataTables
         app.add_js_file("https://code.jquery.com/jquery-3.7.0.js")
         app.add_js_file("https://cdn.datatables.net/2.0.0/js/dataTables.min.js")
@@ -442,7 +448,7 @@ redirects = {
     "contents": "index",
     "preface": "index",
     "dispatching": "data_interoperability",
-    "modules/classes": "api/index",
+    "modules/classes": API_INDEX_PAGE,
     "tutorial/machine_learning_map/index": "machine_learning_map",
     "auto_examples/feature_selection/plot_permutation_test_for_classification": (
         "auto_examples/model_selection/plot_permutation_tests_for_classification"
@@ -1060,8 +1066,8 @@ rst_templates = [
         {"dependent_packages": dependent_packages},
     ),
     (
-        "api/index",
-        "api/index",
+        API_INDEX_PAGE,
+        API_INDEX_PAGE,
         {
             "API_REFERENCE": sorted(API_REFERENCE.items(), key=lambda x: x[0]),
             "DEPRECATED_API_REFERENCE": sorted(

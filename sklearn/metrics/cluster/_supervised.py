@@ -550,7 +550,7 @@ def homogeneity_completeness_v_measure(labels_true, labels_pred, *, beta=1.0):
     homogeneity = MI / (entropy_C) if entropy_C else 1.0
     completeness = MI / (entropy_K) if entropy_K else 1.0
 
-    if homogeneity + completeness == 0.0:
+    if homogeneity + completeness <= 0.0:
         v_measure_score = 0.0
     else:
         v_measure_score = (
@@ -1265,7 +1265,7 @@ def fowlkes_mallows_score(labels_true, labels_pred):
     tk = np.dot(c.data, c.data) - n_samples
     pk = np.sum(np.asarray(c.sum(axis=0)).ravel() ** 2) - n_samples
     qk = np.sum(np.asarray(c.sum(axis=1)).ravel() ** 2) - n_samples
-    return float(np.sqrt(tk / pk) * np.sqrt(tk / qk)) if tk != 0.0 else 0.0
+    return float(np.sqrt(tk / pk) * np.sqrt(tk / qk)) if tk != 0 else 0.0
 
 
 def _entropy(labels):
