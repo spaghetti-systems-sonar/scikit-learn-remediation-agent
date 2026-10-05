@@ -167,9 +167,8 @@ def _check_targets(y_true, y_pred, sample_weight=None):
         y_true, y_pred = _squeeze_targets_to_1d(y_true, y_pred)
 
     unique_labels_ = unique_labels(y_true, y_pred, ys_types={y_type})
-    if y_type == "binary":
-        if unique_labels_.shape[0] > 2:
-            y_type = "multiclass"
+    if y_type == "binary" and unique_labels_.shape[0] > 2:
+        y_type = "multiclass"
 
     xp, _ = get_namespace(y_true, y_pred)
     if y_type.startswith("multilabel"):
@@ -1963,12 +1962,11 @@ def _warn_prf(average, modifier, msg_start, result_size):
 def _check_binary_average_labels(y_type, present_labels, pos_label):
     """Handle label validation when average='binary'."""
     if y_type == "binary":
-        if pos_label not in present_labels:
-            if len(present_labels) >= 2:
-                raise ValueError(
-                    f"pos_label={pos_label} is not a valid label. It "
-                    f"should be one of {present_labels}"
-                )
+        if pos_label not in present_labels and len(present_labels) >= 2:
+            raise ValueError(
+                f"pos_label={pos_label} is not a valid label. It "
+                f"should be one of {present_labels}"
+            )
         return [pos_label]
 
     average_options = [None, "micro", "macro", "weighted", "samples"]
