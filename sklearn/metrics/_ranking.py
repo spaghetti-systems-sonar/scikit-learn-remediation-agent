@@ -466,21 +466,33 @@ def det_curve(
     )
 
 
-def _binary_roc_auc_score(y_true, y_score, sample_weight=None, max_fpr=None):
+def _undefined_binary_roc_auc():
+    """Warn that ROC AUC is undefined for a single class and return NaN."""
+    warnings.warn(
+        (
+            "Only one class is present in y_true. ROC AUC score "
+            "is not defined in that case."
+        ),
+        UndefinedMetricWarning,
+    )
+    return np.nan
+
+
+def _binary_roc_auc_score(y_true, y_score, sample_weight=None):
     """Binary roc auc score."""
     if len(np.unique(y_true)) != 2:
-        warnings.warn(
-            (
-                "Only one class is present in y_true. ROC AUC score "
-                "is not defined in that case."
-            ),
-            UndefinedMetricWarning,
-        )
-        return np.nan
+        return _undefined_binary_roc_auc()
 
     fpr, tpr, _ = roc_curve(y_true, y_score, sample_weight=sample_weight)
-    if max_fpr is None or max_fpr == 1:
-        return auc(fpr, tpr)
+    return auc(fpr, tpr)
+
+
+def _partial_binary_roc_auc_score(y_true, y_score, sample_weight=None, *, max_fpr):
+    """Standardized partial binary roc auc score over the range [0, max_fpr]."""
+    if len(np.unique(y_true)) != 2:
+        return _undefined_binary_roc_auc()
+
+    fpr, tpr, _ = roc_curve(y_true, y_score, sample_weight=sample_weight)
     if max_fpr <= 0 or max_fpr > 1:
         raise ValueError("Expected max_fpr in range (0, 1], got: %r" % max_fpr)
 
@@ -730,11 +742,17 @@ def roc_auc_score(
         return _multiclass_roc_auc_score(
             y_true, y_score, labels, multi_class, average, sample_weight
         )
-    elif y_type == "binary":
+
+    if max_fpr is None or max_fpr == 1:
+        binary_metric = _binary_roc_auc_score
+    else:
+        binary_metric = partial(_partial_binary_roc_auc_score, max_fpr=max_fpr)
+
+    if y_type == "binary":
         labels = np.unique(y_true)
         y_true = label_binarize(y_true, classes=labels)[:, 0]
         return _average_binary_score(
-            partial(_binary_roc_auc_score, max_fpr=max_fpr),
+            binary_metric,
             y_true,
             y_score,
             average,
@@ -742,7 +760,7 @@ def roc_auc_score(
         )
     else:  # multilabel-indicator
         return _average_binary_score(
-            partial(_binary_roc_auc_score, max_fpr=max_fpr),
+            binary_metric,
             y_true,
             y_score,
             average,

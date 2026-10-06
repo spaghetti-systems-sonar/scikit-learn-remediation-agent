@@ -388,12 +388,13 @@ class PredictionErrorDisplay:
                     f"When an integer, subsample={subsample} should be positive."
                 )
         elif isinstance(subsample, numbers.Real):
-            if subsample <= 0 or subsample >= 1:
+            fraction = float(subsample)
+            if not 0 < fraction < 1:
                 raise ValueError(
                     f"When a floating-point, subsample={subsample} should"
                     " be in the (0, 1) range."
                 )
-            subsample = int(n_samples * subsample)
+            subsample = int(n_samples * fraction)
 
         if subsample is not None and subsample < n_samples:
             indices = random_state.choice(np.arange(n_samples), size=subsample)
