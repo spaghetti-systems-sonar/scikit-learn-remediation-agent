@@ -1056,7 +1056,7 @@ def _generate_sparse_data(X_csr):
 def check_supervised_y_no_nan(name, estimator_orig):
     # Checks that the Estimator targets are not NaN.
     estimator = clone(estimator_orig)
-    rng = np.random.RandomState(888)
+    rng = np.random.default_rng(888)
     X = rng.standard_normal(size=(10, 5))
 
     for value in [np.nan, np.inf]:
@@ -1592,11 +1592,11 @@ def check_estimator_sparse_tag(name, estimator_orig):
     """Check that estimator tag related with accepting sparse data is properly set."""
     estimator = clone(estimator_orig)
 
-    rng = np.random.RandomState(0)
+    rng = np.random.default_rng(0)
     n_samples = 15 if name == "SpectralCoclustering" else 40
     X = rng.uniform(size=(n_samples, 3))
     X[X < 0.6] = 0
-    y = rng.randint(0, 3, size=n_samples)
+    y = rng.integers(0, 3, size=n_samples)
     X = _enforce_estimator_tags_X(estimator, X)
     y = _enforce_estimator_tags_y(estimator, y)
     X = sparse.csr_array(X)
@@ -1658,7 +1658,7 @@ def _check_sparse_predict_output(estimator, X, tags):
 
 
 def _check_estimator_sparse_container(name, estimator_orig, sparse_type):
-    rng = np.random.RandomState(0)
+    rng = np.random.default_rng(0)
     X = rng.uniform(size=(40, 3))
     X[X < 0.6] = 0
     X = _enforce_estimator_tags_X(estimator_orig, X)
@@ -1713,7 +1713,7 @@ def check_f_contiguous_array_estimator(name, estimator_orig):
     # https://github.com/scikit-learn/scikit-learn/issues/24013
     estimator = clone(estimator_orig)
 
-    rng = np.random.RandomState(0)
+    rng = np.random.default_rng(0)
     X = 3 * rng.uniform(size=(20, 3))
     X = _enforce_estimator_tags_X(estimator_orig, X)
     X = np.asfortranarray(X)
@@ -1811,7 +1811,7 @@ def check_sample_weights_list(name, estimator_orig):
     # check that estimators will accept a 'sample_weight' parameter of
     # type list in the 'fit' function.
     estimator = clone(estimator_orig)
-    rnd = np.random.RandomState(0)
+    rnd = np.random.default_rng(0)
     n_samples = 30
     X = _enforce_estimator_tags_X(estimator_orig, rnd.uniform(size=(n_samples, 3)))
     y = np.arange(n_samples) % 3
@@ -1889,12 +1889,12 @@ def _check_sample_weight_equivalence(name, estimator_orig, sparse_container):
     set_random_state(estimator_weighted, random_state=0)
     set_random_state(estimator_repeated, random_state=0)
 
-    rng = np.random.RandomState(42)
+    rng = np.random.default_rng(42)
     n_samples = 15
-    X = rng.rand(n_samples, n_samples * 2)
-    y = rng.randint(0, 3, size=n_samples)
+    X = rng.random((n_samples, n_samples * 2))
+    y = rng.integers(0, 3, size=n_samples)
     # Use random integers (including zero) as weights.
-    sw = rng.randint(0, 5, size=n_samples)
+    sw = rng.integers(0, 5, size=n_samples)
 
     X_weighted = X
     y_weighted = y
@@ -1902,7 +1902,10 @@ def _check_sample_weight_equivalence(name, estimator_orig, sparse_container):
     X_repeated = X_weighted.repeat(repeats=sw, axis=0)
     y_repeated = y_weighted.repeat(repeats=sw)
 
-    X_weighted, y_weighted, sw = shuffle(X_weighted, y_weighted, sw, random_state=0)
+    shuffled_indices = rng.permuted(np.arange(n_samples))
+    X_weighted = X_weighted[shuffled_indices]
+    y_weighted = y_weighted[shuffled_indices]
+    sw = sw[shuffled_indices]
 
     # when the estimator has an internal CV scheme
     # we only use weights / repetitions in a specific CV group (here group=0)
@@ -2002,7 +2005,7 @@ def check_sample_weights_not_overwritten(name, estimator_orig):
 @ignore_warnings(category=(FutureWarning, UserWarning))
 def check_dtype_object(name, estimator_orig):
     # check that estimators treat dtype object as numeric if possible
-    rng = np.random.RandomState(0)
+    rng = np.random.default_rng(0)
     n_classes = 4
     n_samples_per_class = 14
     n_samples_total = n_classes * n_samples_per_class
@@ -2049,13 +2052,13 @@ def check_dtype_object(name, estimator_orig):
 
 
 def check_complex_data(name, estimator_orig):
-    rng = np.random.RandomState(42)
+    rng = np.random.default_rng(42)
     # check that estimators raise an exception on providing complex data
     X = rng.uniform(size=10) + 1j * rng.uniform(size=10)
     X = X.reshape(-1, 1)
 
     # Something both valid for classification and regression
-    y = rng.randint(low=0, high=2, size=10) + 1j
+    y = rng.integers(low=0, high=2, size=10) + 1j
     estimator = clone(estimator_orig)
     set_random_state(estimator, random_state=0)
     with raises(ValueError, match="Complex data not supported"):
@@ -2064,7 +2067,7 @@ def check_complex_data(name, estimator_orig):
 
 @ignore_warnings
 def check_dict_unchanged(name, estimator_orig):
-    rnd = np.random.RandomState(0)
+    rnd = np.random.default_rng(0)
     X = 3 * rnd.uniform(size=(20, 3))
     X = _enforce_estimator_tags_X(estimator_orig, X)
 
@@ -2091,8 +2094,8 @@ def _is_public_parameter(attr):
 def check_dont_overwrite_parameters(name, estimator_orig):
     # check that fit method only changes or sets private attributes
     estimator = clone(estimator_orig)
-    rnd = np.random.RandomState(0)
-    X = 3 * rnd.uniform(size=(20, 3))
+    rng = np.random.default_rng(0)
+    X = 3 * rng.uniform(size=(20, 3))
     X = _enforce_estimator_tags_X(estimator_orig, X)
     y = X[:, 0].astype(int)
     y = _enforce_estimator_tags_y(estimator, y)
@@ -2102,7 +2105,8 @@ def check_dont_overwrite_parameters(name, estimator_orig):
     if hasattr(estimator, "n_clusters"):
         estimator.n_clusters = 1
 
-    set_random_state(estimator, 1)
+    if "random_state" in estimator.get_params():
+        estimator.set_params(random_state=1)
     dict_before_fit = estimator.__dict__.copy()
     estimator.fit(X, y)
 
@@ -2129,7 +2133,7 @@ def check_dont_overwrite_parameters(name, estimator_orig):
     attrs_changed_by_fit = [
         key
         for key in public_keys_after_fit
-        if (dict_before_fit[key] is not dict_after_fit[key])
+        if dict_before_fit[key] is not dict_after_fit[key]
     ]
 
     assert not attrs_changed_by_fit, (
@@ -2144,7 +2148,7 @@ def check_dont_overwrite_parameters(name, estimator_orig):
 @ignore_warnings(category=FutureWarning)
 def check_fit2d_predict1d(name, estimator_orig):
     # check by fitting a 2d array and predicting with a 1d array
-    rnd = np.random.RandomState(0)
+    rnd = np.random.default_rng(0)
     X = 3 * rnd.uniform(size=(20, 3))
     X = _enforce_estimator_tags_X(estimator_orig, X)
     y = X[:, 0].astype(int)
@@ -2187,7 +2191,7 @@ def _apply_on_subsets(func, X):
 def check_methods_subset_invariance(name, estimator_orig):
     # check that method gives invariant results if applied
     # on mini batches or the whole set
-    rnd = np.random.RandomState(0)
+    rnd = np.random.default_rng(0)
     X = 3 * rnd.uniform(size=(20, 3))
     X = _enforce_estimator_tags_X(estimator_orig, X)
     y = X[:, 0].astype(int)
@@ -2224,7 +2228,7 @@ def check_methods_subset_invariance(name, estimator_orig):
 def check_methods_sample_order_invariance(name, estimator_orig):
     # check that method gives invariant results if applied
     # on a subset with different sample order
-    rnd = np.random.RandomState(0)
+    rnd = np.random.default_rng(0)
     X = 3 * rnd.uniform(size=(20, 3))
     X = _enforce_estimator_tags_X(estimator_orig, X)
     y = X[:, 0].astype(np.int64)
@@ -2242,7 +2246,7 @@ def check_methods_sample_order_invariance(name, estimator_orig):
     set_random_state(estimator, 1)
     estimator.fit(X, y)
 
-    idx = np.random.permutation(X.shape[0])
+    idx = rnd.permutation(X.shape[0])
 
     for method in [
         "predict",
@@ -2270,7 +2274,7 @@ def check_fit2d_1sample(name, estimator_orig):
     # Check that fitting a 2d array with only one sample either works or
     # returns an informative message. The error message should either mention
     # the number of samples or the number of classes.
-    rnd = np.random.RandomState(0)
+    rnd = np.random.default_rng(0)
     X = 3 * rnd.uniform(size=(1, 10))
     X = _enforce_estimator_tags_X(estimator_orig, X)
 
@@ -2310,7 +2314,7 @@ def check_fit2d_1sample(name, estimator_orig):
 def check_fit2d_1feature(name, estimator_orig):
     # check fitting a 2d array with only 1 feature either works or returns
     # informative message
-    rnd = np.random.RandomState(0)
+    rnd = np.random.default_rng(0)
     X = 3 * rnd.uniform(size=(10, 1))
     X = _enforce_estimator_tags_X(estimator_orig, X)
     y = X[:, 0].astype(int)
@@ -2340,7 +2344,7 @@ def check_fit2d_1feature(name, estimator_orig):
 @ignore_warnings
 def check_fit1d(name, estimator_orig):
     # check fitting 1d X array raises a ValueError
-    rnd = np.random.RandomState(0)
+    rnd = np.random.default_rng(0)
     X = 3 * rnd.uniform(size=(20))
     y = X.astype(int)
     estimator = clone(estimator_orig)
@@ -2414,7 +2418,7 @@ def check_transformers_unfitted_stateless(name, transformer):
     """Check that using transform without prior fitting
     doesn't raise a NotFittedError for stateless transformers.
     """
-    rng = np.random.RandomState(0)
+    rng = np.random.default_rng(0)
     X = rng.uniform(size=(20, 5))
     X = _enforce_estimator_tags_X(transformer, X)
 
@@ -2609,7 +2613,7 @@ def check_mixin_order(name, estimator_orig):
 def check_fit_score_takes_y(name, estimator_orig):
     # check that all estimators accept an optional y
     # in fit and score so they can be used in pipelines
-    rnd = np.random.RandomState(0)
+    rnd = np.random.default_rng(0)
     n_samples = 30
     X = rnd.uniform(size=(n_samples, 3))
     X = _enforce_estimator_tags_X(estimator_orig, X)
@@ -2637,7 +2641,7 @@ def check_fit_score_takes_y(name, estimator_orig):
 
 @ignore_warnings
 def check_estimators_dtypes(name, estimator_orig):
-    rnd = np.random.RandomState(0)
+    rnd = np.random.default_rng(0)
     X_train_32 = 3 * rnd.uniform(size=(20, 5)).astype(np.float32)
     X_train_32 = _enforce_estimator_tags_X(estimator_orig, X_train_32)
     X_train_64 = X_train_32.astype(np.float64)
@@ -2719,7 +2723,7 @@ def check_estimators_empty_data_messages(name, estimator_orig):
 @ignore_warnings(category=FutureWarning)
 def check_estimators_nan_inf(name, estimator_orig):
     # Checks that Estimator X's do not contain NaN or inf.
-    rnd = np.random.RandomState(0)
+    rnd = np.random.default_rng(0)
     X_train_finite = _enforce_estimator_tags_X(
         estimator_orig, rnd.uniform(size=(10, 3))
     )
@@ -2800,7 +2804,7 @@ def check_estimators_pickle(name, estimator_orig, readonly_memmap=False):
     # include NaN values when the estimator should deal with them
     if tags.input_tags.allow_nan:
         # set randomly 10 elements to np.nan
-        rng = np.random.RandomState(42)
+        rng = np.random.default_rng(42)
         mask = rng.choice(X.size, 10, replace=False)
         X.reshape(-1)[mask] = np.nan
 
@@ -2958,7 +2962,7 @@ def check_clustering(name, clusterer_orig, readonly_memmap=False):
     X, y = make_blobs(n_samples=50, random_state=1)
     X, y = shuffle(X, y, random_state=7)
     X = StandardScaler().fit_transform(X)
-    rng = np.random.RandomState(7)
+    rng = np.random.default_rng(7)
     X_noise = np.concatenate([X, rng.uniform(low=-3, high=3, size=(5, 2))])
 
     if readonly_memmap:
@@ -3032,7 +3036,7 @@ def check_classifiers_one_label(name, classifier_orig):
     error_string_fit = "Classifier can't train when only one class is present."
     error_string_predict = "Classifier can't predict when only one class is present."
     classifier = clone(classifier_orig)
-    rnd = np.random.RandomState(0)
+    rnd = np.random.default_rng(0)
     X_train = rnd.uniform(size=(10, 3))
     X_test = rnd.uniform(size=(10, 3))
     X_train, X_test = _enforce_estimator_tags_X(classifier, X_train, X_test=X_test)
@@ -3061,7 +3065,7 @@ def check_classifiers_one_label_sample_weights(name, classifier_orig):
         "message is not explicit, it should have 'class'."
     )
     error_predict = f"{name} prediction results should only output the remaining class."
-    rnd = np.random.RandomState(0)
+    rnd = np.random.default_rng(0)
     # X should be square for test on SVC with precomputed kernel
     X_train = rnd.uniform(size=(10, 10))
     X_test = rnd.uniform(size=(10, 10))
@@ -3664,7 +3668,7 @@ def check_estimators_unfitted(name, estimator_orig):
 @ignore_warnings(category=FutureWarning)
 def check_supervised_y_2d(name, estimator_orig):
     tags = get_tags(estimator_orig)
-    rnd = np.random.RandomState(0)
+    rnd = np.random.default_rng(0)
     n_samples = 30
     X = _enforce_estimator_tags_X(estimator_orig, rnd.uniform(size=(n_samples, 3)))
     y = np.arange(n_samples) % 3
@@ -3808,10 +3812,10 @@ def check_classifiers_classes(name, classifier_orig):
 def check_regressors_int(name, regressor_orig):
     X, _ = _regression_dataset()
     X = _enforce_estimator_tags_X(regressor_orig, X[:50])
-    rnd = np.random.RandomState(0)
-    y = rnd.randint(3, size=X.shape[0])
+    rnd = np.random.default_rng(0)
+    y = rnd.integers(3, size=X.shape[0])
     y = _enforce_estimator_tags_y(regressor_orig, y)
-    rnd = np.random.RandomState(0)
+    rnd = np.random.default_rng(0)
     # separate estimators to control random seeds
     regressor_1 = clone(regressor_orig)
     regressor_2 = clone(regressor_orig)
@@ -3819,7 +3823,7 @@ def check_regressors_int(name, regressor_orig):
     set_random_state(regressor_2)
 
     if name in CROSS_DECOMPOSITION:
-        y_ = np.vstack([y, 2 * y + rnd.randint(2, size=len(y))])
+        y_ = np.vstack([y, 2 * y + rnd.integers(2, size=len(y))])
         y_ = y_.T
     else:
         y_ = y
@@ -3843,8 +3847,8 @@ def check_regressors_train(
     X = _enforce_estimator_tags_X(regressor, X)
     y = _enforce_estimator_tags_y(regressor, y)
     if name in CROSS_DECOMPOSITION:
-        rnd = np.random.RandomState(0)
-        y_ = np.vstack([y, 2 * y + rnd.randint(2, size=len(y))])
+        rnd = np.random.default_rng(0)
+        y_ = np.vstack([y, 2 * y + rnd.integers(2, size=len(y))])
         y_ = y_.T
     else:
         y_ = y
@@ -3887,7 +3891,7 @@ def check_regressors_train(
 def check_regressors_no_decision_function(name, regressor_orig):
     # check that regressors don't have a decision_function, predict_proba, or
     # predict_log_proba method.
-    rng = np.random.RandomState(0)
+    rng = np.random.default_rng(0)
     regressor = clone(regressor_orig)
 
     X = rng.normal(size=(10, 4))
@@ -4698,7 +4702,7 @@ def check_fit_idempotent(name, estimator_orig):
     # the same results.
 
     check_methods = ["predict", "transform", "decision_function", "predict_proba"]
-    rng = np.random.RandomState(0)
+    rng = np.random.default_rng(0)
 
     estimator = clone(estimator_orig)
     set_random_state(estimator)
@@ -4711,10 +4715,11 @@ def check_fit_idempotent(name, estimator_orig):
     if is_regressor(estimator_orig):
         y = rng.normal(size=n_samples)
     else:
-        y = rng.randint(low=0, high=2, size=n_samples)
+        y = rng.integers(low=0, high=2, size=n_samples)
     y = _enforce_estimator_tags_y(estimator, y)
 
-    train, test = next(ShuffleSplit(test_size=0.2, random_state=rng).split(X))
+    split_seed = int(rng.integers(np.iinfo(np.int32).max))
+    train, test = next(ShuffleSplit(test_size=0.2, random_state=split_seed).split(X))
     X_train, y_train = _safe_split(estimator, X, y, train)
     X_test, y_test = _safe_split(estimator, X, y, test, train)
 
@@ -4753,7 +4758,7 @@ def check_fit_check_is_fitted(name, estimator_orig):
     # Make sure that estimator doesn't pass check_is_fitted before calling fit
     # and that passes check_is_fitted once it's fit.
 
-    rng = np.random.RandomState(42)
+    rng = np.random.default_rng(42)
 
     estimator = clone(estimator_orig)
     set_random_state(estimator)
@@ -4766,7 +4771,7 @@ def check_fit_check_is_fitted(name, estimator_orig):
     if is_regressor(estimator_orig):
         y = rng.normal(size=n_samples)
     else:
-        y = rng.randint(low=0, high=2, size=n_samples)
+        y = rng.integers(low=0, high=2, size=n_samples)
     y = _enforce_estimator_tags_y(estimator, y)
 
     if get_tags(estimator).requires_fit:
@@ -4792,7 +4797,7 @@ def check_n_features_in(name, estimator_orig):
     # Make sure that n_features_in_ attribute doesn't exist until fit is
     # called, and that its value is correct.
 
-    rng = np.random.RandomState(0)
+    rng = np.random.default_rng(0)
 
     estimator = clone(estimator_orig)
     set_random_state(estimator)
@@ -4805,7 +4810,7 @@ def check_n_features_in(name, estimator_orig):
     if is_regressor(estimator_orig):
         y = rng.normal(size=n_samples)
     else:
-        y = rng.randint(low=0, high=2, size=n_samples)
+        y = rng.integers(low=0, high=2, size=n_samples)
     y = _enforce_estimator_tags_y(estimator, y)
 
     assert not hasattr(estimator, "n_features_in_")
@@ -4818,7 +4823,7 @@ def check_requires_y_none(name, estimator_orig):
     # Make sure that an estimator with requires_y=True fails gracefully when
     # given y=None
 
-    rng = np.random.RandomState(0)
+    rng = np.random.default_rng(0)
 
     estimator = clone(estimator_orig)
     set_random_state(estimator)
@@ -4922,7 +4927,7 @@ def check_n_features_in_after_fitting(name, estimator_orig):
     if not is_supported_X_types or tags.no_validation:
         return
 
-    rng = np.random.RandomState(0)
+    rng = np.random.default_rng(0)
 
     estimator = clone(estimator_orig)
     set_random_state(estimator)
@@ -5044,7 +5049,7 @@ def check_dataframe_column_names_consistency(name, estimator_orig):
     if not is_supported_X_types or tags.no_validation:
         return
 
-    rng = np.random.RandomState(0)
+    rng = np.random.default_rng(0)
 
     estimator = clone(estimator_orig)
     set_random_state(estimator)
@@ -5060,7 +5065,7 @@ def check_dataframe_column_names_consistency(name, estimator_orig):
     if is_regressor(estimator):
         y = rng.normal(size=n_samples)
     else:
-        y = rng.randint(low=0, high=2, size=n_samples)
+        y = rng.integers(low=0, high=2, size=n_samples)
     y = _enforce_estimator_tags_y(estimator, y)
 
     # Check that calling `fit` does not raise any warnings about feature names.
