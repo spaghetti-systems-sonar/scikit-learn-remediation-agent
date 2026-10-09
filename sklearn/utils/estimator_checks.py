@@ -65,6 +65,7 @@ from sklearn.utils._array_api import (
     _atol_for_type,
     _max_precision_float_dtype,
     get_namespace,
+    get_namespace_and_device,
     move_to,
     yield_mixed_namespace_input_permutations,
     yield_namespace_device_dtype_combinations,
@@ -1114,16 +1115,17 @@ def _check_array_api_attributes(
     for key, attribute in array_attributes.items():
         est_xp_param = getattr(est_xp, key)
         with config_context(array_api_dispatch=True):
-            attribute_ns = get_namespace(est_xp_param)[0].__name__
+            attribute_xp, _, attribute_device = get_namespace_and_device(
+                est_xp_param
+            )
+            x_device = array_device(x_xp)
         if key != "classes_":
+            attribute_ns = attribute_xp.__name__
             assert attribute_ns == x_ns, (
                 f"'{key}' attribute is in wrong namespace, expected {x_ns} "
                 f"got {attribute_ns}"
             )
-
-        with config_context(array_api_dispatch=True):
-            if key != "classes_":
-                assert array_device(est_xp_param) == array_device(x_xp)
+            assert attribute_device == x_device
 
         est_xp_param_np = move_to(est_xp_param, xp=np, device="cpu")
         if check_values:
@@ -1333,7 +1335,7 @@ def _check_array_api_core(
     y = _enforce_estimator_tags_y(estimator_orig, y)
 
     est = clone(estimator_orig)
-    set_random_state(est)
+    set_random_state(est, random_state=0)
 
     X_xp = xp_X.asarray(X, device=device_X)
     y_xp = xp_other.asarray(y, device=device_other)
@@ -1568,7 +1570,7 @@ def check_array_api_same_namespace(
     y = _enforce_estimator_tags_y(estimator_orig, y)
 
     est = clone(estimator_orig)
-    set_random_state(est)
+    set_random_state(est, random_state=0)
 
     X_xp = xp.asarray(X, device=device)
     y_xp = xp.asarray(y, device=device)
@@ -1965,7 +1967,9 @@ def check_sample_weight_equivalence_on_sparse_data(name, estimator_orig):
 def check_sample_weights_not_overwritten(name, estimator_orig):
     # check that estimators don't override the passed sample_weight parameter
     estimator = clone(estimator_orig)
-    set_random_state(estimator, random_state=0)
+    rng = np.random.default_rng(0)
+    estimator_seed = int(rng.integers(1))
+    set_random_state(estimator, random_state=estimator_seed)
 
     X = np.array(
         [
@@ -2015,7 +2019,7 @@ def check_dtype_object(name, estimator_orig):
     X = X.astype(object)
     tags = get_tags(estimator_orig)
     y = np.repeat(np.arange(n_classes), n_samples_per_class)
-    y = rng.permutation(y)
+    y = shuffle(y, random_state=0)
     estimator = clone(estimator_orig)
     y = _enforce_estimator_tags_y(estimator, y)
 
@@ -2060,7 +2064,8 @@ def check_complex_data(name, estimator_orig):
     # Something both valid for classification and regression
     y = rng.integers(low=0, high=2, size=10) + 1j
     estimator = clone(estimator_orig)
-    set_random_state(estimator, random_state=0)
+    estimator_seed = int(rng.integers(1))
+    set_random_state(estimator, random_state=estimator_seed)
     with raises(ValueError, match="Complex data not supported"):
         estimator.fit(X, y)
 
@@ -2773,7 +2778,7 @@ def check_estimators_nan_inf(name, estimator_orig):
 def check_nonsquare_error(name, estimator_orig):
     """Test that error is thrown when non-square data provided."""
 
-    X, y = make_blobs(n_samples=20, n_features=10)
+    X, y = make_blobs(n_samples=20, n_features=10, random_state=0)
     estimator = clone(estimator_orig)
 
     with raises(
@@ -5762,7 +5767,7 @@ def check_classifier_not_supporting_multiclass(name, estimator_orig):
     This test is not yielded if the tag is not False.
     """
     estimator = clone(estimator_orig)
-    set_random_state(estimator)
+    set_random_state(estimator, random_state=0)
 
     X, y = make_classification(
         n_samples=100,
