@@ -2503,7 +2503,8 @@ def _check_transformer_malformed_input(name, transformer, X):
 def _check_transformer(name, transformer_orig, X, y):
     n_samples, n_features = np.asarray(X).shape
     transformer = clone(transformer_orig)
-    set_random_state(transformer)
+    if "random_state" in transformer.get_params():
+        transformer.set_params(random_state=0)
 
     # fit
     y_ = _prepare_cross_decomposition_y(name, X, y)
@@ -2943,9 +2944,10 @@ def check_regressor_multioutput(name, estimator):
     if not _is_pairwise_metric(estimator):
         n_samples = n_samples + 1
 
-    X, y = make_regression(
-        random_state=42, n_targets=5, n_samples=n_samples, n_features=n_features
-    )
+    rng = np.random.default_rng(42)
+    X = rng.standard_normal((n_samples, n_features))
+    coef = 100 * rng.random((n_features, 5))
+    y = X @ coef
     X = _enforce_estimator_tags_X(estimator, X)
 
     estimator.fit(X, y)
@@ -2977,7 +2979,7 @@ def check_clustering(name, clusterer_orig, readonly_memmap=False):
     # catch deprecation and neighbors warnings
     if hasattr(clusterer, "n_clusters"):
         clusterer.set_params(n_clusters=3)
-    set_random_state(clusterer)
+    set_random_state(clusterer, random_state=0)
     if name == "AffinityPropagation":
         clusterer.set_params(preference=-100)
         clusterer.set_params(max_iter=100)
@@ -2992,7 +2994,7 @@ def check_clustering(name, clusterer_orig, readonly_memmap=False):
     assert adjusted_rand_score(pred, y) > 0.4
     if get_tags(clusterer).non_deterministic:
         return
-    set_random_state(clusterer)
+    set_random_state(clusterer, random_state=0)
     with warnings.catch_warnings(record=True):
         pred2 = clusterer.fit_predict(X)
     assert_array_equal(pred, pred2)
@@ -3026,7 +3028,7 @@ def check_clusterer_compute_labels_predict(name, clusterer_orig):
     """Check that predict is invariant of compute_labels."""
     X, y = make_blobs(n_samples=20, random_state=0)
     clusterer = clone(clusterer_orig)
-    set_random_state(clusterer)
+    set_random_state(clusterer, random_state=0)
 
     if hasattr(clusterer, "compute_labels"):
         # MiniBatchKMeans
@@ -3174,7 +3176,7 @@ def _check_classifier_on_problem(name, classifier_orig, X, y, tags):
     X = _enforce_estimator_tags_X(classifier, X)
     y = _enforce_estimator_tags_y(classifier, y)
 
-    set_random_state(classifier)
+    set_random_state(classifier, random_state=0)
     # raises error on malformed input for fit
     if not tags.no_validation:
         with raises(
