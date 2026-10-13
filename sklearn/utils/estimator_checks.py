@@ -2689,7 +2689,7 @@ def check_transformer_preserve_dtypes(name, transformer_orig):
         X_trans1 = transformer.fit_transform(X_cast, y)
         X_trans2 = transformer.fit(X_cast, y).transform(X_cast)
 
-        for Xt, method in zip([X_trans1, X_trans2], ["fit_transform", "transform"]):
+        for Xt, method in ((X_trans1, "fit_transform"), (X_trans2, "transform")):
             if isinstance(Xt, tuple):
                 # cross-decomposition returns a tuple of (x_scores, y_scores)
                 # when given y with fit_transform; only check the first element
@@ -2851,7 +2851,11 @@ def check_estimators_partial_fit_n_features(name, estimator_orig):
     if not hasattr(estimator_orig, "partial_fit"):
         return
     estimator = clone(estimator_orig)
-    X, y = make_blobs(n_samples=50, random_state=1)
+    # generate 3 isotropic gaussian blobs, similar to make_blobs
+    rng = np.random.default_rng(1)
+    y = np.arange(50) % 3
+    centers = rng.uniform(-10.0, 10.0, size=(3, 2))
+    X = centers[y] + rng.standard_normal((50, 2))
     X = _enforce_estimator_tags_X(estimator_orig, X)
     y = _enforce_estimator_tags_y(estimator_orig, y)
 
@@ -4667,7 +4671,8 @@ def check_outliers_fit_predict(name, estimator_orig):
     # a fit_predict method. recall that it is already assumed here that the
     # estimator has a fit_predict method
     if hasattr(estimator, "predict"):
-        y_pred_2 = estimator.fit(X).predict(X)
+        estimator.fit(X)
+        y_pred_2 = estimator.predict(X)
         assert_array_equal(y_pred, y_pred_2)
 
     if hasattr(estimator, "contamination"):
@@ -5323,9 +5328,9 @@ def _call_fit_methods(estimator, fit_methods, tags, X, y, match, err_msg):
 def check_param_validation(name, estimator_orig):
     # Check that an informative error is raised when the value of a constructor
     # parameter does not have an appropriate type or value.
-    rng = np.random.RandomState(0)
+    rng = np.random.default_rng(0)
     X = rng.uniform(size=(20, 5))
-    y = rng.randint(0, 2, size=20)
+    y = rng.integers(0, 2, size=20)
     y = _enforce_estimator_tags_y(estimator_orig, y)
     tags = get_tags(estimator_orig)
 
@@ -5404,12 +5409,12 @@ def check_set_output_transform(name, transformer_orig):
     if not tags.input_tags.two_d_array or tags.no_validation:
         return
 
-    rng = np.random.RandomState(0)
+    rng = np.random.default_rng(0)
     transformer = clone(transformer_orig)
 
     X = rng.uniform(size=(20, 5))
     X = _enforce_estimator_tags_X(transformer_orig, X)
-    y = rng.randint(0, 2, size=20)
+    y = rng.integers(0, 2, size=20)
     y = _enforce_estimator_tags_y(transformer_orig, y)
     set_random_state(transformer)
 
@@ -5592,12 +5597,12 @@ def _check_set_output_transform_dataframe(
     if not tags.input_tags.two_d_array or tags.no_validation:
         return
 
-    rng = np.random.RandomState(0)
+    rng = np.random.default_rng(0)
     transformer = clone(transformer_orig)
 
     X = rng.uniform(size=(20, 5))
     X = _enforce_estimator_tags_X(transformer_orig, X)
-    y = rng.randint(0, 2, size=20)
+    y = rng.integers(0, 2, size=20)
     y = _enforce_estimator_tags_y(transformer_orig, y)
     set_random_state(transformer)
 
@@ -5708,14 +5713,14 @@ def check_inplace_ensure_writeable(name, estimator_orig):
     Make sure that a copy is made and consequently that the input array and its
     writeability are not modified by the estimator.
     """
-    rng = np.random.RandomState(0)
+    rng = np.random.default_rng(0)
 
     estimator = clone(estimator_orig)
     set_random_state(estimator)
 
     n_samples = 100
 
-    X, _ = make_blobs(n_samples=n_samples, n_features=3, random_state=rng)
+    X, _ = make_blobs(n_samples=n_samples, n_features=3, random_state=0)
     X = _enforce_estimator_tags_X(estimator, X)
 
     # These estimators can only work inplace with fortran ordered input
@@ -5729,7 +5734,7 @@ def check_inplace_ensure_writeable(name, estimator_orig):
     if is_regressor(estimator):
         y = rng.normal(size=n_samples)
     else:
-        y = rng.randint(low=0, high=2, size=n_samples)
+        y = rng.integers(low=0, high=2, size=n_samples)
     y = _enforce_estimator_tags_y(estimator, y)
 
     X_copy = X.copy()
