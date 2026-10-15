@@ -3679,9 +3679,9 @@ def check_estimators_unfitted(name, estimator_orig):
 @ignore_warnings(category=FutureWarning)
 def check_supervised_y_2d(name, estimator_orig):
     tags = get_tags(estimator_orig)
-    rnd = np.random.default_rng(0)
+    rng = np.random.default_rng(0)
     n_samples = 30
-    X = _enforce_estimator_tags_X(estimator_orig, rnd.uniform(size=(n_samples, 3)))
+    X = _enforce_estimator_tags_X(estimator_orig, rng.random(size=(n_samples, 3)))
     y = np.arange(n_samples) % 3
     y = _enforce_estimator_tags_y(estimator_orig, y)
     estimator = clone(estimator_orig)
@@ -3717,7 +3717,9 @@ def check_classifiers_predictions(X, y, name, classifier_orig):
     classifier = clone(classifier_orig)
     if name == "BernoulliNB":
         X = X > X.mean()
-    set_random_state(classifier)
+    # Fix the estimator seed (if it has one) to 0 for reproducible results.
+    seed_params = {key: 0 for key in classifier.get_params() if key == "random_state"}
+    classifier.set_params(**seed_params)
 
     classifier.fit(X, y)
     y_pred = classifier.predict(X)
@@ -4710,8 +4712,7 @@ def check_fit_idempotent(name, estimator_orig):
     # check that the estimated parameters during training (e.g. coefs_) are
     # the same, but having a universal comparison function for those
     # attributes is difficult and full of edge cases. So instead we check that
-    # predict(), predict_proba(), decision_function() and transform() return
-    # the same results.
+    # the outputs of the methods listed in check_methods below are the same.
 
     check_methods = ["predict", "transform", "decision_function", "predict_proba"]
     rng = np.random.default_rng(0)
@@ -4733,7 +4734,7 @@ def check_fit_idempotent(name, estimator_orig):
     split_seed = int(rng.integers(np.iinfo(np.int32).max))
     train, test = next(ShuffleSplit(test_size=0.2, random_state=split_seed).split(X))
     X_train, y_train = _safe_split(estimator, X, y, train)
-    X_test, y_test = _safe_split(estimator, X, y, test, train)
+    X_test, _ = _safe_split(estimator, X, y, test, train)
 
     # Fit for the first time
     estimator.fit(X_train, y_train)
