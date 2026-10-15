@@ -2248,7 +2248,7 @@ def check_methods_sample_order_invariance(name, estimator_orig):
     if hasattr(estimator, "n_clusters"):
         estimator.n_clusters = 2
 
-    set_random_state(estimator, 1)
+    set_random_state(estimator, random_state=1)
     estimator.fit(X, y)
 
     idx = rnd.permutation(X.shape[0])
@@ -2330,9 +2330,6 @@ def check_fit2d_1feature(name, estimator_orig):
         estimator.n_components = 1
     if hasattr(estimator, "n_clusters"):
         estimator.n_clusters = 1
-    # ensure two labels in subsample for RandomizedLogisticRegression
-    if name == "RandomizedLogisticRegression":
-        estimator.sample_fraction = 1
     # ensure non skipped trials for RANSACRegressor
     if name == "RANSACRegressor":
         estimator.residual_threshold = 0.5
@@ -2558,7 +2555,7 @@ def check_pipeline_consistency(name, estimator_orig):
     X = _enforce_estimator_tags_X(estimator_orig, X, kernel=rbf_kernel)
     estimator = clone(estimator_orig)
     y = _enforce_estimator_tags_y(estimator, y)
-    set_random_state(estimator)
+    set_random_state(estimator, random_state=0)
     pipeline = make_pipeline(estimator)
     estimator.fit(X, y)
     pipeline.fit(X, y)
@@ -2626,7 +2623,7 @@ def check_fit_score_takes_y(name, estimator_orig):
     y = np.arange(n_samples) % 3
     estimator = clone(estimator_orig)
     y = _enforce_estimator_tags_y(estimator, y)
-    set_random_state(estimator)
+    set_random_state(estimator, random_state=0)
 
     funcs = ["fit", "score", "partial_fit", "fit_predict", "fit_transform"]
     for func_name in funcs:
@@ -2685,7 +2682,7 @@ def check_transformer_preserve_dtypes(name, transformer_orig):
 
     for dtype in get_tags(transformer_orig).transformer_tags.preserves_dtype:
         X_cast = X.astype(dtype)
-        set_random_state(transformer)
+        set_random_state(transformer, random_state=0)
         X_trans1 = transformer.fit_transform(X_cast, y)
         X_trans2 = transformer.fit(X_cast, y).transform(X_cast)
 
@@ -2818,7 +2815,7 @@ def check_estimators_pickle(name, estimator_orig, readonly_memmap=False):
 
     y = _enforce_estimator_tags_y(estimator, y)
 
-    set_random_state(estimator)
+    set_random_state(estimator, random_state=0)
     estimator.fit(X, y)
 
     if readonly_memmap:
