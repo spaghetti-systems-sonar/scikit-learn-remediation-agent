@@ -2500,8 +2500,7 @@ def _check_transformer_malformed_input(name, transformer, X):
 def _check_transformer(name, transformer_orig, X, y):
     n_samples, n_features = np.asarray(X).shape
     transformer = clone(transformer_orig)
-    if "random_state" in transformer.get_params():
-        transformer.set_params(random_state=0)
+    set_random_state(transformer, random_state=0)
 
     # fit
     y_ = _prepare_cross_decomposition_y(name, X, y)
@@ -2848,6 +2847,7 @@ def check_estimators_partial_fit_n_features(name, estimator_orig):
     if not hasattr(estimator_orig, "partial_fit"):
         return
     estimator = clone(estimator_orig)
+    set_random_state(estimator, random_state=0)
     # generate 3 isotropic gaussian blobs, similar to make_blobs
     rng = np.random.default_rng(1)
     y = np.arange(50) % 3
@@ -4659,7 +4659,7 @@ def check_outliers_fit_predict(name, estimator_orig):
     n_samples, n_features = X.shape
     estimator = clone(estimator_orig)
 
-    set_random_state(estimator)
+    set_random_state(estimator, random_state=0)
 
     y_pred = estimator.fit_predict(X)
     assert y_pred.shape == (n_samples,)
@@ -4715,7 +4715,7 @@ def check_fit_idempotent(name, estimator_orig):
     rng = np.random.default_rng(0)
 
     estimator = clone(estimator_orig)
-    set_random_state(estimator)
+    set_random_state(estimator, random_state=0)
     if "warm_start" in estimator.get_params().keys():
         estimator.set_params(warm_start=False)
 
@@ -4743,7 +4743,7 @@ def check_fit_idempotent(name, estimator_orig):
     }
 
     # Fit again
-    set_random_state(estimator)
+    set_random_state(estimator, random_state=0)
     estimator.fit(X_train, y_train)
 
     for method in check_methods:
@@ -4771,7 +4771,7 @@ def check_fit_check_is_fitted(name, estimator_orig):
     rng = np.random.default_rng(42)
 
     estimator = clone(estimator_orig)
-    set_random_state(estimator)
+    set_random_state(estimator, random_state=0)
     if "warm_start" in estimator.get_params():
         estimator.set_params(warm_start=False)
 
@@ -4810,7 +4810,7 @@ def check_n_features_in(name, estimator_orig):
     rng = np.random.default_rng(0)
 
     estimator = clone(estimator_orig)
-    set_random_state(estimator)
+    set_random_state(estimator, random_state=0)
     if "warm_start" in estimator.get_params():
         estimator.set_params(warm_start=False)
 
@@ -4836,7 +4836,7 @@ def check_requires_y_none(name, estimator_orig):
     rng = np.random.default_rng(0)
 
     estimator = clone(estimator_orig)
-    set_random_state(estimator)
+    set_random_state(estimator, random_state=0)
 
     n_samples = 100
     X = rng.normal(loc=100, size=(n_samples, 2))
