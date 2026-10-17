@@ -2079,7 +2079,7 @@ def check_dict_unchanged(name, estimator_orig):
     y = X[:, 0].astype(int)
     estimator = clone(estimator_orig)
     y = _enforce_estimator_tags_y(estimator, y)
-    set_random_state(estimator, 1)
+    set_random_state(estimator, random_state=1)
 
     estimator.fit(X, y)
     for method in ["predict", "transform", "decision_function", "predict_proba"]:
@@ -2165,7 +2165,7 @@ def check_fit2d_predict1d(name, estimator_orig):
     if hasattr(estimator, "n_clusters"):
         estimator.n_clusters = 1
 
-    set_random_state(estimator, 1)
+    set_random_state(estimator, random_state=1)
     estimator.fit(X, y)
 
     for method in ["predict", "transform", "decision_function", "predict_proba"]:
@@ -2208,7 +2208,7 @@ def check_methods_subset_invariance(name, estimator_orig):
     if hasattr(estimator, "n_clusters"):
         estimator.n_clusters = 1
 
-    set_random_state(estimator, 1)
+    set_random_state(estimator, random_state=1)
     estimator.fit(X, y)
 
     for method in [
@@ -2292,7 +2292,7 @@ def check_fit2d_1sample(name, estimator_orig):
     if hasattr(estimator, "n_clusters"):
         estimator.n_clusters = 1
 
-    set_random_state(estimator, 1)
+    set_random_state(estimator, random_state=1)
 
     # min_cluster_size cannot be less than the data size for OPTICS.
     if name == "OPTICS":
@@ -2335,7 +2335,7 @@ def check_fit2d_1feature(name, estimator_orig):
         estimator.residual_threshold = 0.5
 
     y = _enforce_estimator_tags_y(estimator, y)
-    set_random_state(estimator, 1)
+    set_random_state(estimator, random_state=1)
 
     msgs = [r"1 feature\(s\)", "n_features = 1", "n_features=1"]
 
@@ -2357,7 +2357,7 @@ def check_fit1d(name, estimator_orig):
     if hasattr(estimator, "n_clusters"):
         estimator.n_clusters = 1
 
-    set_random_state(estimator, 1)
+    set_random_state(estimator, random_state=1)
     with raises(ValueError):
         estimator.fit(X, y)
 
@@ -2656,7 +2656,7 @@ def check_estimators_dtypes(name, estimator_orig):
 
     for X_train in [X_train_32, X_train_64, X_train_int_64, X_train_int_32]:
         estimator = clone(estimator_orig)
-        set_random_state(estimator, 1)
+        set_random_state(estimator, random_state=1)
         estimator.fit(X_train, y)
 
         for method in methods:
@@ -2701,7 +2701,7 @@ def check_transformer_preserve_dtypes(name, transformer_orig):
 @ignore_warnings(category=FutureWarning)
 def check_estimators_empty_data_messages(name, estimator_orig):
     e = clone(estimator_orig)
-    set_random_state(e, 1)
+    set_random_state(e, random_state=1)
 
     X_zero_samples = np.empty(0).reshape(0, 3)
     # The precise message can change depending on whether X or y is
@@ -2745,7 +2745,7 @@ def check_estimators_nan_inf(name, estimator_orig):
         # catch deprecation warnings
         with ignore_warnings(category=FutureWarning):
             estimator = clone(estimator_orig)
-            set_random_state(estimator, 1)
+            set_random_state(estimator, random_state=1)
             # try to fit
             with raises(ValueError, match=["inf", "NaN"], err_msg=error_string_fit):
                 estimator.fit(X_train, y)
@@ -3286,7 +3286,7 @@ def check_outliers_train(name, estimator_orig, readonly_memmap=True):
 
     n_samples, n_features = X.shape
     estimator = clone(estimator_orig)
-    set_random_state(estimator)
+    set_random_state(estimator, random_state=0)
 
     # fit
     estimator.fit(X)
@@ -3396,7 +3396,7 @@ def check_classifiers_multilabel_representation_invariance(name, classifier_orig
     y_train_list_of_arrays = list(y_train)
 
     classifier = clone(classifier_orig)
-    set_random_state(classifier)
+    set_random_state(classifier, random_state=0)
 
     y_pred = classifier.fit(X_train, y_train).predict(X_test)
 
@@ -3422,7 +3422,7 @@ def check_classifiers_multilabel_output_format_predict(name, classifier_orig):
     """Check the output of the `predict` method for classifiers supporting
     multilabel-indicator targets."""
     classifier = clone(classifier_orig)
-    set_random_state(classifier)
+    set_random_state(classifier, random_state=0)
 
     n_samples, test_size, n_outputs = 100, 25, 5
     X, y = make_multilabel_classification(
@@ -3468,7 +3468,7 @@ def check_classifiers_multilabel_output_format_predict_proba(name, classifier_or
     """Check the output of the `predict_proba` method for classifiers supporting
     multilabel-indicator targets."""
     classifier = clone(classifier_orig)
-    set_random_state(classifier)
+    set_random_state(classifier, random_state=0)
 
     n_samples, test_size, n_outputs = 100, 25, 5
     X, y = make_multilabel_classification(
@@ -3553,7 +3553,7 @@ def check_classifiers_multilabel_output_format_decision_function(name, classifie
     """Check the output of the `decision_function` method for classifiers supporting
     multilabel-indicator targets."""
     classifier = clone(classifier_orig)
-    set_random_state(classifier)
+    set_random_state(classifier, random_state=0)
 
     n_samples, test_size, n_outputs = 100, 25, 5
     X, y = make_multilabel_classification(
@@ -3620,7 +3620,7 @@ def check_estimators_fit_returns_self(name, estimator_orig):
     estimator = clone(estimator_orig)
     y = _enforce_estimator_tags_y(estimator, y)
 
-    set_random_state(estimator)
+    set_random_state(estimator, random_state=0)
     assert estimator.fit(X, y) is estimator
 
 
@@ -3638,7 +3638,7 @@ def check_readonly_memmap_input(name, estimator_orig):
 
     X, y = create_memmap_backed_data([X, y])
 
-    set_random_state(estimator)
+    set_random_state(estimator, random_state=0)
     # This should not raise an error and should return self
     assert estimator.fit(X, y) is estimator
 
@@ -3682,12 +3682,12 @@ def check_supervised_y_2d(name, estimator_orig):
     y = np.arange(n_samples) % 3
     y = _enforce_estimator_tags_y(estimator_orig, y)
     estimator = clone(estimator_orig)
-    set_random_state(estimator)
+    set_random_state(estimator, random_state=0)
     # fit
     estimator.fit(X, y)
     y_pred = estimator.predict(X)
 
-    set_random_state(estimator)
+    set_random_state(estimator, random_state=0)
     # Check that when a 2D y is given, a DataConversionWarning is
     # raised
     with warnings.catch_warnings(record=True) as w:
@@ -3829,8 +3829,8 @@ def check_regressors_int(name, regressor_orig):
     # separate estimators to control random seeds
     regressor_1 = clone(regressor_orig)
     regressor_2 = clone(regressor_orig)
-    set_random_state(regressor_1)
-    set_random_state(regressor_2)
+    set_random_state(regressor_1, random_state=0)
+    set_random_state(regressor_2, random_state=0)
 
     if name in CROSS_DECOMPOSITION:
         y_ = np.vstack([y, 2 * y + rnd.integers(2, size=len(y))])
@@ -3854,6 +3854,7 @@ def check_regressors_train(
     X = X.astype(X_dtype)
     y = scale(y)  # X is already scaled
     regressor = clone(regressor_orig)
+    set_random_state(regressor, random_state=0)
     X = _enforce_estimator_tags_X(regressor, X)
     y = _enforce_estimator_tags_y(regressor, y)
     if name in CROSS_DECOMPOSITION:
@@ -3884,7 +3885,6 @@ def check_regressors_train(
     ):
         regressor.fit(X, y[:-1])
     # fit
-    set_random_state(regressor)
     regressor.fit(X, y_)
     regressor.fit(X.tolist(), y_.tolist())
     y_pred = regressor.predict(X)
@@ -3950,7 +3950,7 @@ def check_class_weight_classifiers(name, classifier_orig):
         if hasattr(classifier, "n_iter_no_change"):
             classifier.set_params(n_iter_no_change=20)
 
-        set_random_state(classifier)
+        set_random_state(classifier, random_state=0)
         classifier.fit(X_train, y_train)
         y_pred = classifier.predict(X_test)
         # XXX: Generally can use 0.89 here. On Windows, LinearSVC gets
@@ -3969,7 +3969,7 @@ def check_class_weight_balanced_classifiers(
     if hasattr(classifier, "max_iter"):
         classifier.set_params(max_iter=1000)
 
-    set_random_state(classifier)
+    set_random_state(classifier, random_state=0)
     classifier.fit(X_train, y_train)
     y_pred = classifier.predict(X_test)
 
@@ -3998,7 +3998,7 @@ def check_class_weight_balanced_linear_classifier(name, estimator_orig):
         classifier.set_params(max_iter=1000)
     if hasattr(classifier, "cv"):
         classifier.set_params(cv=3)
-    set_random_state(classifier)
+    set_random_state(classifier, random_state=0)
 
     # Let the model compute the class frequencies
     classifier.set_params(class_weight="balanced")
@@ -4029,7 +4029,7 @@ def check_estimators_overwrite_params(name, estimator_orig):
     estimator = clone(estimator_orig)
     y = _enforce_estimator_tags_y(estimator, y)
 
-    set_random_state(estimator)
+    set_random_state(estimator, random_state=0)
 
     # Make a physical copy of the original estimator parameters before fitting.
     params = estimator.get_params()
@@ -4166,8 +4166,8 @@ def check_estimators_data_not_an_array(name, estimator_orig, X, y, obj_type):
     # separate estimators to control random seeds
     estimator_1 = clone(estimator_orig)
     estimator_2 = clone(estimator_orig)
-    set_random_state(estimator_1)
-    set_random_state(estimator_2)
+    set_random_state(estimator_1, random_state=0)
+    set_random_state(estimator_2, random_state=0)
 
     if obj_type not in ["NotAnArray", "PandasDataframe"]:
         raise ValueError("Data type {0} not supported".format(obj_type))
@@ -4451,7 +4451,7 @@ def check_positive_only_tag_during_fit(name, estimator_orig):
 
     X, y = load_iris(return_X_y=True)
     y = _enforce_estimator_tags_y(estimator, y)
-    set_random_state(estimator, 0)
+    set_random_state(estimator, random_state=0)
     X = _enforce_estimator_tags_X(estimator, X)
     # Make sure that the dtype of X stays unchanged: for instance estimator
     # that expect categorical inputs typically expected integer-based encoded
@@ -4477,7 +4477,7 @@ def check_non_transformer_estimators_n_iter(name, estimator_orig):
     iris = load_iris()
     X, y_ = iris.data, iris.target
     y_ = _enforce_estimator_tags_y(estimator, y_)
-    set_random_state(estimator, 0)
+    set_random_state(estimator, random_state=0)
     X = _enforce_estimator_tags_X(estimator_orig, X)
 
     estimator.fit(X, y_)
@@ -4509,7 +4509,7 @@ def check_transformer_n_iter(name, estimator_orig):
                 cluster_std=0.1,
             )
             X = _enforce_estimator_tags_X(estimator_orig, X)
-        set_random_state(estimator, 0)
+        set_random_state(estimator, random_state=0)
         estimator.fit(X, y_)
 
         # These return an n_iter per component.
@@ -4679,7 +4679,10 @@ def check_outliers_fit_predict(name, estimator_orig):
         # set to 'auto'
         expected_outliers = 30
         contamination = float(expected_outliers) / n_samples
-        estimator.set_params(contamination=contamination)
+        params = {"contamination": contamination}
+        if "random_state" in estimator.get_params():
+            params["random_state"] = 0
+        estimator.set_params(**params)
         y_pred = estimator.fit_predict(X)
 
         num_outliers = np.sum(y_pred != 1)
@@ -4940,7 +4943,7 @@ def check_n_features_in_after_fitting(name, estimator_orig):
     rng = np.random.default_rng(0)
 
     estimator = clone(estimator_orig)
-    set_random_state(estimator)
+    set_random_state(estimator, random_state=0)
     if "warm_start" in estimator.get_params():
         estimator.set_params(warm_start=False)
 
@@ -5062,7 +5065,7 @@ def check_dataframe_column_names_consistency(name, estimator_orig):
     rng = np.random.default_rng(0)
 
     estimator = clone(estimator_orig)
-    set_random_state(estimator)
+    set_random_state(estimator, random_state=0)
 
     X_orig = rng.normal(size=(150, 8))
 
@@ -5201,7 +5204,7 @@ def _prepare_feature_names_data(name, transformer_orig):
     X = _enforce_estimator_tags_X(transformer, X)
 
     n_features = X.shape[1]
-    set_random_state(transformer)
+    set_random_state(transformer, random_state=0)
 
     y_ = y
     if name in CROSS_DECOMPOSITION:
@@ -5414,7 +5417,7 @@ def check_set_output_transform(name, transformer_orig):
     X = _enforce_estimator_tags_X(transformer_orig, X)
     y = rng.integers(0, 2, size=20)
     y = _enforce_estimator_tags_y(transformer_orig, y)
-    set_random_state(transformer)
+    set_random_state(transformer, random_state=0)
 
     def fit_then_transform(est):
         if name in CROSS_DECOMPOSITION:
@@ -5602,7 +5605,7 @@ def _check_set_output_transform_dataframe(
     X = _enforce_estimator_tags_X(transformer_orig, X)
     y = rng.integers(0, 2, size=20)
     y = _enforce_estimator_tags_y(transformer_orig, y)
-    set_random_state(transformer)
+    set_random_state(transformer, random_state=0)
 
     feature_names_in = [f"col{i}" for i in range(X.shape[1])]
     index = [f"index{i}" for i in range(X.shape[0])]
@@ -5714,7 +5717,7 @@ def check_inplace_ensure_writeable(name, estimator_orig):
     rng = np.random.default_rng(0)
 
     estimator = clone(estimator_orig)
-    set_random_state(estimator)
+    set_random_state(estimator, random_state=0)
 
     n_samples = 100
 
