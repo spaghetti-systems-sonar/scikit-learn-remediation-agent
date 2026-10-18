@@ -3284,9 +3284,10 @@ def check_outliers_train(name, estimator_orig, readonly_memmap=True):
     if readonly_memmap:
         X = create_memmap_backed_data(X)
 
-    n_samples, n_features = X.shape
     estimator = clone(estimator_orig)
-    set_random_state(estimator, random_state=0)
+    has_random_state = "random_state" in estimator.get_params()
+    if has_random_state:
+        estimator.set_params(random_state=0)
 
     # fit
     estimator.fit(X)
@@ -3333,7 +3334,10 @@ def check_outliers_train(name, estimator_orig, readonly_memmap=True):
         # LocalOutlierFactor (tested in check_outliers_fit_predict)
         expected_outliers = 30
         contamination = expected_outliers / n_samples
-        estimator.set_params(contamination=contamination)
+        if has_random_state:
+            estimator.set_params(contamination=contamination, random_state=0)
+        else:
+            estimator.set_params(contamination=contamination)
         estimator.fit(X)
         y_pred = estimator.predict(X)
 
@@ -3999,9 +4003,11 @@ def check_class_weight_balanced_linear_classifier(name, estimator_orig):
     if hasattr(classifier, "cv"):
         classifier.set_params(cv=3)
     set_random_state(classifier, random_state=0)
+    # Fix the estimator seed (if it has one) to 0 for reproducible results.
+    seed_params = {key: 0 for key in classifier.get_params() if key == "random_state"}
 
     # Let the model compute the class frequencies
-    classifier.set_params(class_weight="balanced")
+    classifier.set_params(class_weight="balanced", **seed_params)
     coef_balanced = classifier.fit(X, y).coef_.copy()
 
     # Count each label occurrence to reweight manually
@@ -4012,7 +4018,7 @@ def check_class_weight_balanced_linear_classifier(name, estimator_orig):
         1: n_samples / (np.sum(y == 1) * n_classes),
         -1: n_samples / (np.sum(y == -1) * n_classes),
     }
-    classifier.set_params(class_weight=class_weight)
+    classifier.set_params(class_weight=class_weight, **seed_params)
     coef_manual = classifier.fit(X, y).coef_.copy()
 
     assert_allclose(
