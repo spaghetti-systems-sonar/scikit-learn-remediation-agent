@@ -3,6 +3,7 @@
 
 import html
 from contextlib import closing
+from dataclasses import dataclass
 from inspect import isclass
 from io import StringIO
 from pathlib import Path
@@ -97,6 +98,44 @@ class _VisualBlock:
         return self
 
 
+@dataclass(frozen=True)
+class _DocLinkInfo:
+    """Documentation link information for an estimator label.
+
+    Parameters
+    ----------
+    url : str, default=""
+        The link to the documentation for the estimator. If an empty string, no
+        link is added to the diagram.
+    label : str, default=None
+        The label for the documentation link. If provided, the label would be
+        "Documentation for {label}". Otherwise the estimator name is used.
+    """
+
+    url: str = ""
+    label: str | None = None
+
+
+@dataclass(frozen=True)
+class _FittedStatus:
+    """Fitted status display information for an estimator label.
+
+    Parameters
+    ----------
+    css_class : {"", "fitted"}, default=""
+        The CSS class to indicate whether or not the estimator is fitted.
+    icon : str, default=""
+        The HTML representation to show the fitted information in the diagram.
+    """
+
+    css_class: str = ""
+    icon: str = ""
+
+
+_NO_DOC_LINK = _DocLinkInfo()
+_NOT_FITTED = _FittedStatus()
+
+
 def _build_doc_link_html(doc_link, doc_link_label, name, is_fitted_css_class):
     """Build the HTML for the documentation link.
 
@@ -177,14 +216,12 @@ def _write_label_html(
     name,
     name_details,
     name_caption=None,
-    doc_link_label=None,
     features=None,
     outer_class="sk-label-container",
     inner_class="sk-label",
     checked=False,
-    doc_link="",
-    is_fitted_css_class="",
-    is_fitted_icon="",
+    doc_link_info=_NO_DOC_LINK,
+    fitted_status=_NOT_FITTED,
     param_prefix="",
 ):
     """Write labeled html with or without a dropdown with named details.
@@ -210,9 +247,8 @@ def _write_label_html(
         `ColumnTransformer`.
     name_caption : str, default=None
         The caption below the name. If `None`, no caption will be created.
-    doc_link_label : str, default=None
-        The label for the documentation link. If provided, the label would be
-        "Documentation for {doc_link_label}". Otherwise it will look for `name`.
+    features : array-like, default=None
+        The output feature names to display.
     outer_class : {"sk-label-container", "sk-item"}, default="sk-label-container"
         The CSS class for the outer container.
     inner_class : {"sk-label", "sk-estimator"}, default="sk-label"
@@ -220,20 +256,24 @@ def _write_label_html(
     checked : bool, default=False
         Whether the dropdown is folded or not. With a single estimator, we intend to
         unfold the content.
-    doc_link : str, default=""
-        The link to the documentation for the estimator. If an empty string, no link is
-        added to the diagram. This can be generated for an estimator if it uses the
-        `_HTMLDocumentationLinkMixin`.
-    is_fitted_css_class : {"", "fitted"}
-        The CSS class to indicate whether or not the estimator is fitted. The
-        empty string means that the estimator is not fitted and "fitted" means that the
-        estimator is fitted.
-    is_fitted_icon : str, default=""
-        The HTML representation to show the fitted information in the diagram. An empty
-        string means that no information is shown.
+    doc_link_info : _DocLinkInfo, default=_DocLinkInfo()
+        The documentation link information. `url` is the link to the documentation
+        for the estimator; if an empty string, no link is added to the diagram. This
+        can be generated for an estimator if it uses the
+        `_HTMLDocumentationLinkMixin`. `label` is the label for the documentation
+        link; if provided, the label would be "Documentation for {label}".
+        Otherwise it will look for `name`.
+    fitted_status : _FittedStatus, default=_FittedStatus()
+        The fitted status information. `css_class` is the CSS class to indicate
+        whether or not the estimator is fitted: the empty string means that the
+        estimator is not fitted and "fitted" means that the estimator is fitted.
+        `icon` is the HTML representation to show the fitted information in the
+        diagram; an empty string means that no information is shown.
     param_prefix : str, default=""
         The prefix to prepend to parameter names for nested estimators.
     """
+    is_fitted_css_class = fitted_status.css_class
+    is_fitted_icon = fitted_status.icon
     out.write(
         f'<div class="{outer_class}"><div'
         f' class="{inner_class} {is_fitted_css_class} sk-toggleable">'
@@ -245,7 +285,7 @@ def _write_label_html(
         est_id = _ESTIMATOR_ID_COUNTER.get_id()
 
         doc_link = _build_doc_link_html(
-            doc_link, doc_link_label, name, is_fitted_css_class
+            doc_link_info.url, doc_link_info.label, name, is_fitted_css_class
         )
         if name == "passthrough" or name_details == "[]":
             name_caption = ""
@@ -457,10 +497,9 @@ def _write_serial_parallel_html(
             attrs,
             estimator_label,
             estimator_label_details,
-            doc_link=doc_link,
             features=None,
-            is_fitted_css_class=is_fitted_css_class,
-            is_fitted_icon=is_fitted_icon,
+            doc_link_info=_DocLinkInfo(url=doc_link),
+            fitted_status=_FittedStatus(is_fitted_css_class, is_fitted_icon),
             param_prefix=param_prefix,
         )
 
@@ -553,14 +592,12 @@ def _write_single_html(
         est_block.names,
         est_block.name_details,
         est_block.name_caption,
-        est_block.doc_link_label,
         outer_class="sk-item",
         inner_class="sk-estimator",
         checked=first_call,
-        doc_link=doc_link,
+        doc_link_info=_DocLinkInfo(url=doc_link, label=est_block.doc_link_label),
         features=output_features,
-        is_fitted_css_class=is_fitted_css_class,
-        is_fitted_icon=is_fitted_icon,
+        fitted_status=_FittedStatus(is_fitted_css_class, is_fitted_icon),
         param_prefix=param_prefix,
     )
 

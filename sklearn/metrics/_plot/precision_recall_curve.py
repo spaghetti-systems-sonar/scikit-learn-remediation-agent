@@ -1,6 +1,8 @@
 # Authors: The scikit-learn developers
 # SPDX-License-Identifier: BSD-3-Clause
 
+from dataclasses import dataclass
+
 import numpy as np
 
 from sklearn.metrics._ranking import average_precision_score, precision_recall_curve
@@ -15,6 +17,24 @@ from sklearn.utils._plotting import (
     _validate_style_kwargs,
 )
 from sklearn.utils._response import _get_response_values_binary
+
+
+@dataclass
+class ChanceLevelOptions:
+    """Options controlling the rendering of the chance level line.
+
+    Parameters
+    ----------
+    plot : bool, default=False
+        Whether to plot the chance level.
+
+    kwargs : dict, default=None
+        Keyword arguments to be passed to matplotlib's `plot` for rendering
+        the chance level line.
+    """
+
+    plot: bool = False
+    kwargs: dict | None = None
 
 
 class PrecisionRecallDisplay(_BinaryClassifierCurveDisplayMixin):
@@ -426,8 +446,7 @@ class PrecisionRecallDisplay(_BinaryClassifierCurveDisplayMixin):
         name=None,
         ax=None,
         curve_kwargs=None,
-        plot_chance_level=False,
-        chance_level_kw=None,
+        chance_level=None,
         despine=False,
         **kwargs,
     ):
@@ -483,18 +502,16 @@ class PrecisionRecallDisplay(_BinaryClassifierCurveDisplayMixin):
 
             .. versionadded:: 1.9
 
-        plot_chance_level : bool, default=False
-            Whether to plot the chance level. The chance level is the prevalence
-            of the positive label computed from the data passed during
-            :meth:`from_estimator` or :meth:`from_predictions` call.
+        chance_level : ChanceLevelOptions, default=None
+            Options controlling the chance level line. `chance_level.plot`
+            indicates whether to plot the chance level (the prevalence of the
+            positive label computed from the data passed during
+            :meth:`from_estimator` or :meth:`from_predictions` call), and
+            `chance_level.kwargs` contains keyword arguments to be passed to
+            matplotlib's `plot` for rendering the chance level line. If `None`,
+            the chance level is not plotted.
 
-            .. versionadded:: 1.3
-
-        chance_level_kw : dict, default=None
-            Keyword arguments to be passed to matplotlib's `plot` for rendering
-            the chance level line.
-
-            .. versionadded:: 1.3
+            .. versionadded:: 1.9
 
         despine : bool, default=False
             Whether to remove the top and right spines from the plot.
@@ -554,6 +571,8 @@ class PrecisionRecallDisplay(_BinaryClassifierCurveDisplayMixin):
             pos_label=pos_label,
             name=name,
         )
+        if chance_level is None:
+            chance_level = ChanceLevelOptions()
 
         return cls.from_predictions(
             y,
@@ -564,8 +583,8 @@ class PrecisionRecallDisplay(_BinaryClassifierCurveDisplayMixin):
             name=name,
             ax=ax,
             curve_kwargs=curve_kwargs,
-            plot_chance_level=plot_chance_level,
-            chance_level_kw=chance_level_kw,
+            plot_chance_level=chance_level.plot,
+            chance_level_kw=chance_level.kwargs,
             despine=despine,
             **kwargs,
         )

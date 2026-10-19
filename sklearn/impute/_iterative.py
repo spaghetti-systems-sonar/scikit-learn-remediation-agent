@@ -3,8 +3,10 @@
 
 import warnings
 from collections import namedtuple
+from dataclasses import asdict, dataclass
 from numbers import Integral, Real
 from time import time
+from typing import ClassVar
 
 import numpy as np
 from scipy import stats
@@ -17,7 +19,12 @@ from sklearn.utils import _safe_indexing, check_array, check_random_state
 from sklearn.utils._indexing import _safe_assign
 from sklearn.utils._mask import _get_mask
 from sklearn.utils._missing import is_scalar_nan
-from sklearn.utils._param_validation import HasMethods, Interval, StrOptions
+from sklearn.utils._param_validation import (
+    HasMethods,
+    Interval,
+    StrOptions,
+    validate_parameter_constraints,
+)
 from sklearn.utils.metadata_routing import (
     MetadataRouter,
     MethodMapping,
@@ -35,6 +42,63 @@ from sklearn.utils.validation import (
 _ImputerTriplet = namedtuple(
     "_ImputerTriplet", ["feat_idx", "neighbor_feat_idx", "estimator"]
 )
+
+
+@dataclass(frozen=True)
+class ImputationSchedule:
+    """Settings controlling the round-robin loop of :class:`IterativeImputer`.
+
+    Parameters
+    ----------
+    max_iter : int, default=10
+        Maximum number of imputation rounds to perform before returning the
+        imputations computed during the final round. A round is a single
+        imputation of each feature with missing values. The stopping criterion
+        is met once `max(abs(X_t - X_{t-1}))/max(abs(X[known_vals])) < tol`,
+        where `X_t` is `X` at iteration `t`. Note that early stopping is only
+        applied if `sample_posterior=False`.
+
+    tol : float, default=1e-3
+        Tolerance of the stopping condition.
+
+    imputation_order : {'ascending', 'descending', 'roman', 'arabic', \
+            'random'}, default='ascending'
+        The order in which the features will be imputed. Possible values:
+
+        - `'ascending'`: From features with fewest missing values to most.
+        - `'descending'`: From features with most missing values to fewest.
+        - `'roman'`: Left to right.
+        - `'arabic'`: Right to left.
+        - `'random'`: A random order for each round.
+
+    skip_complete : bool, default=False
+        If `True` then features with missing values during :meth:`transform`
+        which did not have any missing values during :meth:`fit` will be
+        imputed with the initial imputation method only. Set to `True` if you
+        have many features with no missing values at both :meth:`fit` and
+        :meth:`transform` time to save compute.
+    """
+
+    max_iter: int = 10
+    tol: float = 1e-3
+    imputation_order: str = "ascending"
+    skip_complete: bool = False
+
+    _parameter_constraints: ClassVar[dict] = {
+        "max_iter": [Interval(Integral, 0, None, closed="left")],
+        "tol": [Interval(Real, 0, None, closed="left")],
+        "imputation_order": [
+            StrOptions({"ascending", "descending", "roman", "arabic", "random"})
+        ],
+        "skip_complete": ["boolean"],
+    }
+
+    def __post_init__(self):
+        validate_parameter_constraints(
+            self._parameter_constraints,
+            asdict(self),
+            caller_name=self.__class__.__name__,
+        )
 
 
 def _assign_where(X1, X2, cond):
@@ -97,16 +161,10 @@ class IterativeImputer(_BaseImputer):
         `return_std` in its `predict` method if set to `True`. Set to
         `True` if using `IterativeImputer` for multiple imputations.
 
-    max_iter : int, default=10
-        Maximum number of imputation rounds to perform before returning the
-        imputations computed during the final round. A round is a single
-        imputation of each feature with missing values. The stopping criterion
-        is met once `max(abs(X_t - X_{t-1}))/max(abs(X[known_vals])) < tol`,
-        where `X_t` is `X` at iteration `t`. Note that early stopping is only
-        applied if `sample_posterior=False`.
-
-    tol : float, default=1e-3
-        Tolerance of the stopping condition.
+    schedule : :class:`ImputationSchedule`, default=None
+        Settings of the round-robin imputation loop (`max_iter`, `tol`,
+        `imputation_order` and `skip_complete`). If `None`, the defaults of
+        :class:`ImputationSchedule` are used.
 
     n_nearest_features : int, default=None
         Number of other features to use to estimate the missing values of
@@ -131,23 +189,6 @@ class IterativeImputer(_BaseImputer):
         data and "missing_value" for strings or object data types.
 
         .. versionadded:: 1.3
-
-    imputation_order : {'ascending', 'descending', 'roman', 'arabic', \
-            'random'}, default='ascending'
-        The order in which the features will be imputed. Possible values:
-
-        - `'ascending'`: From features with fewest missing values to most.
-        - `'descending'`: From features with most missing values to fewest.
-        - `'roman'`: Left to right.
-        - `'arabic'`: Right to left.
-        - `'random'`: A random order for each round.
-
-    skip_complete : bool, default=False
-        If `True` then features with missing values during :meth:`transform`
-        which did not have any missing values during :meth:`fit` will be
-        imputed with the initial imputation method only. Set to `True` if you
-        have many features with no missing values at both :meth:`fit` and
-        :meth:`transform` time to save compute.
 
     min_value : float or array-like of shape (n_features,), default=-np.inf
         Minimum possible imputed value. Broadcast to shape `(n_features,)` if
@@ -294,17 +335,12 @@ class IterativeImputer(_BaseImputer):
         **_BaseImputer._parameter_constraints,
         "estimator": [None, HasMethods(["fit", "predict"])],
         "sample_posterior": ["boolean"],
-        "max_iter": [Interval(Integral, 0, None, closed="left")],
-        "tol": [Interval(Real, 0, None, closed="left")],
+        "schedule": [None, ImputationSchedule],
         "n_nearest_features": [None, Interval(Integral, 1, None, closed="left")],
         "initial_strategy": [
             StrOptions({"mean", "median", "most_frequent", "constant"})
         ],
         "fill_value": "no_validation",  # any object is valid
-        "imputation_order": [
-            StrOptions({"ascending", "descending", "roman", "arabic", "random"})
-        ],
-        "skip_complete": ["boolean"],
         "min_value": [None, Interval(Real, None, None, closed="both"), "array-like"],
         "max_value": [None, Interval(Real, None, None, closed="both"), "array-like"],
         "verbose": ["verbose"],
@@ -317,13 +353,10 @@ class IterativeImputer(_BaseImputer):
         *,
         missing_values=np.nan,
         sample_posterior=False,
-        max_iter=10,
-        tol=1e-3,
+        schedule=None,
         n_nearest_features=None,
         initial_strategy="mean",
         fill_value=None,
-        imputation_order="ascending",
-        skip_complete=False,
         min_value=-np.inf,
         max_value=np.inf,
         verbose=0,
@@ -339,17 +372,20 @@ class IterativeImputer(_BaseImputer):
 
         self.estimator = estimator
         self.sample_posterior = sample_posterior
-        self.max_iter = max_iter
-        self.tol = tol
+        self.schedule = schedule
         self.n_nearest_features = n_nearest_features
         self.initial_strategy = initial_strategy
         self.fill_value = fill_value
-        self.imputation_order = imputation_order
-        self.skip_complete = skip_complete
         self.min_value = min_value
         self.max_value = max_value
         self.verbose = verbose
         self.random_state = random_state
+
+    def _get_schedule(self):
+        """Return the imputation schedule, using defaults if `schedule` is None."""
+        if self.schedule is None:
+            return ImputationSchedule()
+        return self.schedule
 
     def _impute_one_feature(
         self,
@@ -530,22 +566,24 @@ class IterativeImputer(_BaseImputer):
         ordered_idx : ndarray, shape (n_features,)
             The order in which to impute the features.
         """
+        schedule = self._get_schedule()
+        imputation_order = schedule.imputation_order
         frac_of_missing_values = mask_missing_values.mean(axis=0)
-        if self.skip_complete:
+        if schedule.skip_complete:
             missing_values_idx = np.flatnonzero(frac_of_missing_values)
         else:
             missing_values_idx = np.arange(np.shape(frac_of_missing_values)[0])
-        if self.imputation_order == "roman":
+        if imputation_order == "roman":
             ordered_idx = missing_values_idx
-        elif self.imputation_order == "arabic":
+        elif imputation_order == "arabic":
             ordered_idx = missing_values_idx[::-1]
-        elif self.imputation_order == "ascending":
+        elif imputation_order == "ascending":
             n = len(frac_of_missing_values) - len(missing_values_idx)
             ordered_idx = np.argsort(frac_of_missing_values, kind="mergesort")[n:]
-        elif self.imputation_order == "descending":
+        elif imputation_order == "descending":
             n = len(frac_of_missing_values) - len(missing_values_idx)
             ordered_idx = np.argsort(frac_of_missing_values, kind="mergesort")[n:][::-1]
-        elif self.imputation_order == "random":
+        elif imputation_order == "random":
             ordered_idx = missing_values_idx
             self.random_state_.shuffle(ordered_idx)
         return ordered_idx
@@ -834,6 +872,8 @@ class IterativeImputer(_BaseImputer):
             The imputed data.
         """
         n_features = xt.shape[1]
+        schedule = self._get_schedule()
+        max_iter = schedule.max_iter
         if self.verbose > 0:
             print(
                 "[IterativeImputer] Completing matrix with shape %s" % (x.shape,)
@@ -841,9 +881,9 @@ class IterativeImputer(_BaseImputer):
         start_t = time()
         if not self.sample_posterior:
             xt_previous = xt.copy()
-            normalized_tol = self.tol * np.max(np.abs(x[~mask_missing_values]))
-        for self.n_iter_ in range(1, self.max_iter + 1):
-            if self.imputation_order == "random":
+            normalized_tol = schedule.tol * np.max(np.abs(x[~mask_missing_values]))
+        for self.n_iter_ in range(1, max_iter + 1):
+            if schedule.imputation_order == "random":
                 ordered_idx = self._get_ordered_idx(mask_missing_values)
 
             xt = self._impute_one_round(
@@ -859,7 +899,7 @@ class IterativeImputer(_BaseImputer):
                 print(
                     "[IterativeImputer] Ending imputation round "
                     "%d/%d, elapsed time %0.2f"
-                    % (self.n_iter_, self.max_iter, time() - start_t)
+                    % (self.n_iter_, max_iter, time() - start_t)
                 )
 
             if not self.sample_posterior:
@@ -936,7 +976,7 @@ class IterativeImputer(_BaseImputer):
         super()._fit_indicator(complete_mask)
         X_indicator = super()._transform_indicator(complete_mask)
 
-        if self.max_iter == 0 or np.all(mask_missing_values):
+        if self._get_schedule().max_iter == 0 or np.all(mask_missing_values):
             self.n_iter_ = 0
             return super()._concatenate_indicator(Xt, X_indicator)
 

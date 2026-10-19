@@ -1,6 +1,7 @@
 # Authors: The scikit-learn developers
 # SPDX-License-Identifier: BSD-3-Clause
 
+from dataclasses import dataclass
 from itertools import product
 
 import numpy as np
@@ -22,6 +23,28 @@ def _format_cell_value(value, values_format, dtype_kind):
         if len(text_d) < len(text_cm):
             text_cm = text_d
     return text_cm
+
+
+@dataclass
+class ConfusionMatrixImageOptions:
+    """Options controlling the rendering of the confusion matrix image.
+
+    Parameters
+    ----------
+    colorbar : bool, default=True
+        Whether or not to add a colorbar to the plot.
+
+    im_kw : dict, default=None
+        Dict with keywords passed to `matplotlib.pyplot.imshow` call.
+
+    values_format : str, default=None
+        Format specification for values in confusion matrix. If `None`, the
+        format specification is 'd' or '.2g' whichever is shorter.
+    """
+
+    colorbar: bool = True
+    im_kw: dict | None = None
+    values_format: str | None = None
 
 
 class ConfusionMatrixDisplay:
@@ -221,11 +244,9 @@ class ConfusionMatrixDisplay:
         display_labels=None,
         include_values=True,
         xticks_rotation="horizontal",
-        values_format=None,
         cmap="viridis",
         ax=None,
-        colorbar=True,
-        im_kw=None,
+        image_options=None,
         text_kw=None,
     ):
         """Plot Confusion Matrix given an estimator and some data.
@@ -281,10 +302,6 @@ class ConfusionMatrixDisplay:
                 default='horizontal'
             Rotation of xtick labels.
 
-        values_format : str, default=None
-            Format specification for values in confusion matrix. If `None`, the
-            format specification is 'd' or '.2g' whichever is shorter.
-
         cmap : str or matplotlib Colormap, default='viridis'
             Colormap recognized by matplotlib.
 
@@ -292,11 +309,13 @@ class ConfusionMatrixDisplay:
             Axes object to plot on. If `None`, a new figure and axes is
             created.
 
-        colorbar : bool, default=True
-            Whether or not to add a colorbar to the plot.
-
-        im_kw : dict, default=None
-            Dict with keywords passed to `matplotlib.pyplot.imshow` call.
+        image_options : ConfusionMatrixImageOptions, default=None
+            Options controlling the image rendering: `colorbar` (whether or
+            not to add a colorbar to the plot, default=True), `im_kw` (dict
+            with keywords passed to `matplotlib.pyplot.imshow` call,
+            default=None) and `values_format` (format specification for
+            values in confusion matrix, default=None). If `None`, default
+            options are used.
 
         text_kw : dict, default=None
             Dict with keywords passed to `matplotlib.pyplot.text` call.
@@ -351,9 +370,7 @@ class ConfusionMatrixDisplay:
             cmap=cmap,
             ax=ax,
             xticks_rotation=xticks_rotation,
-            values_format=values_format,
-            colorbar=colorbar,
-            im_kw=im_kw,
+            image_options=image_options,
             text_kw=text_kw,
         )
 
@@ -372,8 +389,7 @@ class ConfusionMatrixDisplay:
         values_format=None,
         cmap="viridis",
         ax=None,
-        colorbar=True,
-        im_kw=None,
+        image_options=None,
         text_kw=None,
     ):
         """Plot Confusion Matrix given true and predicted labels.
@@ -437,11 +453,13 @@ class ConfusionMatrixDisplay:
             Axes object to plot on. If `None`, a new figure and axes is
             created.
 
-        colorbar : bool, default=True
-            Whether or not to add a colorbar to the plot.
-
-        im_kw : dict, default=None
-            Dict with keywords passed to `matplotlib.pyplot.imshow` call.
+        image_options : ConfusionMatrixImageOptions, default=None
+            Options controlling the image rendering: `colorbar` (whether or
+            not to add a colorbar to the plot, default=True), `im_kw` (dict
+            with keywords passed to `matplotlib.pyplot.imshow` call,
+            default=None) and `values_format` (fallback format specification
+            used when the `values_format` parameter is `None`, default=None).
+            If `None`, default options are used.
 
         text_kw : dict, default=None
             Dict with keywords passed to `matplotlib.pyplot.text` call.
@@ -494,13 +512,18 @@ class ConfusionMatrixDisplay:
 
         disp = cls(confusion_matrix=cm, display_labels=display_labels)
 
+        if image_options is None:
+            image_options = ConfusionMatrixImageOptions()
+        if values_format is None:
+            values_format = image_options.values_format
+
         return disp.plot(
             include_values=include_values,
             cmap=cmap,
             ax=ax,
             xticks_rotation=xticks_rotation,
             values_format=values_format,
-            colorbar=colorbar,
-            im_kw=im_kw,
+            colorbar=image_options.colorbar,
+            im_kw=image_options.im_kw,
             text_kw=text_kw,
         )
