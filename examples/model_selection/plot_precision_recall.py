@@ -154,9 +154,15 @@ classifier.fit(X_train, y_train)
 # :func:`~sklearn.metrics.PrecisionRecallDisplay.from_estimator` that
 # computes the predictions for us before plotting the curve.
 from sklearn.metrics import PrecisionRecallDisplay
+from sklearn.metrics._plot.precision_recall_curve import ChanceLevelOptions
 
 display = PrecisionRecallDisplay.from_estimator(
-    classifier, X_test, y_test, name="LinearSVC", plot_chance_level=True, despine=True
+    classifier,
+    X_test,
+    y_test,
+    name="LinearSVC",
+    chance_level=ChanceLevelOptions(plot=True),
+    despine=True,
 )
 _ = display.ax_.set_title("2-class Precision-Recall curve")
 
