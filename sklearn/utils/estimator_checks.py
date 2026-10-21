@@ -3756,7 +3756,7 @@ def check_classifiers_predictions(X, y, name, classifier_orig):
                 )
                 % (
                     classifier,
-                    ", ".join(map(str, y_exp)),
+                    ", ".join(str(label) for label in y_exp),
                     ", ".join(map(str, y_pred)),
                 ),
             )
@@ -4597,7 +4597,9 @@ def check_set_params(name, estimator_orig):
 def check_classifiers_regression_target(name, estimator_orig):
     # Check if classifier throws an exception when fed regression targets
 
-    X, y = _regression_dataset()
+    rng = np.random.default_rng(42)
+    X = rng.standard_normal(size=(200, 10))
+    y = 5.0 + 50.0 * X[:, 0] + rng.normal(scale=20, size=200)
 
     X = _enforce_estimator_tags_X(estimator_orig, X)
     e = clone(estimator_orig)
