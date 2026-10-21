@@ -4,7 +4,8 @@
  */
 
 document.addEventListener("DOMContentLoaded", function () {
-  new DataTable("table.apisearch-table", {
+  const table = document.querySelector("table.apisearch-table");
+  new DataTable(table, {
     order: [], // Keep original order
     lengthMenu: [10, 25, 50, 100, { label: "All", value: -1 }],
     pageLength: -1, // Show all entries by default
