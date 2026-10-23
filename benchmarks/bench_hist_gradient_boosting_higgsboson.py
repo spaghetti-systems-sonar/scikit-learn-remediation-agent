@@ -54,7 +54,7 @@ def load_data():
     with GzipFile(filename) as f:
         df = pd.read_csv(f, header=None, dtype=np.float32)
     toc = time()
-    print(f"Loaded {df.values.nbytes / 1e9:0.3f} GB in {toc - tic:0.3f}s")
+    print(f"Loaded {df.to_numpy().nbytes / 1e9:0.3f} GB in {toc - tic:0.3f}s")
     return df
 
 
