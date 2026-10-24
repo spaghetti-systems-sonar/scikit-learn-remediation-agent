@@ -52,12 +52,12 @@ def get_data(
     auto_examples/ensemble/plot_isolation_forest.html#sphx-glr-auto-
     examples-ensemble-plot-isolation-forest-py
     """
-    rng = np.random.RandomState(random_state)
+    rng = np.random.default_rng(random_state)
 
-    X = 0.3 * rng.randn(n_samples_train, n_features)
+    X = 0.3 * rng.standard_normal((n_samples_train, n_features))
     X_train = np.r_[X + 2, X - 2]
 
-    X = 0.3 * rng.randn(n_samples_test, n_features)
+    X = 0.3 * rng.standard_normal((n_samples_test, n_features))
     X_test = np.r_[X + 2, X - 2]
 
     n_outliers = int(np.floor(contamination * n_samples_test))
