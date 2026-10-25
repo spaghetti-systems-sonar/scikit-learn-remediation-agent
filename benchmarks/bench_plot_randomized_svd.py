@@ -184,10 +184,11 @@ def get_data(dataset_name):
         sparsity = int(1e6)
         size = int(1e6)
         small_size = int(1e4)
-        data = np.random.normal(0, 1, int(sparsity / 10))
+        rng = np.random.default_rng(1234)
+        data = rng.normal(0, 1, int(sparsity / 10))
         data = np.repeat(data, 10)
-        row = np.random.uniform(0, small_size, sparsity)
-        col = np.random.uniform(0, small_size, sparsity)
+        row = rng.uniform(0, small_size, sparsity)
+        col = rng.uniform(0, small_size, sparsity)
         X = sp.sparse.csr_array((data, (row, col)), shape=(size, small_size))
         del data
         del row
