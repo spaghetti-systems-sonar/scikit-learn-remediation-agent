@@ -59,8 +59,11 @@ from sklearn.pipeline import Pipeline
 from sklearn.svm import SVC, LinearSVC
 
 # Split data in train and test sets
+rng = np.random.default_rng(0)
 X, y = load_digits()["data"], load_digits()["target"]
-X_train, X_test, y_train, y_test = train_test_split(X, y, train_size=0.7)
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, train_size=0.7, random_state=rng.integers(np.iinfo(np.int32).max)
+)
 
 # Set the range of n_components for our experiments
 out_dims = range(20, 400, 20)
@@ -83,7 +86,14 @@ for k in out_dims:
     for _ in range(n_runs):
         ps_svm = Pipeline(
             [
-                ("PS", PolynomialCountSketch(degree=2, n_components=k)),
+                (
+                    "PS",
+                    PolynomialCountSketch(
+                        degree=2,
+                        n_components=k,
+                        random_state=rng.integers(np.iinfo(np.int32).max),
+                    ),
+                ),
                 ("SVM", LinearSVC()),
             ]
         )
@@ -102,7 +112,12 @@ for k in out_dims:
                 (
                     "NY",
                     Nystroem(
-                        kernel="poly", gamma=1.0, degree=2, coef0=0, n_components=k
+                        kernel="poly",
+                        gamma=1.0,
+                        degree=2,
+                        coef0=0,
+                        n_components=k,
+                        random_state=rng.integers(np.iinfo(np.int32).max),
                     ),
                 ),
                 ("SVM", LinearSVC()),
@@ -139,28 +154,39 @@ fig.tight_layout()
 # Now let's evaluate the scalability of PolynomialCountSketch vs Nystroem
 # First we generate some fake data with a lot of samples
 
-fakeData = np.random.randn(10000, 100)
-fakeDataY = np.random.randint(0, high=10, size=(10000))
+fake_data = rng.standard_normal((10000, 100))
+fake_data_y = rng.integers(0, high=10, size=10000)
 
 out_dims = range(500, 6000, 500)
 
 # Evaluate scalability of PolynomialCountSketch as n_components grows
 ps_svm_times = []
 for k in out_dims:
-    ps = PolynomialCountSketch(degree=2, n_components=k)
+    ps = PolynomialCountSketch(
+        degree=2,
+        n_components=k,
+        random_state=rng.integers(np.iinfo(np.int32).max),
+    )
 
     start = time()
-    ps.fit_transform(fakeData, None)
+    ps.fit_transform(fake_data, None)
     ps_svm_times.append(time() - start)
 
 # Evaluate scalability of Nystroem as n_components grows
 # This can take a while due to the inefficient training phase
 ny_svm_times = []
 for k in out_dims:
-    ny = Nystroem(kernel="poly", gamma=1.0, degree=2, coef0=0, n_components=k)
+    ny = Nystroem(
+        kernel="poly",
+        gamma=1.0,
+        degree=2,
+        coef0=0,
+        n_components=k,
+        random_state=rng.integers(np.iinfo(np.int32).max),
+    )
 
     start = time()
-    ny.fit_transform(fakeData, None)
+    ny.fit_transform(fake_data, None)
     ny_svm_times.append(time() - start)
 
 # Show results
