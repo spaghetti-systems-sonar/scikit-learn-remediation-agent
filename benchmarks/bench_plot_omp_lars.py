@@ -31,7 +31,6 @@ def compute_bench(samples_range, features_range):
             print("====================")
             print("Iteration %03d of %03d" % (it, max_it))
             print("====================")
-            # dataset_kwargs = {
             #     'n_train_samples': n_samples,
             #     'n_test_samples': 2,
             #     'n_features': n_features,
