@@ -68,7 +68,7 @@ if __name__ == "__main__":
     print("Warning: this is going to take a looong time")
     print(SEPARATOR)
 
-    rng = np.random.default_rng(0)
+    generator = np.random.default_rng(0)
 
     n = 10
     step = 10000
@@ -80,10 +80,10 @@ if __name__ == "__main__":
         print("Entering iteration %s of %s" % (i, n))
         print(SEPARATOR)
         n_samples += step
-        X = rng.standard_normal((n_samples, dim))
-        Y = rng.integers(0, n_classes, (n_samples,))
+        X = generator.standard_normal((n_samples, dim))
+        Y = generator.integers(0, n_classes, (n_samples,))
         bench_scikit_tree_classifier(X, Y)
-        Y = rng.standard_normal(n_samples)
+        Y = generator.standard_normal(n_samples)
         bench_scikit_tree_regressor(X, Y)
 
     xx = range(0, n * step, step)
@@ -109,10 +109,10 @@ if __name__ == "__main__":
         print("Entering iteration %s of %s" % (i, n))
         print(SEPARATOR)
         dim += step
-        X = rng.standard_normal((100, dim))
-        Y = rng.integers(0, n_classes, (100,))
+        X = generator.standard_normal((100, dim))
+        Y = generator.integers(0, n_classes, (100,))
         bench_scikit_tree_classifier(X, Y)
-        Y = rng.standard_normal(100)
+        Y = generator.standard_normal(100)
         bench_scikit_tree_regressor(X, Y)
 
     xx = np.arange(start_dim, start_dim + n * step, step)
