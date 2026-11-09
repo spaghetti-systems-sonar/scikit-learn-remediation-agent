@@ -376,25 +376,36 @@ def bench_one(
 
 
 def run_bench(X, clfs, plot_name, n_components, tol, alpha, l1_ratio):
+    rng = np.random.default_rng(0)
     start = time()
     results = []
     for name, clf_type, iter_range, clf_params in clfs:
         print("Training %s:" % name)
-        for rs, init in enumerate(("nndsvd", "nndsvdar", "random")):
+        for init in ("nndsvd", "nndsvdar", "random"):
+            random_state = rng.integers(np.iinfo(np.int32).max)
             print("    %s %s: " % (init, " " * (8 - len(init))), end="")
-            W, H = _initialize_nmf(X, n_components, init, 1e-6, rs)
+            W, H = _initialize_nmf(X, n_components, init, 1e-6, random_state)
 
             for max_iter in iter_range:
                 clf_params["alpha"] = alpha
                 clf_params["l1_ratio"] = l1_ratio
                 clf_params["max_iter"] = max_iter
                 clf_params["tol"] = tol
-                clf_params["random_state"] = rs
+                clf_params["random_state"] = random_state
                 clf_params["init"] = "custom"
                 clf_params["n_components"] = n_components
 
                 this_loss, duration = bench_one(
-                    name, X, W, H, X.shape, clf_type, clf_params, init, n_components, rs
+                    name,
+                    X,
+                    W,
+                    H,
+                    X.shape,
+                    clf_type,
+                    clf_params,
+                    init,
+                    n_components,
+                    random_state,
                 )
 
                 init_name = "init='%s'" % init
