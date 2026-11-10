@@ -71,13 +71,13 @@ def bench_scikit_transformer(X, transformer):
 # Make some random data with uniformly located non zero entries with
 # Gaussian distributed values
 def make_sparse_random_data(n_samples, n_features, n_nonzeros, random_state=None):
-    rng = np.random.RandomState(random_state)
+    rng = np.random.default_rng(random_state)
     data_coo = sp.coo_array(
         (
-            rng.randn(n_nonzeros),
+            rng.standard_normal(n_nonzeros),
             (
-                rng.randint(n_samples, size=n_nonzeros),
-                rng.randint(n_features, size=n_nonzeros),
+                rng.integers(n_samples, size=n_nonzeros),
+                rng.integers(n_features, size=n_nonzeros),
             ),
         ),
         shape=(n_samples, n_features),
@@ -192,6 +192,7 @@ if __name__ == "__main__":
     opts.n_components = type_auto_or_int(opts.n_components)
     opts.density = type_auto_or_float(opts.density)
     selected_transformers = opts.selected_transformers.split(",")
+    rng = np.random.default_rng(opts.random_seed)
 
     ###########################################################################
     # Generate dataset
@@ -223,7 +224,9 @@ if __name__ == "__main__":
     # Set GaussianRandomProjection input
     gaussian_matrix_params = {
         "n_components": opts.n_components,
-        "random_state": opts.random_seed,
+        "random_state": np.random.default_rng(opts.random_seed).integers(
+            np.iinfo(np.int32).max
+        ),
     }
     transformers["GaussianRandomProjection"] = GaussianRandomProjection(
         **gaussian_matrix_params
@@ -233,7 +236,7 @@ if __name__ == "__main__":
     # Set SparseRandomProjection input
     sparse_matrix_params = {
         "n_components": opts.n_components,
-        "random_state": opts.random_seed,
+        "random_state": rng.integers(np.iinfo(np.int32).max),
         "density": opts.density,
         "eps": opts.eps,
     }
