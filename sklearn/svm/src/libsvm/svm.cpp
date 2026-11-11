@@ -1886,21 +1886,18 @@ static decision_function svm_train_one(
 
 	int nSV = 0;
 	int nBSV = 0;
+	int upper_bound_size = prob->l;
+	if(param->svm_type == ONE_CLASS)
+		upper_bound_size = 1;
+	else if(param->svm_type == EPSILON_SVR || param->svm_type == NU_SVR)
+		upper_bound_size = 2*prob->l;
 	for(int i=0;i<prob->l;i++)
 	{
 		if(fabs(alpha[i]) > 0)
 		{
 			++nSV;
-			if(prob->y[i] > 0)
-			{
-				if(fabs(alpha[i]) >= si.upper_bound[i])
-					++nBSV;
-			}
-			else
-			{
-				if(fabs(alpha[i]) >= si.upper_bound[i])
-					++nBSV;
-			}
+			if(fabs(alpha[i]) >= si.upper_bound[i % upper_bound_size])
+				++nBSV;
 		}
 	}
 
@@ -2347,7 +2344,7 @@ static void remove_zero_weight(PREFIX(problem) *newprob, const PREFIX(problem) *
 
 	int j = 0;
 	for(i=0;i<prob->l;i++)
-		if(prob->W[i] > 0)
+		if(prob->W[i] > 0 && j < l)
 		{
 			newprob->x[j] = prob->x[i];
 			newprob->y[j] = prob->y[i];
@@ -2413,7 +2410,7 @@ PREFIX(model) *PREFIX(train)(const PREFIX(problem) *prob, const svm_parameter *p
                 model->sv_ind = Malloc(int, nSV);
 		model->sv_coef[0] = Malloc(double, nSV);
 		int j = 0;
-		for(i=0;i<prob->l;i++)
+		for(i=0;i<prob->l && j<nSV;i++)
 			if(fabs(f.alpha[i]) > 0)
 			{
 				model->SV[j] = prob->x[i];
