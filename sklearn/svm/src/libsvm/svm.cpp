@@ -179,7 +179,7 @@ private:
 	};
 
 	head_t *head;
-	head_t lru_head;
+	head_t lru_head = {&lru_head, &lru_head, nullptr, 0};
 	void lru_delete(head_t *h);
 	void lru_insert(head_t *h);
 };
@@ -190,7 +190,6 @@ Cache::Cache(int l_,long int size_):l(l_),size(size_)
 	size /= sizeof(Qfloat);
 	size -= l * sizeof(head_t) / sizeof(Qfloat);
 	size = max(size, 2 * (long int) l);	// cache must be large enough for two columns
-	lru_head.next = lru_head.prev = &lru_head;
 }
 
 Cache::~Cache()
@@ -2244,8 +2243,21 @@ static void svm_group_classes(const PREFIX(problem) *prob, int *nr_class_ret, in
 	int nr_class = 0;
 	int *label = Malloc(int,max_nr_class);
 	int *count = Malloc(int,max_nr_class);
-	int *data_label = Malloc(int,l);
+	int *data_label;
 	int i, j, this_label, this_count;
+
+	if(l == 0)
+	{
+		*nr_class_ret = 0;
+		*label_ret = NULL;
+		*start_ret = NULL;
+		*count_ret = NULL;
+		free(label);
+		free(count);
+		return;
+	}
+
+	data_label = Malloc(int,l);
 
 	for(i=0;i<l;i++)
 	{
