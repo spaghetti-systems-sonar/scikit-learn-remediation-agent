@@ -990,7 +990,11 @@ int Solver::select_working_set(int &out_i, int &out_j)
 				if (grad_diff > 0)
 				{
 					double obj_diff;
-					double quad_coef = QD[i]+QD[j]-2.0*y[i]*Q_i[j];
+					double quad_coef;
+					if(i != -1)
+						quad_coef = QD[i]+QD[j]-2.0*y[i]*Q_i[j];
+					else
+						quad_coef = QD[j];
 					if (quad_coef > 0)
 						obj_diff = -(grad_diff*grad_diff)/quad_coef;
 					else
@@ -1014,7 +1018,11 @@ int Solver::select_working_set(int &out_i, int &out_j)
 				if (grad_diff > 0)
 				{
 					double obj_diff;
-					double quad_coef = QD[i]+QD[j]+2.0*y[i]*Q_i[j];
+					double quad_coef;
+					if(i != -1)
+						quad_coef = QD[i]+QD[j]+2.0*y[i]*Q_i[j];
+					else
+						quad_coef = QD[j];
 					if (quad_coef > 0)
 						obj_diff = -(grad_diff*grad_diff)/quad_coef;
 					else
@@ -1725,7 +1733,7 @@ static void solve_one_class(
 	}
 
 	i = 0;
-	while(nu_l > 0)
+	while(nu_l > 0 && i < l)
 	{
 		alpha[i] = min(C[i],nu_l);
 		nu_l -= alpha[i];
