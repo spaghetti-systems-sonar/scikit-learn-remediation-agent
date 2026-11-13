@@ -16,18 +16,18 @@
 
 #if defined(_MSC_VER)
 
-#define FORCE_INLINE	__forceinline
+#define FORCE_INLINE    __forceinline
 
 #include <stdlib.h>
 
-#define ROTL32(x,y)	_rotl(x,y)
-#define ROTL64(x,y)	_rotl64(x,y)
+#define ROTL32(x,y) _rotl(x,y)
+#define ROTL64(x,y) _rotl64(x,y)
 
 #define BIG_CONSTANT(x) (x)
 
 // Other compilers
 
-#else	// defined(_MSC_VER)
+#else   // defined(_MSC_VER)
 
 #if defined(GNUC) && ((GNUC > 4) || (GNUC == 4 && GNUC_MINOR >= 4))
 
@@ -52,8 +52,8 @@ inline uint64_t rotl64 ( uint64_t x, int8_t r )
   return (x << r) | (x >> (64 - r));
 }
 
-#define	ROTL32(x,y)	rotl32(x,y)
-#define ROTL64(x,y)	rotl64(x,y)
+#define ROTL32(x,y) rotl32(x,y)
+#define ROTL64(x,y) rotl64(x,y)
 
 #define BIG_CONSTANT(x) (x##LLU)
 
@@ -305,21 +305,34 @@ void MurmurHash3_x64_128 ( const void * key, const int len,
   switch(len & 15)
   {
   case 15: k2 ^= uint64_t(tail[14]) << 48;
+           [[fallthrough]];
   case 14: k2 ^= uint64_t(tail[13]) << 40;
+           [[fallthrough]];
   case 13: k2 ^= uint64_t(tail[12]) << 32;
+           [[fallthrough]];
   case 12: k2 ^= uint64_t(tail[11]) << 24;
+           [[fallthrough]];
   case 11: k2 ^= uint64_t(tail[10]) << 16;
+           [[fallthrough]];
   case 10: k2 ^= uint64_t(tail[ 9]) << 8;
+           [[fallthrough]];
   case  9: k2 ^= uint64_t(tail[ 8]) << 0;
            k2 *= c2; k2  = ROTL64(k2,33); k2 *= c1; h2 ^= k2;
-
+           [[fallthrough]];
   case  8: k1 ^= uint64_t(tail[ 7]) << 56;
+           [[fallthrough]];
   case  7: k1 ^= uint64_t(tail[ 6]) << 48;
+           [[fallthrough]];
   case  6: k1 ^= uint64_t(tail[ 5]) << 40;
+           [[fallthrough]];
   case  5: k1 ^= uint64_t(tail[ 4]) << 32;
+           [[fallthrough]];
   case  4: k1 ^= uint64_t(tail[ 3]) << 24;
+           [[fallthrough]];
   case  3: k1 ^= uint64_t(tail[ 2]) << 16;
+           [[fallthrough]];
   case  2: k1 ^= uint64_t(tail[ 1]) << 8;
+           [[fallthrough]];
   case  1: k1 ^= uint64_t(tail[ 0]) << 0;
            k1 *= c1; k1  = ROTL64(k1,31); k1 *= c2; h1 ^= k1;
   }
