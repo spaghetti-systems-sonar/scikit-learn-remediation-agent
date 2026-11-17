@@ -224,7 +224,6 @@ void MurmurHash3_x86_128 ( const void * key, const int len,
   case 13: k4 ^= tail[12] << 0;
            k4 *= c4; k4  = ROTL32(k4,18); k4 *= c1; h4 ^= k4;
            [[fallthrough]];
-
   case 12: k3 ^= tail[11] << 24;
            [[fallthrough]];
   case 11: k3 ^= tail[10] << 16;
@@ -234,7 +233,6 @@ void MurmurHash3_x86_128 ( const void * key, const int len,
   case  9: k3 ^= tail[ 8] << 0;
            k3 *= c3; k3  = ROTL32(k3,17); k3 *= c4; h3 ^= k3;
            [[fallthrough]];
-
   case  8: k2 ^= tail[ 7] << 24;
            [[fallthrough]];
   case  7: k2 ^= tail[ 6] << 16;
@@ -244,7 +242,6 @@ void MurmurHash3_x86_128 ( const void * key, const int len,
   case  5: k2 ^= tail[ 4] << 0;
            k2 *= c2; k2  = ROTL32(k2,16); k2 *= c3; h2 ^= k2;
            [[fallthrough]];
-
   case  4: k1 ^= tail[ 3] << 24;
            [[fallthrough]];
   case  3: k1 ^= tail[ 2] << 16;
