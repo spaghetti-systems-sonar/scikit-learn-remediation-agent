@@ -223,13 +223,13 @@ void MurmurHash3_x86_128 ( const void * key, const int len,
            // fall through
   case 13: k4 ^= tail[12] << 0;
            k4 *= c4; k4  = ROTL32(k4,18); k4 *= c1; h4 ^= k4;
-           // fall through
+           [[fallthrough]];
   case 12: k3 ^= tail[11] << 24;
-           // fall through
+           [[fallthrough]];
   case 11: k3 ^= tail[10] << 16;
-           // fall through
+           [[fallthrough]];
   case 10: k3 ^= tail[ 9] << 8;
-           // fall through
+           [[fallthrough]];
   case  9: k3 ^= tail[ 8] << 0;
            k3 *= c3; k3  = ROTL32(k3,17); k3 *= c4; h3 ^= k3;
            // fall through
