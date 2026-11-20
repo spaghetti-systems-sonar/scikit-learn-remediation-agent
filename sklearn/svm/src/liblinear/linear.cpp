@@ -2142,7 +2142,8 @@ static void transpose(const problem *prob, feature_node **x_space_ret, problem *
 	int l = prob->l;
 	int n = prob->n;
 	size_t nnz = 0;
-	size_t *col_ptr = new size_t [n+1];
+	size_t n_columns = static_cast<size_t>(n);
+	size_t *col_ptr = new size_t [n_columns+1];
 	feature_node *x_space;
 	prob_col->l = l;
 	prob_col->n = n;
@@ -2156,8 +2157,8 @@ static void transpose(const problem *prob, feature_node **x_space_ret, problem *
 		prob_col->W[i] = prob->W[i];
 	}
 
-	for(i=0; i<n+1; i++)
-		col_ptr[i] = 0;
+	for(size_t column=0; column<=n_columns; column++)
+		col_ptr[column] = 0;
 	for(i=0; i<l; i++)
 	{
 		feature_node *x = prob->x[i];
@@ -2168,12 +2169,12 @@ static void transpose(const problem *prob, feature_node **x_space_ret, problem *
 			x++;
 		}
 	}
-	for(i=1; i<n+1; i++)
-		col_ptr[i] += col_ptr[i-1] + 1;
+	for(size_t column=1; column<=n_columns; column++)
+		col_ptr[column] += col_ptr[column-1] + 1;
 
-	x_space = new feature_node[nnz+n];
-	for(i=0; i<n; i++)
-		prob_col->x[i] = &x_space[col_ptr[i]];
+	x_space = new feature_node[nnz+n_columns];
+	for(size_t column=0; column<n_columns; column++)
+		prob_col->x[column] = &x_space[col_ptr[column]];
 
 	for(i=0; i<l; i++)
 	{
@@ -2187,8 +2188,8 @@ static void transpose(const problem *prob, feature_node **x_space_ret, problem *
 			x++;
 		}
 	}
-	for(i=0; i<n; i++)
-		x_space[col_ptr[i]].index = -1;
+	for(size_t column=0; column<n_columns; column++)
+		x_space[col_ptr[column]].index = -1;
 
 	*x_space_ret = x_space;
 
@@ -2438,7 +2439,7 @@ static void remove_zero_weight(problem *newprob, const problem *prob)
 
 	int j = 0;
 	for(i=0;i<prob->l;i++)
-		if(prob->W[i] > 0)
+		if(prob->W[i] > 0 && j < l)
 		{
 			newprob->x[j] = prob->x[i];
 			newprob->y[j] = prob->y[i];
@@ -2587,10 +2588,10 @@ model* train(const problem *prob, const parameter *param, BlasFunctions *blas_fu
 		free(sub_prob.y);
 		free(sub_prob.W);
 		free(weighted_C);
-		free(newprob.x);
-		free(newprob.y);
-		free(newprob.W);
 	}
+	free(newprob.x);
+	free(newprob.y);
+	free(newprob.W);
 	return model_;
 }
 
