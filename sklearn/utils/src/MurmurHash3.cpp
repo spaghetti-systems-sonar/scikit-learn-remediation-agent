@@ -220,7 +220,7 @@ void MurmurHash3_x86_128 ( const void * key, const int len,
   case 15: k4 ^= tail[14] << 16;
            // fall through
   case 14: k4 ^= tail[13] << 8;
-           // fall through
+           [[fallthrough]];
   case 13: k4 ^= tail[12] << 0;
            k4 *= c4; k4  = ROTL32(k4,18); k4 *= c1; h4 ^= k4;
            [[fallthrough]];
