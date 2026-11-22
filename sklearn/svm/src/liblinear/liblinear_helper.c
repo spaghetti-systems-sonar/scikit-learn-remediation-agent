@@ -32,11 +32,12 @@ static struct feature_node **dense_to_sparse(char *x, int double_precision,
         return NULL;
 
     n_nonzero += (have_bias+1) * n_samples;
-    T = malloc (n_nonzero * sizeof(struct feature_node));
-    if (T == NULL) {
+    sparse[0] = malloc (n_nonzero * sizeof(struct feature_node));
+    if (sparse[0] == NULL) {
         free(sparse);
         return NULL;
     }
+    T = sparse[0];
 
     for (i=0; i<n_samples; ++i) {
         sparse[i] = T;
@@ -94,11 +95,12 @@ static struct feature_node **csr_to_sparse(char *x, int double_precision,
         return NULL;
 
     n_nonzero += (have_bias+1) * n_samples;
-    T = malloc (n_nonzero * sizeof(struct feature_node));
-    if (T == NULL) {
+    sparse[0] = malloc (n_nonzero * sizeof(struct feature_node));
+    if (sparse[0] == NULL) {
         free(sparse);
         return NULL;
     }
+    T = sparse[0];
 
     for (i=0; i<n_samples; ++i) {
         sparse[i] = T;
