@@ -596,14 +596,15 @@ int Solver_MCSVM_CS::Solve(double *w)
 	// alpha[i*nr_class+m] <= 0 if prob->y[i] != m
 	// If initial alpha isn't zero, uncomment the for loop below to initialize w
 	for(i=0;i<l*nr_class;i++)
+	{
 		alpha[i] = 0;
+		alpha_index[i] = i % nr_class;
+	}
 
 	for(i=0;i<w_size*nr_class;i++)
 		w[i] = 0;
 	for(i=0;i<l;i++)
 	{
-		for(m=0;m<nr_class;m++)
-			alpha_index[i*nr_class+m] = m;
 		feature_node *xi = prob->x[i];
 		QD[i] = 0;
 		while(xi->index != -1)
