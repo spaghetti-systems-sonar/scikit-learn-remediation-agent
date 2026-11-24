@@ -105,6 +105,36 @@ struct svm_csr_problem * csr_set_problem (char *values, Py_ssize_t *n_indices,
 }
 
 
+static struct svm_csr_model *allocate_csr_model(int nr_class, int m)
+{
+    struct svm_csr_model *model;
+
+    if ((model = malloc(sizeof(struct svm_csr_model))) == NULL)
+        goto model_error;
+    if ((model->nSV = malloc(nr_class * sizeof(int))) == NULL)
+        goto nsv_error;
+    if ((model->label = malloc(nr_class * sizeof(int))) == NULL)
+        goto label_error;
+    if ((model->sv_coef = malloc((nr_class-1)*sizeof(double *))) == NULL)
+        goto sv_coef_error;
+    if ((model->rho = malloc(m * sizeof(double))) == NULL)
+        goto rho_error;
+
+    return model;
+
+rho_error:
+    free(model->sv_coef);
+sv_coef_error:
+    free(model->label);
+label_error:
+    free(model->nSV);
+nsv_error:
+    free(model);
+model_error:
+    return NULL;
+}
+
+
 struct svm_csr_model *csr_set_model(struct svm_parameter *param, int nr_class,
                             char *SV_data, Py_ssize_t *SV_indices_dims,
                             char *SV_indices, Py_ssize_t *SV_indptr_dims,
@@ -118,16 +148,9 @@ struct svm_csr_model *csr_set_model(struct svm_parameter *param, int nr_class,
 
     m = nr_class * (nr_class-1)/2;
 
-    if ((model = malloc(sizeof(struct svm_csr_model))) == NULL)
-        goto model_error;
-    if ((model->nSV = malloc(nr_class * sizeof(int))) == NULL)
-        goto nsv_error;
-    if ((model->label = malloc(nr_class * sizeof(int))) == NULL)
-        goto label_error;
-    if ((model->sv_coef = malloc((nr_class-1)*sizeof(double *))) == NULL)
-        goto sv_coef_error;
-    if ((model->rho = malloc( m * sizeof(double))) == NULL)
-        goto rho_error;
+    model = allocate_csr_model(nr_class, m);
+    if (model == NULL)
+        return NULL;
 
     // This is only allocated in dynamic memory while training.
     model->n_iter = NULL;
@@ -197,15 +220,10 @@ probA_error:
         free(model->sv_coef[i]);
 sv_coef_i_error:
     free(model->rho);
-rho_error:
     free(model->sv_coef);
-sv_coef_error:
     free(model->label);
-label_error:
     free(model->nSV);
-nsv_error:
     free(model);
-model_error:
     return NULL;
 }
 

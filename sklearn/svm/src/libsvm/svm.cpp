@@ -2107,6 +2107,118 @@ static void multiclass_probability(int k, double **r, double *p)
         free(Q);
         free(Qp);
 }
+static void copy_binary_subproblem(struct PREFIX(problem) *subprob,
+        const struct PREFIX(problem) *prob, int *perm, int begin, int end)
+{
+        int j;
+        int k = 0;
+
+        subprob->l = prob->l-(end-begin);
+#ifdef _DENSE_REP
+        subprob->x = Malloc(struct PREFIX(node),subprob->l);
+#else
+        subprob->x = Malloc(struct PREFIX(node)*,subprob->l);
+#endif
+        subprob->y = Malloc(double,subprob->l);
+        subprob->W = Malloc(double,subprob->l);
+
+        for(j=0;j<begin;j++)
+        {
+                subprob->x[k] = prob->x[perm[j]];
+                subprob->y[k] = prob->y[perm[j]];
+                subprob->W[k] = prob->W[perm[j]];
+                ++k;
+        }
+        for(j=end;j<prob->l;j++)
+        {
+                subprob->x[k] = prob->x[perm[j]];
+                subprob->y[k] = prob->y[perm[j]];
+                subprob->W[k] = prob->W[perm[j]];
+                ++k;
+        }
+}
+
+static int count_positive_labels(const struct PREFIX(problem) *prob)
+{
+        int positive_count = 0;
+        for(int i=0;i<prob->l;i++)
+                if(prob->y[i]>0)
+                        positive_count++;
+        return positive_count;
+}
+
+static void set_fold_decision_values(const int *perm, int begin, int end,
+        double value, double *dec_values)
+{
+        for(int j=begin;j<end;j++)
+                dec_values[perm[j]] = value;
+}
+
+struct binary_svc_probability_context
+{
+        const struct PREFIX(problem) *prob;
+        const svm_parameter *param;
+        double Cp;
+        double Cn;
+        int *perm;
+        double *dec_values;
+        int *status;
+        BlasFunctions *blas_functions;
+};
+
+static void predict_binary_svc_fold(const binary_svc_probability_context *context,
+        int begin, int end)
+{
+        struct PREFIX(problem) subprob;
+        copy_binary_subproblem(&subprob,context->prob,context->perm,begin,end);
+
+        int p_count = count_positive_labels(&subprob);
+        int n_count = subprob.l - p_count;
+        if(p_count==0 && n_count==0)
+        {
+                set_fold_decision_values(context->perm,begin,end,0,context->dec_values);
+        }
+        else if(p_count > 0 && n_count == 0)
+        {
+                set_fold_decision_values(context->perm,begin,end,1,context->dec_values);
+        }
+        else if(p_count == 0 && n_count > 0)
+        {
+                set_fold_decision_values(context->perm,begin,end,-1,context->dec_values);
+        }
+        else
+        {
+                svm_parameter subparam = *context->param;
+                subparam.probability=0;
+                subparam.C=1.0;
+                subparam.nr_weight=2;
+                subparam.weight_label = Malloc(int,2);
+                subparam.weight = Malloc(double,2);
+                subparam.weight_label[0]=+1;
+                subparam.weight_label[1]=-1;
+                subparam.weight[0]=context->Cp;
+                subparam.weight[1]=context->Cn;
+                struct PREFIX(model) *submodel = PREFIX(train)(&subprob,&subparam,
+                        context->status,context->blas_functions);
+                for(int j=begin;j<end;j++)
+                {
+#ifdef _DENSE_REP
+                        PREFIX(predict_values)(submodel,(context->prob->x+context->perm[j]),
+                                &(context->dec_values[context->perm[j]]),context->blas_functions);
+#else
+                        PREFIX(predict_values)(submodel,context->prob->x[context->perm[j]],
+                                &(context->dec_values[context->perm[j]]),context->blas_functions);
+#endif
+                        // ensure +1 -1 order; reason not using CV subroutine
+                        context->dec_values[context->perm[j]] *= submodel->label[0];
+                }
+                PREFIX(free_and_destroy_model)(&submodel);
+                PREFIX(destroy_param)(&subparam);
+        }
+        free(subprob.x);
+        free(subprob.y);
+        free(subprob.W);
+}
 
 // Cross-validation decision values for probability estimates
 static void svm_binary_svc_probability(
@@ -2125,82 +2237,14 @@ static void svm_binary_svc_probability(
                 int j = i+bounded_rand_int(prob->l-i);
                 swap(perm[i],perm[j]);
         }
+        binary_svc_probability_context context = {prob,param,Cp,Cn,perm,
+                dec_values,status,blas_functions};
         for(i=0;i<nr_fold;i++)
         {
                 int begin = i*prob->l/nr_fold;
                 int end = (i+1)*prob->l/nr_fold;
-                int j,k;
-                struct PREFIX(problem) subprob;
 
-                subprob.l = prob->l-(end-begin);
-#ifdef _DENSE_REP
-                subprob.x = Malloc(struct PREFIX(node),subprob.l);
-#else
-                subprob.x = Malloc(struct PREFIX(node)*,subprob.l);
-#endif
-                subprob.y = Malloc(double,subprob.l);
-                subprob.W = Malloc(double,subprob.l);
-
-                k=0;
-                for(j=0;j<begin;j++)
-                {
-                        subprob.x[k] = prob->x[perm[j]];
-                        subprob.y[k] = prob->y[perm[j]];
-                        subprob.W[k] = prob->W[perm[j]];
-                        ++k;
-                }
-                for(j=end;j<prob->l;j++)
-                {
-                        subprob.x[k] = prob->x[perm[j]];
-                        subprob.y[k] = prob->y[perm[j]];
-                        subprob.W[k] = prob->W[perm[j]];
-                        ++k;
-                }
-                int p_count=0,n_count=0;
-                for(j=0;j<k;j++)
-                        if(subprob.y[j]>0)
-                                p_count++;
-                        else
-                                n_count++;
-
-                if(p_count==0 && n_count==0)
-                        for(j=begin;j<end;j++)
-                                dec_values[perm[j]] = 0;
-                else if(p_count > 0 && n_count == 0)
-                        for(j=begin;j<end;j++)
-                                dec_values[perm[j]] = 1;
-                else if(p_count == 0 && n_count > 0)
-                        for(j=begin;j<end;j++)
-                                dec_values[perm[j]] = -1;
-                else
-                {
-                        svm_parameter subparam = *param;
-                        subparam.probability=0;
-                        subparam.C=1.0;
-                        subparam.nr_weight=2;
-                        subparam.weight_label = Malloc(int,2);
-                        subparam.weight = Malloc(double,2);
-                        subparam.weight_label[0]=+1;
-                        subparam.weight_label[1]=-1;
-                        subparam.weight[0]=Cp;
-                        subparam.weight[1]=Cn;
-                        struct PREFIX(model) *submodel = PREFIX(train)(&subprob,&subparam, status, blas_functions);
-                        for(j=begin;j<end;j++)
-                        {
-#ifdef _DENSE_REP
-                                PREFIX(predict_values)(submodel,(prob->x+perm[j]),&(dec_values[perm[j]]), blas_functions);
-#else
-                                PREFIX(predict_values)(submodel,prob->x[perm[j]],&(dec_values[perm[j]]), blas_functions);
-#endif
-                                // ensure +1 -1 order; reason not using CV subroutine
-                                dec_values[perm[j]] *= submodel->label[0];
-                        }
-                        PREFIX(free_and_destroy_model)(&submodel);
-                        PREFIX(destroy_param)(&subparam);
-                }
-                free(subprob.x);
-                free(subprob.y);
-                free(subprob.W);
+                predict_binary_svc_fold(&context,begin,end);
         }
         sigmoid_train(prob->l,dec_values,prob->y,probA,probB);
         free(dec_values);
@@ -2370,6 +2414,82 @@ static void remove_zero_weight(PREFIX(problem) *newprob, const PREFIX(problem) *
                         newprob->W[j] = prob->W[i];
                         j++;
                 }
+}
+
+static const char *check_nu_svc_feasibility(const PREFIX(problem) *prob,
+        const svm_parameter *param)
+{
+        int l = prob->l;
+        int max_nr_class = 16;
+        int nr_class = 0;
+        std::vector<int> label(max_nr_class);
+        std::vector<double> count(max_nr_class);
+
+        for(int i=0;i<l;i++)
+        {
+                int this_label = (int)prob->y[i];
+                int j;
+                for(j=0;j<nr_class;j++)
+                        if(this_label == label[j])
+                        {
+                                count[j] += prob->W[i];
+                                break;
+                        }
+                if(j != nr_class)
+                        continue;
+                if(nr_class == max_nr_class)
+                {
+                        max_nr_class *= 2;
+                        label.resize(max_nr_class);
+                        count.resize(max_nr_class);
+                }
+                label[nr_class] = this_label;
+                count[nr_class] = prob->W[i];
+                ++nr_class;
+        }
+
+        for(int i=0;i<nr_class;i++)
+        {
+                double n1 = count[i];
+                for(int j=i+1;j<nr_class;j++)
+                {
+                        double n2 = count[j];
+                        if(param->nu*(n1+n2)/2 > min(n1,n2))
+                                return "specified nu is infeasible";
+                }
+        }
+        return NULL;
+}
+
+static const char *check_positive_weight_samples(const PREFIX(problem) *prob,
+        int svm_type)
+{
+        PREFIX(problem) newprob;
+        // filter samples with negative and null weights
+        remove_zero_weight(&newprob, prob);
+        std::unique_ptr<void, decltype(&free)> x_guard(newprob.x, free);
+        std::unique_ptr<void, decltype(&free)> y_guard(newprob.y, free);
+        std::unique_ptr<void, decltype(&free)> weights_guard(newprob.W, free);
+
+        // all samples were removed
+        if(newprob.l == 0)
+                return "Invalid input - all samples have zero or negative weights.";
+        if(prob->l == newprob.l || svm_type != C_SVC)
+                return NULL;
+
+        bool only_one_label = true;
+        int first_label = newprob.y[0];
+        for(int i=1;i<newprob.l;i++)
+        {
+                if(newprob.y[i] != first_label)
+                {
+                        only_one_label = false;
+                        break;
+                }
+        }
+        if(only_one_label)
+                return "Invalid input - all samples with positive weights belong to the same class.";
+        return NULL;
 }
 
 //
@@ -3094,50 +3214,9 @@ const char *PREFIX(check_parameter)(const PREFIX(problem) *prob, const svm_param
 
         if(svm_type == NU_SVC)
         {
-                int l = prob->l;
-                int max_nr_class = 16;
-                int nr_class = 0;
-                std::vector<int> label(max_nr_class);
-                std::vector<double> count(max_nr_class);
-
-                int i;
-                for(i=0;i<l;i++)
-                {
-                        int this_label = (int)prob->y[i];
-                        int j;
-                        for(j=0;j<nr_class;j++)
-                                if(this_label == label[j])
-                                {
-                                        count[j] += prob->W[i];
-                                        break;
-                                }
-                        if(j == nr_class)
-                        {
-                                if(nr_class == max_nr_class)
-                                {
-                                        max_nr_class *= 2;
-                                        label.resize(max_nr_class);
-                                        count.resize(max_nr_class);
-
-                                }
-                                label[nr_class] = this_label;
-                                count[nr_class] = prob->W[i];
-                                ++nr_class;
-                        }
-                }
-
-                for(i=0;i<nr_class;i++)
-                {
-                        double n1 = count[i];
-                        for(int j=i+1;j<nr_class;j++)
-                        {
-                                double n2 = count[j];
-                                if(param->nu*(n1+n2)/2 > min(n1,n2))
-                                {
-                                        return "specified nu is infeasible";
-                                }
-                        }
-                }
+                const char *error = check_nu_svc_feasibility(prob,param);
+                if(error != NULL)
+                        return error;
         }
 
         if(svm_type == C_SVC ||
@@ -3146,35 +3225,9 @@ const char *PREFIX(check_parameter)(const PREFIX(problem) *prob, const svm_param
            svm_type == ONE_CLASS ||
            svm_type == NU_SVC)
         {
-                PREFIX(problem) newprob;
-                // filter samples with negative and null weights
-                remove_zero_weight(&newprob, prob);
-                std::unique_ptr<void, decltype(&free)> x_guard(newprob.x, free);
-                std::unique_ptr<void, decltype(&free)> y_guard(newprob.y, free);
-                std::unique_ptr<void, decltype(&free)> weights_guard(newprob.W, free);
-
-                // all samples were removed
-                if(newprob.l == 0) {
-                        return "Invalid input - all samples have zero or negative weights.";
-                }
-                else if(prob->l != newprob.l &&
-                        svm_type == C_SVC)
-                {
-                        bool only_one_label = true;
-                        int first_label = newprob.y[0];
-                        for(int i=1;i<newprob.l;i++)
-                        {
-                                if(newprob.y[i] != first_label)
-                                {
-                                        only_one_label = false;
-                                        break;
-                                }
-                        }
-                        if(only_one_label) {
-                                return "Invalid input - all samples with positive weights belong to the same class.";
-                        }
-                }
-
+                const char *error = check_positive_weight_samples(prob,svm_type);
+                if(error != NULL)
+                        return error;
         }
         return NULL;
 }
