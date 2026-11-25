@@ -1,12 +1,12 @@
 #ifndef _LIBSVM_H
 #define _LIBSVM_H
 
-#define LIBSVM_VERSION 310
-
 #ifdef __cplusplus
 extern "C" {
 #endif
 #include "_svm_cython_blas_helpers.h"
+
+static const int LIBSVM_VERSION = 310;
 
 struct svm_node
 {

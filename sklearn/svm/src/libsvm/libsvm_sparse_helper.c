@@ -473,7 +473,9 @@ int free_model_SV(struct svm_csr_model *model)
 
 
 /* borrowed from original libsvm code */
-static void print_null(const char *s) {}
+static void print_null(const char *s) {
+        /* Intentionally empty: disables libsvm's diagnostic output. */
+}
 
 static void print_string_stdout(const char *s)
 {
