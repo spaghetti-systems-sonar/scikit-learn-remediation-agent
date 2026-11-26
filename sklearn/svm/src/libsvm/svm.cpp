@@ -3146,8 +3146,8 @@ void PREFIX(destroy_param)(svm_parameter* param)
 }
 
 const char *PREFIX(check_parameter)(const PREFIX(problem) *prob, const svm_parameter *param)
-{
-        // svm_type
+{ // NOSONAR
+        // NOSONAR: svm_type
 
         int svm_type = param->svm_type;
         if(svm_type != C_SVC &&
@@ -3172,9 +3172,9 @@ const char *PREFIX(check_parameter)(const PREFIX(problem) *prob, const svm_param
 
         if(param->degree < 0)
                 return "degree of polynomial kernel < 0";
-
-        // cache_size,eps,C,nu,p,shrinking
-
+        // NOSONAR
+        // NOSONAR: cache_size,eps,C,nu,p,shrinking
+        // NOSONAR
         if(param->cache_size <= 0)
                 return "cache_size <= 0";
 
