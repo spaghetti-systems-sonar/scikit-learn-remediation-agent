@@ -99,7 +99,7 @@ adaboost_clf = AdaBoostClassifier(
 from sklearn.dummy import DummyClassifier
 from sklearn.metrics import accuracy_score
 
-dummy_clf = DummyClassifier()
+dummy_clf = DummyClassifier(random_state=0)
 
 
 def misclassification_error(y_true, y_pred):

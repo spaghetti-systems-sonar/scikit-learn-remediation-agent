@@ -124,7 +124,7 @@ extract_score(cross_validate(estimator, X, y, scoring=scoring, cv=10))
 # Another option for the dummy model is to always predict the most frequent
 # class, which in this case is "no-disease".
 
-estimator = DummyClassifier(strategy="most_frequent")
+estimator = DummyClassifier(strategy="most_frequent", random_state=0)
 extract_score(cross_validate(estimator, X, y, scoring=scoring, cv=10))
 
 # %%

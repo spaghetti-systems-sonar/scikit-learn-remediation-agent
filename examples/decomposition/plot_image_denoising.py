@@ -104,7 +104,7 @@ from sklearn.feature_extraction.image import extract_patches_2d
 print("Extracting reference patches...")
 t0 = time()
 patch_size = (7, 7)
-data = extract_patches_2d(distorted[:, : width // 2], patch_size)
+data = extract_patches_2d(distorted[:, : width // 2], patch_size, random_state=0)
 data = data.reshape(data.shape[0], -1)
 data -= np.mean(data, axis=0)
 data /= np.std(data, axis=0)
@@ -151,7 +151,7 @@ from sklearn.feature_extraction.image import reconstruct_from_patches_2d
 
 print("Extracting noisy patches... ")
 t0 = time()
-data = extract_patches_2d(distorted[:, width // 2 :], patch_size)
+data = extract_patches_2d(distorted[:, width // 2 :], patch_size, random_state=0)
 data = data.reshape(data.shape[0], -1)
 intercept = np.mean(data, axis=0)
 data -= intercept
