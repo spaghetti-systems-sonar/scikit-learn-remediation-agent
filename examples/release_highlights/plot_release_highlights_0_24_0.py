@@ -174,7 +174,7 @@ from sklearn.preprocessing import MinMaxScaler
 X, y = fetch_covtype(return_X_y=True)
 pipe = make_pipeline(
     MinMaxScaler(),
-    PolynomialCountSketch(degree=2, n_components=300),
+    PolynomialCountSketch(degree=2, n_components=300, random_state=0),
     LogisticRegression(max_iter=1000),
 )
 X_train, X_test, y_train, y_test = train_test_split(

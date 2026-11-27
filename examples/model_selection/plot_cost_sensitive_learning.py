@@ -556,7 +556,9 @@ data_train, data_test, target_train, target_test, amount_train, amount_test = (
 # class "0" is the legitimate class and class "1" is the fraudulent class.
 from sklearn.dummy import DummyClassifier
 
-always_accept_policy = DummyClassifier(strategy="constant", constant=0)
+always_accept_policy = DummyClassifier(
+    strategy="constant", constant=0, random_state=0
+)
 always_accept_policy.fit(data_train, target_train)
 benefit = business_scorer(
     always_accept_policy, data_test, target_test, amount=amount_test
@@ -567,7 +569,9 @@ print(f"Benefit of the 'always accept' policy: {benefit:,.2f}€")
 # A policy that considers all transactions as legitimate would create a profit of
 # around 220,000€. We make the same evaluation for a classifier that predicts all
 # transactions as fraudulent.
-always_reject_policy = DummyClassifier(strategy="constant", constant=1)
+always_reject_policy = DummyClassifier(
+    strategy="constant", constant=1, random_state=0
+)
 always_reject_policy.fit(data_train, target_train)
 benefit = business_scorer(
     always_reject_policy, data_test, target_test, amount=amount_test
