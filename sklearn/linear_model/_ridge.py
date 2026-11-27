@@ -781,10 +781,10 @@ def _ridge_regression(
                 max_iter,
                 tol,
                 verbose,
-                random_state,
-                False,
-                max_squared_sum,
-                init,
+                random_state=random_state,
+                check_input=False,
+                max_squared_sum=max_squared_sum,
+                warm_start_mem=init,
                 is_saga=solver == "saga",
             )
             if return_intercept:

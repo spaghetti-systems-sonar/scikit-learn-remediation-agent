@@ -2179,7 +2179,7 @@ class SGDOneClassSVM(OutlierMixin, BaseSGD):
     verbose : int, default=0
         The verbosity level.
 
-    random_state : int, RandomState instance or None, default=None
+    random_state : int, RandomState instance or None, default=0
         The seed of the pseudo random number generator to use when shuffling
         the data.  If int, random_state is the seed used by the random number
         generator; If RandomState instance, random_state is the random number
@@ -2304,7 +2304,7 @@ class SGDOneClassSVM(OutlierMixin, BaseSGD):
         tol=1e-3,
         shuffle=True,
         verbose=0,
-        random_state=None,
+        random_state=0,
         learning_rate="optimal",
         eta0=0.01,
         power_t=0.5,

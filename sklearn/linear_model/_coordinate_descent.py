@@ -3230,7 +3230,7 @@ class MultiTaskElasticNetCV(RegressorMixin, LinearModelCV):
         ``-1`` means using all processors. See :term:`Glossary <n_jobs>`
         for more details.
 
-    random_state : int, RandomState instance, default=None
+    random_state : int, RandomState instance, default=0
         The seed of the pseudo random number generator that selects a random
         feature to update. Used when ``selection`` == 'random'.
         Pass an int for reproducible output across multiple function calls.
@@ -3336,7 +3336,7 @@ class MultiTaskElasticNetCV(RegressorMixin, LinearModelCV):
         copy_X=True,
         verbose=0,
         n_jobs=None,
-        random_state=None,
+        random_state=0,
         selection="cyclic",
     ):
         self.l1_ratio = l1_ratio
@@ -3436,7 +3436,7 @@ class MultiTaskLassoCV(RegressorMixin, LinearModelCV):
         ``-1`` means using all processors. See :term:`Glossary <n_jobs>`
         for more details.
 
-    random_state : int, RandomState instance, default=None
+    random_state : int, RandomState instance, default=0
         The seed of the pseudo random number generator that selects a random
         feature to update. Used when ``selection`` == 'random'.
         Pass an int for reproducible output across multiple function calls.
@@ -3538,7 +3538,7 @@ class MultiTaskLassoCV(RegressorMixin, LinearModelCV):
         cv=None,
         verbose=False,
         n_jobs=None,
-        random_state=None,
+        random_state=0,
         selection="cyclic",
     ):
         super().__init__(

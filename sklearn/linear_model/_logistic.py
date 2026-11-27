@@ -644,7 +644,7 @@ def _logistic_regression_path(
                 verbose,
                 max_iter,
                 tol,
-                random_state,
+                random_state=random_state,
                 sample_weight=sample_weight,
             )
             if fit_intercept:
@@ -682,10 +682,10 @@ def _logistic_regression_path(
                 max_iter,
                 tol,
                 verbose,
-                random_state,
-                False,
-                max_squared_sum,
-                warm_start_sag,
+                random_state=random_state,
+                check_input=False,
+                max_squared_sum=max_squared_sum,
+                warm_start_mem=warm_start_sag,
                 is_saga=(solver == "saga"),
             )
 
@@ -1095,7 +1095,7 @@ class LogisticRegression(
         .. versionadded:: 0.17
            *class_weight='balanced'*
 
-    random_state : int, RandomState instance, default=None
+    random_state : int, RandomState instance, default=0
         Used when ``solver`` == 'sag', 'saga' or 'liblinear' to shuffle the
         data. See :term:`Glossary <random_state>` for details.
 
@@ -1314,7 +1314,7 @@ class LogisticRegression(
         fit_intercept=True,
         intercept_scaling=1,
         class_weight=None,
-        random_state=None,
+        random_state=0,
         solver="lbfgs",
         max_iter=100,
         verbose=0,

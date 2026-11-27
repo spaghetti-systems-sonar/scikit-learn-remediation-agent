@@ -124,7 +124,7 @@ def barycenter_kneighbors_graph(X, n_neighbors, reg=1e-3, n_jobs=None):
 
 
 def null_space(
-    M, k, k_skip=1, eigen_solver="arpack", tol=1e-6, max_iter=100, random_state=None
+    M, k, k_skip=1, eigen_solver="arpack", tol=1e-6, max_iter=100, random_state=0
 ):
     """
     Find the null space of a matrix M.
@@ -160,7 +160,7 @@ def null_space(
         Maximum number of iterations for 'arpack' method.
         Not used if eigen_solver=='dense'
 
-    random_state : int, RandomState instance, default=None
+    random_state : int, RandomState instance, default=0
         Determines the random number generator when ``solver`` == 'arpack'.
         Pass an int for reproducible results across multiple function calls.
         See :term:`Glossary <random_state>`.

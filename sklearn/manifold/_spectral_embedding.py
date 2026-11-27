@@ -315,7 +315,7 @@ def _solve_arpack(laplacian, n_components, random_state, eigen_tol, norm_laplaci
     try:
         tol = 0 if eigen_tol == "auto" else eigen_tol
 
-        v0 = _init_arpack_v0(laplacian.shape[0], random_state)
+        v0 = _init_arpack_v0(laplacian.shape[0], random_state=random_state)
         laplacian = check_array(
             laplacian, accept_sparse="csr", accept_large_sparse=False
         )

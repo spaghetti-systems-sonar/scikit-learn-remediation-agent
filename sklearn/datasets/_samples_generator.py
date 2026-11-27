@@ -2182,7 +2182,7 @@ def make_biclusters(
     minval=10,
     maxval=100,
     shuffle=True,
-    random_state=None,
+    random_state=0,
 ):
     """Generate a constant block diagonal structure array for biclustering.
 
@@ -2208,7 +2208,7 @@ def make_biclusters(
     shuffle : bool, default=True
         Shuffle the samples.
 
-    random_state : int, RandomState instance or None, default=None
+    random_state : int, RandomState instance or None, default=0
         Determines random number generation for dataset creation. Pass an int
         for reproducible output across multiple function calls.
         See :term:`Glossary <random_state>`.
@@ -2304,7 +2304,7 @@ def make_checkerboard(
     minval=10,
     maxval=100,
     shuffle=True,
-    random_state=None,
+    random_state=0,
 ):
     """Generate an array with block checkerboard structure for biclustering.
 
@@ -2330,7 +2330,7 @@ def make_checkerboard(
     shuffle : bool, default=True
         Shuffle the samples.
 
-    random_state : int, RandomState instance or None, default=None
+    random_state : int, RandomState instance or None, default=0
         Determines random number generation for dataset creation. Pass an int
         for reproducible output across multiple function calls.
         See :term:`Glossary <random_state>`.

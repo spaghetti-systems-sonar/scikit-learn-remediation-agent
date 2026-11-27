@@ -486,7 +486,7 @@ class MeanShift(ClusterMixin, BaseEstimator):
         X = validate_data(self, X)
         bandwidth = self.bandwidth
         if bandwidth is None:
-            bandwidth = estimate_bandwidth(X, n_jobs=self.n_jobs)
+            bandwidth = estimate_bandwidth(X, random_state=0, n_jobs=self.n_jobs)
 
         seeds = self.seeds
         if seeds is None:
