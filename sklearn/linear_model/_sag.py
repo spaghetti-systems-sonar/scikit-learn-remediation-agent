@@ -151,7 +151,7 @@ def sag_solver(
     max_iter=1000,
     tol=0.001,
     verbose=0,
-    random_state=None,
+    random_state=0,
     check_input=True,
     max_squared_sum=None,
     warm_start_mem=None,
@@ -218,7 +218,7 @@ def sag_solver(
     verbose : int, default=0
         The verbosity level.
 
-    random_state : int, RandomState instance or None, default=None
+    random_state : int, RandomState instance or None, default=0
         Used when shuffling the data. Pass an int for reproducible output
         across multiple function calls.
         See :term:`Glossary <random_state>`.
@@ -330,7 +330,9 @@ def sag_solver(
         warm_start_mem, n_samples, n_features, n_classes, X.dtype
     )
 
-    dataset, intercept_decay = make_dataset(X, y, sample_weight, random_state)
+    dataset, intercept_decay = make_dataset(
+        X, y, sample_weight, random_state=random_state
+    )
 
     if max_squared_sum is None:
         max_squared_sum = row_norms(X, squared=True).max()

@@ -308,7 +308,9 @@ class BaseMixture(DensityMixin, BaseEstimator, metaclass=ABCMeta):
         best_lower_bounds = []
         self.converged_ = False
 
-        random_state = check_random_state(self.random_state)
+        random_state = check_random_state(
+            0 if self.random_state is None else self.random_state
+        )
 
         n_samples, _ = X.shape
         for init in range(n_init):

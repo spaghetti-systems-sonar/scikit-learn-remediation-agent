@@ -339,9 +339,9 @@ class LinearSVC(LinearClassifierMixin, SparseCoefMixin, BaseEstimator):
             self.verbose,
             self.max_iter,
             self.tol,
-            self.random_state,
-            self.multi_class,
-            self.loss,
+            random_state=self.random_state,
+            multi_class=self.multi_class,
+            loss=self.loss,
             sample_weight=sample_weight,
         )
         # Backward compatibility: _fit_liblinear is used both by LinearSVC/R
@@ -600,7 +600,7 @@ class LinearSVR(RegressorMixin, LinearModel):
             self.verbose,
             self.max_iter,
             self.tol,
-            self.random_state,
+            random_state=self.random_state,
             loss=self.loss,
             epsilon=self.epsilon,
             sample_weight=sample_weight,

@@ -173,7 +173,12 @@ def kmeans_plusplus(
 
     # Call private k-means++
     centers, indices = _kmeans_plusplus(
-        X, n_clusters, x_squared_norms, sample_weight, random_state, n_local_trials
+        X,
+        n_clusters,
+        x_squared_norms,
+        sample_weight,
+        random_state=random_state,
+        n_local_trials=n_local_trials,
     )
 
     return centers, indices

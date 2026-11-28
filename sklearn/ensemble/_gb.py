@@ -548,7 +548,9 @@ class BaseGradientBoosting(BaseEnsemble, metaclass=ABCMeta):
         self.init_ = self.init
         if self.init_ is None:
             if is_classifier(self):
-                self.init_ = DummyClassifier(strategy="prior")
+                self.init_ = DummyClassifier(
+                    strategy="prior", random_state=self.random_state
+                )
             elif isinstance(self._loss, (AbsoluteError, HuberLoss)):
                 self.init_ = DummyRegressor(strategy="quantile", quantile=0.5)
             elif isinstance(self._loss, PinballLoss):
@@ -834,16 +836,16 @@ class BaseGradientBoosting(BaseEnsemble, metaclass=ABCMeta):
 
         # fit the boosting stages
         n_stages = self._fit_stages(
-            X_train,
-            y_train,
-            raw_predictions,
-            sample_weight_train,
-            self._rng,
-            X_val,
-            y_val,
-            sample_weight_val,
-            begin_at_stage,
-            monitor,
+            X=X_train,
+            y=y_train,
+            raw_predictions=raw_predictions,
+            sample_weight=sample_weight_train,
+            random_state=self._rng,
+            X_val=X_val,
+            y_val=y_val,
+            sample_weight_val=sample_weight_val,
+            begin_at_stage=begin_at_stage,
+            monitor=monitor,
         )
 
         # change shape of arrays after fit (early-stopping or additional ests)
@@ -1034,13 +1036,13 @@ class BaseGradientBoosting(BaseEnsemble, metaclass=ABCMeta):
 
             # fit next stage of trees
             raw_predictions = self._fit_stage(
-                i,
-                X,
-                y,
-                raw_predictions,
-                sample_weight,
-                sample_mask,
-                random_state,
+                i=i,
+                X=X,
+                y=y,
+                raw_predictions=raw_predictions,
+                sample_weight=sample_weight,
+                sample_mask=sample_mask,
+                random_state=random_state,
                 X_csc=X_csc,
                 X_csr=X_csr,
             )
